@@ -11,9 +11,9 @@ for i in $(seq 1 36); do
   echo "[$i] run start $(date +%H:%M:%S)"
   timeout 960 ./farmbot.exe -seconds 900 -move e -runwalk r -nav -livegrid -chicken 30 \
     -radius 90 -diff normal -dpiscale 1.25 \
-    -werewolf "" -rabies f1 -spirit "" -wolves "" -creeper "" \
-    -castrange 25 -meleebelow 15 -loot -objects -autoskill "1522,201,1524,279" -autoprogress \
-    -summon f2 -maxpets 1 \
+    -werewolf "" -rabies "" -spirit "" -wolves "" -creeper "" \
+    -attackrange 25 -meleebelow 15 -loot -objects -autoprogress \
+    -summon f1 -maxpets 4 -golem f2 \
     > logs/overnight_$i.log 2>&1
   echo "[$i] exit=$? end $(date +%H:%M:%S)"
   ./farmbot.exe -charprobe 2>&1 | grep -oE 'level=[0-9]+ xp=[0-9]+ area=[0-9]+' | head -1

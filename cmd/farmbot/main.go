@@ -165,6 +165,9 @@ func main() {
 	seconds := flag.Int("seconds", 90, "run duration in seconds")
 	werewolf := flag.String("werewolf", "f1", "shapeshift hotkey")
 	rabies := flag.String("rabies", "f2", "rabies attack hotkey")
+	attackRange := flag.Int("attackrange", 4, "engage distance for the hover-confirmed left-click attack (4 = melee swing; ~25 with a bow — shots fire at the hovered target from range)")
+	golemKey := flag.String("golem", "", "golem hotkey (e.g. f2): cast at own position every -golemevery seconds — golems need no corpse and recasting refreshes a wounded one")
+	golemEvery := flag.Int("golemevery", 120, "seconds between golem refresh casts")
 	melee := flag.String("melee", "", "normal-attack hotkey: pressed instead of -rabies when MP%% is below -meleebelow (pre-skills fallback for a low-level char — bind Attack to a key in-game). Empty = left-click normal attack (no binding needed).")
 	meleeBelow := flag.Int("meleebelow", 25, "MP%% threshold below which the bot melees instead of casting")
 	castRange := flag.Int("castrange", 8, "max distance (subtiles) to cast the right skill — Firestorm's flames crawl and dissipate, so casts from bite range (18) burn mana into empty ground")
@@ -3639,6 +3642,7 @@ func main() {
 	var gotoBorderSeekLog time.Time
 	var gotoGridRefresh time.Time
 	var gotoLastPos data.Position
+	var entranceContactStart time.Time
 	gotoProgressAt := time.Now()
 	var badDests []data.Position // explore destinations that turned out unreachable (walled off)
 	chickenStreak := 0           // consecutive Chicken ticks, so a one-frame HP dip doesn't spam TP
@@ -3688,6 +3692,10 @@ func main() {
 	}
 	lastEnemySeen := time.Now()
 	summonAt := time.Time{}
+	summonCastPets := -1
+	summonFails := 0
+	var summonDisabledUntil time.Time
+	var golemAt time.Time
 	var corpseTargetPos data.Position
 	// meleeSwing: a left-click attack that actually CONNECTS. A blind interactClick at the
 	// monster's computed feet position reads as "walk here" whenever the sprite isn't exactly
@@ -4021,6 +4029,7 @@ mainLoop:
 				buildMapNavi()
 				posHist, exploreDest, badDests, gotoCross = nil, data.Position{}, nil, nil
 				gotoIdx = 0
+				entranceContactStart = time.Time{} // transitioned — reset the contact timer
 				progressAt = time.Now()
 				logger.Info("nav: re-aligned new area", "area", alignedArea,
 					"origin", fmt.Sprintf("(%d,%d)", g.OffsetX, g.OffsetY), "walkables", len(walkables))
@@ -4054,15 +4063,34 @@ mainLoop:
 
 		// SUMMON: the necro flywheel — attacks make corpses, corpses make skeletons, skeletons
 		// tank. Select the summon by its bound hotkey, cast at the nearest monster corpse; the
-		// next bite's -rabies press flips the right skill back to the attack.
-		if *summonKey != "" && time.Since(summonAt) > 2*time.Second && d.PlayerUnit.MPPercent() >= *meleeBelow {
+		// next bite's -rabies press flips the right skill back to the attack. CLOSED LOOP: a
+		// cast that never produces a pet means the summon skill isn't actually available (the
+		// wand granting RaiseSkeleton is on a corpse somewhere) — the hotkey then selects
+		// nothing and the right-click fires the ATTACK skill at the corpse pile every 2s
+		// (observed: looked like "retrieving the corpse by right-clicking"). Five fruitless
+		// casts disable summoning for 10 minutes.
+		if *summonKey != "" && time.Since(summonAt) > 2*time.Second &&
+			d.PlayerUnit.MPPercent() >= *meleeBelow && time.Now().After(summonDisabledUntil) {
 			pets := 0
 			for i := range d.Monsters {
 				if d.Monsters[i].IsPet() {
 					pets++
 				}
 			}
-			if pets < *maxPets {
+			if summonCastPets >= 0 { // a cast is pending verification
+				if pets > summonCastPets {
+					summonFails = 0
+				} else {
+					summonFails++
+					if summonFails >= 5 {
+						logger.Warn("summon: 5 casts produced no pet — skill unavailable (granting item missing?); disabled 10min")
+						summonDisabledUntil = time.Now().Add(10 * time.Minute)
+						summonFails = 0
+					}
+				}
+				summonCastPets = -1
+			}
+			if pets < *maxPets && time.Now().After(summonDisabledUntil) {
 				best := 1 << 30
 				var corpsePos data.Position
 				for i := range d.Corpses {
@@ -4077,11 +4105,26 @@ mainLoop:
 					hid.Click(game.RightButton, sx, sy)
 					time.Sleep(150 * time.Millisecond)
 					logger.Info("summon: raise", "pets", pets, "corpseDist", best)
+					summonCastPets = pets
 					summonAt = time.Now()
 					continue
 				}
 			}
 			summonAt = time.Now()
+		}
+
+		// GOLEM: no corpse needed, so it's a timer, not a scavenger hunt. Recasting replaces a
+		// wounded golem — the refresh IS the maintenance. Cast at his own feet, then the next
+		// bite's -rabies press (if any) restores the attack skill.
+		if *golemKey != "" && time.Since(golemAt) > time.Duration(*golemEvery)*time.Second &&
+			d.PlayerUnit.MPPercent() >= *meleeBelow {
+			hid.PressKey(hid.GetASCIICode(*golemKey))
+			time.Sleep(80 * time.Millisecond)
+			hid.Click(game.RightButton, cx, cy+40)
+			time.Sleep(200 * time.Millisecond)
+			logger.Info("golem: refresh cast")
+			golemAt = time.Now()
+			continue
 		}
 
 		// AUTO-SKILL: spend banked points into the configured skill when it's calm. Tab click
@@ -4337,20 +4380,41 @@ mainLoop:
 						}
 						if went != nil {
 							ed := chebyshev(me, went.Position)
-							if ed > 12 {
-								if time.Since(gotoBorderSeekLog) > 5*time.Second {
-									logger.Info("goto: approaching entrance warp", "name", int(went.Name), "dist", ed)
+							// WALK-THROUGH entrances (Den, caves, area exits) transition on CONTACT,
+							// not on a click from range — the old code stopped navigating at dist>12
+							// and clicked forever between 2 and 12 (measured: 310 clicks, never
+							// closing), and each failed hover-click fell through to interactClick =
+							// a held-LMB Attack punching air on a weaponless char (the "shift+attack"
+							// the user saw). So: force-move STRAIGHT ONTO the tile until the area
+							// changes; only after ~6s of fruitless contact try a click (for the rare
+							// click-to-open stairs).
+							if entranceContactStart.IsZero() {
+								entranceContactStart = time.Now()
+							}
+							if ed > 3 {
+								if time.Since(gotoBorderSeekLog) > 3*time.Second {
+									logger.Info("goto: walking onto entrance", "name", int(went.Name), "dist", ed)
 									gotoBorderSeekLog = time.Now()
 								}
-								navWalk(me, went.Position)
+								// Aim the force-move directly at the entrance tile (not navWalk,
+								// which arrives ~4 tiles short) so we actually step onto it.
+								sx, sy := screenPointToward(me, went.Position.X-me.X, went.Position.Y-me.Y)
+								walkToHold(sx, sy, 200)
 								continue
 							}
-							logger.Info("goto: clicking entrance warp", "name", int(went.Name), "dist", ed)
-							if !hoverPickClick(went.Position, went.ID) {
-								sx, sy := gameToScreen(gr, me.X, me.Y, went.Position.X, went.Position.Y)
-								interactClick(sx, sy)
+							if time.Since(entranceContactStart) > 6*time.Second {
+								logger.Info("goto: entrance contact stalled — trying a click", "name", int(went.Name))
+								if !hoverPickClick(went.Position, went.ID) {
+									sx, sy := gameToScreen(gr, me.X, me.Y, went.Position.X, went.Position.Y)
+									interactClick(sx, sy)
+								}
+								entranceContactStart = time.Now()
+							} else {
+								// On the tile: nudge straight through it and let the transition fire.
+								sx, sy := screenPointToward(me, went.Position.X-me.X, went.Position.Y-me.Y)
+								walkToHold(sx, sy, 160)
 							}
-							time.Sleep(1500 * time.Millisecond) // walk-in + transition
+							time.Sleep(300 * time.Millisecond)
 							continue
 						}
 					}
@@ -4803,11 +4867,9 @@ mainLoop:
 		// Below the mana floor, melee instead: -melee hotkey if bound, else a left-click normal
 		// attack (left skill is Attack on a fresh char; interactClick makes the click land).
 		useCast := *rabies != "" && d.PlayerUnit.MPPercent() >= *meleeBelow
-		engageRange := swingRange
+		engageRange := *attackRange
 		if useCast {
 			engageRange = *castRange
-		} else if *rabies == "" && *melee == "" {
-			engageRange = meleeRange // no skill and no melee key: old behavior, right-click bite
 		}
 		if dist <= engageRange {
 			// Damage watchdog — see engagedID above. Must run BEFORE the bite, because the bite
