@@ -3449,6 +3449,60 @@ func main() {
 	lastEnemySeen := time.Now()
 	summonAt := time.Time{}
 	var corpseTargetPos data.Position
+	// meleeSwing: a left-click attack that actually CONNECTS. A blind interactClick at the
+	// monster's computed feet position reads as "walk here" whenever the sprite isn't exactly
+	// there — the char shuffles in place instead of swinging (observed live). Sweep until the
+	// game itself reports the target hovered, then click THAT point; blind-click as last resort.
+	meleeSwing := func(targetID data.UnitID, world data.Position) bool {
+		me := gr.GetData().PlayerUnit.Position
+		bx, by := gameToScreen(gr, me.X, me.Y, world.X, world.Y)
+		for _, dy := range []int{-12, 0, -24, -36, 8} {
+			for _, dx := range []int{0, -10, 10, -20, 20} {
+				px, py := bx+dx, by+dy
+				hid.AimPhysical(px, py)
+				time.Sleep(45 * time.Millisecond)
+				hd := gr.GetData().HoverData
+				if !hd.IsHovered || hd.UnitID != targetID {
+					continue
+				}
+				interactClick(px, py)
+				return true
+			}
+		}
+		interactClick(bx, by) // last resort — may register as a move, but keeps pressure on
+		return false
+	}
+
+	// fightThrough: when movement is blocked and something hostile is in reach, the smart move
+	// is violence, not another wall-bounce — monsters body-block but are NOT in the collision
+	// grid, so every nav watchdog misreads a zombie wall as open ground.
+	fightThrough := func(d game.Data, me data.Position) bool {
+		best := 1 << 30
+		var tgt *data.Monster
+		for i := range d.Monsters {
+			m := &d.Monsters[i]
+			if m.Mode == mode.NpcDeath || m.Mode == mode.NpcDead || m.IsGoodNPC() || m.IsPet() || m.IsMerc() {
+				continue
+			}
+			if dd := chebyshev(me, m.Position); dd < best && dd <= 8 {
+				best, tgt = dd, m
+			}
+		}
+		if tgt == nil {
+			return false
+		}
+		if *rabies != "" && d.PlayerUnit.MPPercent() >= *meleeBelow {
+			sx, sy := gameToScreen(gr, me.X, me.Y, tgt.Position.X, tgt.Position.Y)
+			hid.PressKey(hid.GetASCIICode(*rabies))
+			time.Sleep(50 * time.Millisecond)
+			hid.Click(game.RightButton, sx, sy)
+			time.Sleep(150 * time.Millisecond)
+			return true
+		}
+		meleeSwing(tgt.UnitID, tgt.Position)
+		return true
+	}
+
 	// openBurst: corner escape that reads the room. The old fixed-rotation burst walked INTO
 	// walls as often as away from them, so the bot visibly hugged corners while "recovering".
 	// Sample the live grid in 8 world directions, score each by contiguous walkable clearance,
@@ -3505,6 +3559,11 @@ func main() {
 			navWalkBestDist, navWalkBestAt = dcur, time.Now()
 		}
 		if time.Since(navWalkBestAt) > 12*time.Second {
+			if fightThrough(gr.GetData(), me) {
+				logger.Info("navWalk: blocked — fighting through")
+				navWalkBestAt = time.Now()
+				return
+			}
 			navWalkPreferMap = !navWalkPreferMap
 			logger.Warn("navWalk: oscillating (no closest-approach progress) — open burst + planner flip",
 				"bestDist", navWalkBestDist, "preferMap", navWalkPreferMap)
@@ -3522,6 +3581,11 @@ func main() {
 			navWalkLastPos, navWalkProgressAt = me, time.Now()
 		}
 		if time.Since(navWalkProgressAt) > 5*time.Second {
+			if fightThrough(gr.GetData(), me) {
+				logger.Info("navWalk: blocked — fighting through")
+				navWalkProgressAt = time.Now()
+				return
+			}
 			logger.Warn("navWalk: no net movement — open burst", "pos", fmt.Sprintf("(%d,%d)", me.X, me.Y))
 			openBurst(me)
 			if navi != nil {
@@ -4047,6 +4111,11 @@ mainLoop:
 				gotoLastPos, gotoProgressAt = me, time.Now()
 			}
 			if time.Since(gotoProgressAt) > 5*time.Second {
+				if fightThrough(d, me) {
+					logger.Info("goto: blocked — fighting through")
+					gotoProgressAt = time.Now()
+					continue
+				}
 				logger.Warn("goto: no net movement — open burst", "pos", fmt.Sprintf("(%d,%d)", me.X, me.Y))
 				openBurst(me)
 				if len(gotoCross) > 0 {
@@ -4624,9 +4693,8 @@ mainLoop:
 				hid.Click(game.RightButton, sx, sy)
 			default:
 				// No mana, no melee key: LEFT-click normal attack (fresh chars have Attack as the
-				// left skill). interactClick overrides GetKeyState(VK_LBUTTON) for the click
-				// window — the same treatment that makes loot/NPC/WP left-clicks land.
-				interactClick(sx, sy)
+				// left skill), hover-confirmed so it registers as an ATTACK, not a walk.
+				meleeSwing(target.UnitID, target.Position)
 			}
 			time.Sleep(200 * time.Millisecond)
 			lastDist, stuckCount = dist, 0
