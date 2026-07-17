@@ -4008,8 +4008,29 @@ func main() {
 	var engagedLife int
 	var engagedAt time.Time
 	var lastTownLog time.Time
+	controlFile := filepath.Join("logs", "control.txt")
+	_ = os.Remove(controlFile) // stale command from a previous session must not kill this run
+	var lastControlCheck time.Time
 mainLoop:
 	for time.Now().Before(deadline) {
+		// CONTROL CHANNEL: `echo exit > logs/control.txt` requests a graceful shutdown NOW —
+		// the same atlas-save + deferred input-heal path as the -seconds deadline, so deploys
+		// no longer wait out the clock (force-kill while D2R lives corrupts input patching;
+		// this is the safe alternative).
+		if time.Since(lastControlCheck) > 2*time.Second {
+			lastControlCheck = time.Now()
+			if b, err := os.ReadFile(controlFile); err == nil {
+				cmd := strings.TrimSpace(string(b))
+				_ = os.Remove(controlFile)
+				if cmd == "exit" {
+					logger.Info("control: graceful exit requested")
+					break mainLoop
+				}
+				if cmd != "" {
+					logger.Warn("control: unknown command", "cmd", cmd)
+				}
+			}
+		}
 		if shiftCheck%6 == 0 && !inWerewolf() && chickenStreak == 0 {
 			castSelf(*werewolf)
 		}

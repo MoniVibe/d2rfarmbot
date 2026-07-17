@@ -8,6 +8,11 @@ for i in $(seq 1 36); do
     echo "[$i] D2R gone — stopping ($(date +%H:%M:%S))"
     break
   fi
+  # Staged deploy: a farmbot_next.exe dropped here is swapped in between runs — combined
+  # with `echo exit > logs/control.txt` (graceful in-run shutdown) deploys never wait.
+  if [ -f farmbot_next.exe ]; then
+    mv -f farmbot_next.exe farmbot.exe && echo "[$i] deployed staged binary $(date +%H:%M:%S)"
+  fi
   echo "[$i] run start $(date +%H:%M:%S)"
   timeout 960 ./farmbot.exe -seconds 900 -move e -runwalk r -nav -livegrid -chicken 30 \
     -radius 90 -diff normal -dpiscale 1.25 \
