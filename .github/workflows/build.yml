@@ -1,0 +1,45 @@
+name: Koolo Build CI
+on:
+  push:
+  pull_request:
+  release:
+
+jobs:
+  build:
+    name: "Build Koolo binary"
+    runs-on: windows-2022
+    steps:
+      - name: "Checkout"
+        uses: actions/checkout@v4
+
+      - name: "Setup Go"
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.21'
+          check-latest: true
+
+      - name: "Install Garble"
+        run: |
+          go install mvdan.cc/garble@latest
+          Add-Content $env:GITHUB_PATH "$env:USERPROFILE\go\bin"
+
+      - name: "Building Obfuscated Artifacts"
+        shell: pwsh
+        run: |
+          $buildID = [guid]::NewGuid().ToString()
+          $buildTime = Get-Date -Format "o"
+          
+          garble -literals=false -seed=random build -a -trimpath -tags static --ldflags "-s -w -H windowsgui -X 'main.buildID=$buildID' -X 'main.buildTime=$buildTime' -X 'github.com/hectorgimenez/koolo/internal/config.Version=${{ github.ref_name }}'" -o "koolo-$buildID.exe" ./cmd/koolo
+          
+          # Verify file exists
+          if (Test-Path "koolo-$buildID.exe") {
+              echo "Build successful"
+          } else {
+              throw "Build failed"
+          }
+
+      - name: "Upload Artifact"
+        uses: actions/upload-artifact@v3
+        with:
+          name: koolo-obfuscated
+          path: koolo_${{ github.ref_name }}.zip

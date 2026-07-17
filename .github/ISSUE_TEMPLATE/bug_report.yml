@@ -1,0 +1,25 @@
+name: Bug Report
+description: File a bug report
+body:
+  - type: textarea
+    id: details
+    attributes:
+      label: Details
+      description: Try to be as detailed as possible, what happened? What did you expect to happen? What steps can we take to reproduce the issue?
+    validations:
+      required: true
+  - type: input
+    id: version
+    attributes:
+      label: Version
+      description: What version are you using?
+      placeholder: v0.4.0
+    validations:
+      required: true
+  - type: textarea
+    id: logs
+    attributes:
+      label: Logs
+      description: Check latest logs (logs directory) for any errors, if information is relevant, please include it here.
+    validations:
+      required: true

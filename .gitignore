@@ -1,0 +1,27 @@
+/.idea
+/.vscode
+/.github
+/bin
+/build
+/stats
+/screenshots
+/logs
+
+/config/*
+!/config/template
+!/config/koolo.yaml.dist
+!/config/Settings.json
+
+# --- farmbot ---
+# Build artifacts. farmbot.exe was tracked for months despite HANDOFF saying it never should be.
+farmbot.exe
+scan.exe
+itest.exe
+tools/koolo-map.exe
+gotmp/
+# Diagnostic screenshots (-shotdir) and D2R memory dumps. The dumps are ~7-8GB EACH and
+# SilentProcessExit has no count cap — never let `git add -A` near them.
+shots/
+crashdumps/
+*.dmp
+tools/handle64.exe
