@@ -132,10 +132,14 @@ func (gd *MemoryReader) updateWindowPositionData() {
 
 func (gd *MemoryReader) GetData() Data {
 	d := gd.GameReader.GetData()
+	// Objects come from the LIVE unit table — populate them regardless of map data. The old
+	// code only set d.Objects inside the `if ok` below, so without a successful FetchMapData
+	// (koolo-map + D2LoD, absent on this machine) every object interaction saw an empty list
+	// even though the memory read works fine on 3.2.
+	memObjects := gd.Objects(d.PlayerUnit.Position, d.HoverData)
 	currentArea, ok := gd.cachedMapData[d.PlayerUnit.Area]
 	if ok {
-		// This hacky thing is because sometimes if the objects are far away we can not fetch them, basically WP.
-		memObjects := gd.Objects(d.PlayerUnit.Position, d.HoverData)
+		// Merge in map-data objects the memory read can't see yet (far away, e.g. the WP).
 		for _, clientObject := range currentArea.Objects {
 			found := false
 			for _, obj := range memObjects {
@@ -154,8 +158,8 @@ func (gd *MemoryReader) GetData() Data {
 		d.NPCs = currentArea.NPCs
 		d.AdjacentLevels = currentArea.AdjacentLevels
 		d.Rooms = currentArea.Rooms
-		d.Objects = memObjects
 	}
+	d.Objects = memObjects
 
 	var cfgCopy config.CharacterCfg
 	if gd.cfg != nil {

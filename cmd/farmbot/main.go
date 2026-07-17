@@ -131,6 +131,9 @@ func main() {
 	nav := flag.Bool("nav", false, "enable map navigation: fetch map, auto-calibrate offset, A* pathfind to targets")
 	levelprobe := flag.Bool("levelprobe", false, "probe: read live DrlgLevel origin/size from memory, compare to generated grid, exit")
 	charProbe := flag.Bool("charprobe", false, "probe: read the character sheet from memory (name/class/level/skills/L+R skill), exit")
+	objProbe := flag.Int("objprobe", 0, "probe: READ-ONLY dump of objects/entrances within this radius (subtiles) of the player — name/id/selectable/interactType/mode/portal. The interactables inventory for this area.")
+	interactWith := flag.String("interact", "", "PROBE: walk to and operate the nearest matching interactable, then report every observable state change. Kinds: chest|shrine|wp|portal|entrance|<numeric object id>. Needs -move e.")
+	dieTest := flag.Bool("dietest", false, "DEATH-CYCLE PROBE — SOFTCORE ONLY: leave town, aggro, die on purpose, learn the respawn input, confirm town respawn, corpse-run, recover the body. Needs -move e.")
 	gotoArea := flag.Int("goto", 0, "with -nav: travel to this area ID first (e.g. 2=Blood Moor) via its exit, then farm")
 	roomprobe := flag.Int("roomprobe", 0, "probe: dump live Room2 graph + borders to this destination area ID, exit")
 	collprobe := flag.Bool("collprobe", false, "probe: live-room collision availability + compare live vs koolo-map grid at player, exit")
@@ -230,7 +233,7 @@ func main() {
 	// "move", which on this build is unreliable (D2R ignores injected left-clicks) AND spams
 	// left-clicks that desync D2R's in-process mouse state (the flaky-LMB symptom). Refuse to run
 	// the farming/goto loop without it. Read-only probes don't move, so they're exempt.
-	probeOnly := *mapcheck || *mapalign || *levelprobe || *charProbe || *aimProbe || *collprobe || *roomprobe != 0 || *wpprobe || *hoverProbe || *cursorScan || *cursorAddr != "" || *pathProbe || *pathDrive || *shadowWalk != "" || *findWriter != "" || *inputTest || *clickTest || *wpAt || *fixInput || *resumeThreads || *screenshot != "" || *wpTown || *wpAim || *wpGoto != 0 || *npcProbe != 0 || *hoverGrid
+	probeOnly := *mapcheck || *mapalign || *levelprobe || *charProbe || *aimProbe || *objProbe != 0 || *interactWith != "" || *dieTest || *collprobe || *roomprobe != 0 || *wpprobe || *hoverProbe || *cursorScan || *cursorAddr != "" || *pathProbe || *pathDrive || *shadowWalk != "" || *findWriter != "" || *inputTest || *clickTest || *wpAt || *fixInput || *resumeThreads || *screenshot != "" || *wpTown || *wpAim || *wpGoto != 0 || *npcProbe != 0 || *hoverGrid
 	if !probeOnly && *moveKey == "" {
 		logger.Error("-move is required: bind 'Force Move' in D2R Options>Controls and pass e.g. -move e. " +
 			"Refusing to run without it — the left-click move fallback is unreliable on this build and corrupts D2R's mouse state.")
@@ -592,7 +595,13 @@ func main() {
 					}
 					// Discrete left-click WITHOUT re-moving the pointer: cursor is already confirmed on
 					// the label; Click()'s MovePointer/WM_MOUSEMOVE could nudge it into a ground-move.
+					// VK_LBUTTON override for the click window: D2R polls GetKeyState — items happened
+					// to accept the bare message click, but chests/objects ignore it without the poll.
+					_ = gi.OverrideGetKeyState(0x01)
+					_ = gi.OverrideGetAsyncKeyState(0x01)
 					hid.LeftClickNoMove(px, py)
+					_ = gi.RestoreGetKeyState()
+					_ = gi.RestoreGetAsyncKeyState()
 					// Left-click-item = "walk to it and pick up" — it takes time and MUST NOT be
 					// interrupted by the next loop action. Wait (uninterrupted) for the item to
 					// actually leave the ground before returning.
@@ -1589,6 +1598,357 @@ func main() {
 			"startDist", startDist, "finalDist", chebyshev(final, goal), "minDist", minDist,
 			"netMoved", chebyshev(me0, final), "replans", replans, "ticks", tick,
 			"elapsedS", time.Since(start).Seconds())
+		return
+	}
+
+	// -objprobe: READ-ONLY interactables inventory. Objects come straight from the unit table
+	// (no map data needed since the GetData fix); entrances from the live DrlgLevel chain.
+	if *objProbe != 0 {
+		d := gr.GetData()
+		me := d.PlayerUnit.Position
+		logger.Info("objprobe", "area", int(d.PlayerUnit.Area), "pos", fmt.Sprintf("(%d,%d)", me.X, me.Y),
+			"objectsTotal", len(d.Objects), "entrances", len(d.Entrances), "monsters", len(d.Monsters))
+		type row struct {
+			o    data.Object
+			dist int
+		}
+		var rows []row
+		for _, o := range d.Objects {
+			if dist := chebyshev(me, o.Position); dist <= *objProbe {
+				rows = append(rows, row{o, dist})
+			}
+		}
+		sort.Slice(rows, func(i, j int) bool { return rows[i].dist < rows[j].dist })
+		for _, r := range rows {
+			o := r.o
+			name := o.Desc().Name
+			if name == "" {
+				name = fmt.Sprintf("obj#%d", int(o.Name))
+			}
+			logger.Info("objprobe: object", "dist", r.dist, "name", name, "id", int(o.Name),
+				"pos", fmt.Sprintf("(%d,%d)", o.Position.X, o.Position.Y),
+				"selectable", o.Selectable, "interact", fmt.Sprintf("%v", o.InteractType),
+				"mode", int(o.Mode), "owner", o.Owner,
+				"chest", o.IsChest(), "wp", o.IsWaypoint(),
+				"portal", o.IsPortal() || o.IsRedPortal(), "shrine", o.IsShrine())
+		}
+		for _, e := range d.Entrances {
+			logger.Info("objprobe: entrance", "dist", chebyshev(me, e.Position), "name", int(e.Name),
+				"pos", fmt.Sprintf("(%d,%d)", e.Position.X, e.Position.Y),
+				"selectable", e.Selectable, "hovered", e.IsHovered)
+		}
+		return
+	}
+
+	// -interact: the generic world-interactable exerciser. Approach the nearest matching thing,
+	// hover-click it via the game's own HoverData feedback, then report EVERY observable change
+	// (object Mode/Selectable, OpenMenus, area, nearby ground items) — each interactable kind
+	// teaches us its own success signal instead of us assuming one.
+	if *interactWith != "" {
+		if *moveKey == "" {
+			logger.Error("-interact needs -move e (it walks to the target)")
+			return
+		}
+		kind := *interactWith
+		var wantID int
+		if n, err := fmt.Sscanf(kind, "%d", &wantID); n == 1 && err == nil {
+			kind = "id"
+		}
+		matchObj := func(o data.Object) bool {
+			switch kind {
+			case "chest":
+				return o.IsChest() && o.Selectable
+			case "shrine":
+				return o.IsShrine() && o.Selectable
+			case "wp":
+				return o.IsWaypoint()
+			case "portal":
+				return o.IsPortal() || o.IsRedPortal()
+			case "id":
+				return int(o.Name) == wantID
+			}
+			return false
+		}
+		groundNear := func(d game.Data, pos data.Position, r int) int {
+			n := 0
+			for _, it := range d.Inventory.ByLocation(item.LocationGround) {
+				if chebyshev(pos, it.Position) <= r {
+					n++
+				}
+			}
+			return n
+		}
+		deadline := time.Now().Add(90 * time.Second)
+		for time.Now().Before(deadline) {
+			d := gr.GetData()
+			me := d.PlayerUnit.Position
+			areaBefore := d.PlayerUnit.Area
+
+			if kind == "entrance" {
+				if len(d.Entrances) == 0 {
+					// Entrances appear when their room loads — wander until one does.
+					wanderTick := int(time.Until(deadline).Seconds())
+					dir := (wanderTick / 4) % 8
+					angle := float64(dir) / 8.0 * 2 * math.Pi
+					walkToHold(cx+int(300*math.Cos(angle)), cy+int(140*math.Sin(angle)), 250)
+					continue
+				}
+				e := d.Entrances[0]
+				for _, cand := range d.Entrances {
+					if chebyshev(me, cand.Position) < chebyshev(me, e.Position) {
+						e = cand
+					}
+				}
+				dist := chebyshev(me, e.Position)
+				if dist > 10 {
+					sx, sy := screenPointToward(me, e.Position.X-me.X, e.Position.Y-me.Y)
+					walkToHold(sx, sy, 250)
+					continue
+				}
+				logger.Info("interact: at entrance", "name", int(e.Name), "dist", dist,
+					"pos", fmt.Sprintf("(%d,%d)", e.Position.X, e.Position.Y))
+				clicked := hoverPickClick(e.Position, e.ID)
+				if !clicked {
+					// No hover registered — blind reliable-click at the predicted point and see.
+					sx, sy := gameToScreen(gr, me.X, me.Y, e.Position.X, e.Position.Y)
+					logger.Info("interact: entrance hover never fired — blind interactClick", "screen", fmt.Sprintf("(%d,%d)", sx, sy))
+					interactClick(sx, sy)
+				}
+				for w := 0; w < 40; w++ {
+					time.Sleep(200 * time.Millisecond)
+					d2 := gr.GetData()
+					if d2.PlayerUnit.Area != areaBefore {
+						logger.Info("interact: AREA CHANGED — entrance works", "hoverClicked", clicked,
+							"from", int(areaBefore), "to", int(d2.PlayerUnit.Area),
+							"pos", fmt.Sprintf("(%d,%d)", d2.PlayerUnit.Position.X, d2.PlayerUnit.Position.Y))
+						return
+					}
+					if w%5 == 4 {
+						logger.Info("interact: waiting for area change", "playerPos",
+							fmt.Sprintf("(%d,%d)", d2.PlayerUnit.Position.X, d2.PlayerUnit.Position.Y),
+							"entrancePos", fmt.Sprintf("(%d,%d)", e.Position.X, e.Position.Y),
+							"dist", chebyshev(d2.PlayerUnit.Position, e.Position),
+							"mode", int(d2.PlayerUnit.Mode))
+					}
+				}
+				logger.Warn("interact: clicked entrance but area never changed", "hoverClicked", clicked)
+				return
+			}
+
+			var tgt *data.Object
+			best := 1 << 30
+			for i := range d.Objects {
+				o := &d.Objects[i]
+				if matchObj(*o) {
+					if dist := chebyshev(me, o.Position); dist < best {
+						best, tgt = dist, o
+					}
+				}
+			}
+			if tgt == nil {
+				logger.Error("interact: no matching object in memory range — walk nearer or check -objprobe", "kind", kind)
+				return
+			}
+			if best > 8 {
+				sx, sy := screenPointToward(me, tgt.Position.X-me.X, tgt.Position.Y-me.Y)
+				walkToHold(sx, sy, 250)
+				continue
+			}
+			name := tgt.Desc().Name
+			logger.Info("interact: engaging", "kind", kind, "name", name, "objID", int(tgt.Name),
+				"unitID", int(tgt.ID), "dist", best,
+				"modeBefore", int(tgt.Mode), "selectableBefore", tgt.Selectable,
+				"menusBefore", fmt.Sprintf("%+v", d.OpenMenus))
+			groundBefore := groundNear(d, tgt.Position, 15)
+			clicked := hoverPickClick(tgt.Position, tgt.ID)
+			time.Sleep(1200 * time.Millisecond)
+			d2 := gr.GetData()
+			var after *data.Object
+			for i := range d2.Objects {
+				if d2.Objects[i].ID == tgt.ID {
+					after = &d2.Objects[i]
+					break
+				}
+			}
+			if after != nil {
+				logger.Info("interact: RESULT", "hoverClicked", clicked,
+					"mode", fmt.Sprintf("%d->%d", int(tgt.Mode), int(after.Mode)),
+					"selectable", fmt.Sprintf("%v->%v", tgt.Selectable, after.Selectable),
+					"groundItemsNear", fmt.Sprintf("%d->%d", groundBefore, groundNear(d2, tgt.Position, 15)),
+					"menusAfter", fmt.Sprintf("%+v", d2.OpenMenus),
+					"area", fmt.Sprintf("%d->%d", int(areaBefore), int(d2.PlayerUnit.Area)),
+					"playerStates", len(d2.PlayerUnit.States))
+			} else {
+				logger.Info("interact: RESULT (object gone from list)", "hoverClicked", clicked,
+					"groundItemsNear", fmt.Sprintf("%d->%d", groundBefore, groundNear(d2, tgt.Position, 15)),
+					"menusAfter", fmt.Sprintf("%+v", d2.OpenMenus))
+			}
+			return
+		}
+		logger.Error("interact: 90s deadline hit while approaching")
+		return
+	}
+
+	// -dietest: the death interaction, end to end, on purpose. SOFTCORE ONLY. Stages:
+	// leave-town (east-biased wander) → aggro (walk into a monster, no potions, no flee) →
+	// dead (observe everything, then learn which input respawns: esc/enter) → corpse-run
+	// (walk back to the recorded death spot, hover the corpse via Corpse.IsHovered, click,
+	// verify Corpse.Found flips). Each stage logs its evidence — the goal is to LEARN the
+	// signals so the farm loop can automate death recovery.
+	if *dieTest {
+		if *moveKey == "" {
+			logger.Error("-dietest needs -move e")
+			return
+		}
+		d0 := gr.GetData()
+		logger.Info("dietest: START", "char", d0.PlayerUnit.Name, "area", int(d0.PlayerUnit.Area),
+			"hp", d0.PlayerUnit.HPPercent(), "corpseFoundNow", d0.Corpse.Found)
+		stage := "leave-town"
+		deadline := time.Now().Add(6 * time.Minute)
+		dirBias := []int{0, 1, 7, 0, 2, 6, 0, 1, 7, 3, 5, 0} // east-heavy blind wander
+		tick := 0
+		var deathPos data.Position
+		var deathArea area.ID
+		wander := func() {
+			tick++
+			dir := dirBias[tick%len(dirBias)]
+			angle := float64(dir) / 8.0 * 2 * math.Pi
+			walkToHold(cx+int(300*math.Cos(angle)), cy+int(140*math.Sin(angle)), 300)
+		}
+		for time.Now().Before(deadline) {
+			d := gr.GetData()
+			me := d.PlayerUnit.Position
+			hp := d.PlayerUnit.HPPercent()
+			pmode := d.PlayerUnit.Mode
+			dead := pmode == mode.Death || pmode == mode.Dead || hp <= 0
+			switch stage {
+			case "leave-town":
+				if dead {
+					stage = "dead"
+					deathPos, deathArea = me, d.PlayerUnit.Area
+					continue
+				}
+				if !d.PlayerUnit.Area.IsTown() {
+					logger.Info("dietest: out of town", "area", int(d.PlayerUnit.Area))
+					stage = "aggro"
+					continue
+				}
+				wander()
+			case "aggro":
+				if dead {
+					stage = "dead"
+					deathPos, deathArea = me, d.PlayerUnit.Area
+					continue
+				}
+				var mon *data.Monster
+				best := 1 << 30
+				for i := range d.Monsters {
+					m := &d.Monsters[i]
+					if m.Mode == mode.NpcDeath || m.Mode == mode.NpcDead || m.IsGoodNPC() || m.IsPet() || m.IsMerc() {
+						continue
+					}
+					if dist := chebyshev(me, m.Position); dist < best {
+						best, mon = dist, m
+					}
+				}
+				if mon == nil || best > 60 {
+					wander()
+					continue
+				}
+				if best > 3 {
+					sx, sy := screenPointToward(me, mon.Position.X-me.X, mon.Position.Y-me.Y)
+					walkToHold(sx, sy, 250)
+					continue
+				}
+				logger.Info("dietest: standing in the pack, waiting to die", "hp", hp, "monDist", best)
+				time.Sleep(400 * time.Millisecond)
+			case "dead":
+				logger.Info("dietest: DEAD — observing", "pos", fmt.Sprintf("(%d,%d)", deathPos.X, deathPos.Y),
+					"deathArea", int(deathArea), "mode", int(pmode), "hp", hp,
+					"corpseFound", d.Corpse.Found,
+					"corpsePos", fmt.Sprintf("(%d,%d)", d.Corpse.Position.X, d.Corpse.Position.Y),
+					"menus", fmt.Sprintf("%+v", d.OpenMenus))
+				time.Sleep(2500 * time.Millisecond)
+				respawned := ""
+				for _, key := range []string{"esc", "enter", "esc"} {
+					hid.PressKey(hid.GetASCIICode(key))
+					logger.Info("dietest: respawn input sent", "key", key)
+					for w := 0; w < 25; w++ {
+						time.Sleep(200 * time.Millisecond)
+						d2 := gr.GetData()
+						m2 := d2.PlayerUnit.Mode
+						if d2.PlayerUnit.Area.IsTown() && d2.PlayerUnit.HPPercent() > 0 &&
+							m2 != mode.Death && m2 != mode.Dead {
+							respawned = key
+							break
+						}
+					}
+					if respawned != "" {
+						break
+					}
+				}
+				if respawned == "" {
+					d2 := gr.GetData()
+					logger.Error("dietest: NO respawn input worked — state dump",
+						"mode", int(d2.PlayerUnit.Mode), "hp", d2.PlayerUnit.HPPercent(),
+						"area", int(d2.PlayerUnit.Area), "menus", fmt.Sprintf("%+v", d2.OpenMenus))
+					return
+				}
+				d2 := gr.GetData()
+				logger.Info("dietest: RESPAWNED in town", "via", respawned,
+					"pos", fmt.Sprintf("(%d,%d)", d2.PlayerUnit.Position.X, d2.PlayerUnit.Position.Y),
+					"corpseFoundInTown", d2.Corpse.Found,
+					"corpsePos", fmt.Sprintf("(%d,%d)", d2.Corpse.Position.X, d2.Corpse.Position.Y))
+				stage = "corpse-run"
+			case "corpse-run":
+				if !d.Corpse.Found {
+					// Corpse not visible from here — walk back toward where we died (blind).
+					wander()
+					continue
+				}
+				cd := chebyshev(me, d.Corpse.Position)
+				if cd > 6 {
+					sx, sy := screenPointToward(me, d.Corpse.Position.X-me.X, d.Corpse.Position.Y-me.Y)
+					walkToHold(sx, sy, 250)
+					continue
+				}
+				logger.Info("dietest: at corpse", "dist", cd, "notInteractable", d.Corpse.StateNotInteractable(),
+					"states", len(d.Corpse.States))
+				bx, by := gameToScreen(gr, me.X, me.Y, d.Corpse.Position.X, d.Corpse.Position.Y)
+				recovered := false
+				for dy := -60; dy <= 16 && !recovered; dy += 6 {
+					for _, dx := range []int{0, -8, 8, -16, 16, -26, 26} {
+						px, py := bx+dx, by+dy
+						hid.AimPhysical(px, py)
+						time.Sleep(55 * time.Millisecond)
+						d3 := gr.GetData()
+						if !d3.Corpse.IsHovered {
+							continue
+						}
+						hid.AimPhysical(px, py)
+						time.Sleep(70 * time.Millisecond)
+						if !gr.GetData().Corpse.IsHovered {
+							continue
+						}
+						logger.Info("dietest: corpse hovered — clicking", "at", fmt.Sprintf("(%d,%d)", px, py))
+						interactClick(px, py)
+						for w := 0; w < 20; w++ {
+							time.Sleep(150 * time.Millisecond)
+							if !gr.GetData().Corpse.Found {
+								recovered = true
+								break
+							}
+						}
+						break
+					}
+				}
+				d4 := gr.GetData()
+				logger.Info("dietest: corpse recovery RESULT", "recovered", recovered,
+					"corpseFoundAfter", d4.Corpse.Found, "hp", d4.PlayerUnit.HPPercent())
+				return
+			}
+		}
+		logger.Error("dietest: 6-minute deadline hit", "stage", stage)
 		return
 	}
 
