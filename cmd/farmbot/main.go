@@ -3776,101 +3776,21 @@ func main() {
 		}
 	}
 
-	// navWalk: ONE deliberate navigation step toward dest — Navigator plan + carrot, wrapped in
-	// the net-progress watchdog (no movement for 5s -> open-direction burst + replan). Call it
-	// once per tick and `continue`; it owns wedge escape. The third reimplementation of this
-	// pattern was the sign it needed to be a function.
-	navWalkLastPos := data.Position{}
-	navWalkProgressAt := time.Now()
-	navWalkDest := data.Position{}
-	navWalkBestDist := 1 << 30
-	navWalkBestAt := time.Now()
-	navWalkPreferMap := false
+	// navWalk: ONE deliberate navigation step toward dest, delegated to the Mover (mover.go) —
+	// the movelab-winning LOS-lookahead executor with closed-loop stall handling. Planners are
+	// re-pointed every call because nav setup / realign rebuild them. MoveBlocked means the
+	// mover exhausted planner fallback + clearance escape — bring violence.
+	mover := NewMover(gr, nil, nil, walkToHold, screenPointToward, openBurst)
 	navWalk := func(me, dest data.Position) {
-		// OSCILLATION detector: bouncing ±2 subtiles against an obstacle satisfies the plain
-		// no-movement watchdog forever (measured: 3min at dist 14-18 from a corpse across a
-		// water pocket). Track the BEST distance achieved; no improvement in 20s -> burst,
-		// drop both plans, and flip planner preference (the map grid knows crossings the
-		// partial live grid doesn't, and vice versa for mod-altered terrain).
-		if dest != navWalkDest {
-			navWalkDest, navWalkBestDist, navWalkBestAt = dest, 1<<30, time.Now()
-		}
-		if dcur := chebyshev(me, dest); dcur < navWalkBestDist-1 {
-			navWalkBestDist, navWalkBestAt = dcur, time.Now()
-		}
-		if time.Since(navWalkBestAt) > 12*time.Second {
+		mover.live, mover.full = navi, mapNavi
+		if mover.Step(me, dest) == MoveBlocked {
 			if fightThrough(gr.GetData(), me) {
 				logger.Info("navWalk: blocked — fighting through")
-				navWalkBestAt = time.Now()
 				return
 			}
-			navWalkPreferMap = !navWalkPreferMap
-			logger.Warn("navWalk: oscillating (no closest-approach progress) — open burst + planner flip",
-				"bestDist", navWalkBestDist, "preferMap", navWalkPreferMap)
-			openBurst(me)
-			if navi != nil {
-				navi.havePlan = false
-			}
-			if mapNavi != nil {
-				mapNavi.havePlan = false
-			}
-			navWalkBestDist, navWalkBestAt = 1<<30, time.Now()
-			return
+			logger.Warn("navWalk: hard blocked", "pos", fmt.Sprintf("(%d,%d)", me.X, me.Y),
+				"dest", fmt.Sprintf("(%d,%d)", dest.X, dest.Y))
 		}
-		if chebyshev(me, navWalkLastPos) > 2 {
-			navWalkLastPos, navWalkProgressAt = me, time.Now()
-		}
-		if time.Since(navWalkProgressAt) > 5*time.Second {
-			if fightThrough(gr.GetData(), me) {
-				logger.Info("navWalk: blocked — fighting through")
-				navWalkProgressAt = time.Now()
-				return
-			}
-			logger.Warn("navWalk: no net movement — open burst", "pos", fmt.Sprintf("(%d,%d)", me.X, me.Y))
-			openBurst(me)
-			if navi != nil {
-				navi.havePlan = false
-			}
-			navWalkLastPos = gr.GetData().PlayerUnit.Position
-			navWalkProgressAt = time.Now()
-			return
-		}
-		// Long hauls plan on the FULL-AREA map grid (knows every bridge the partial live grid
-		// doesn't); short/local movement uses the live grid (mod-accurate collision).
-		nv := navi
-		if mapNavi != nil && (chebyshev(me, dest) > 25 || navWalkPreferMap) {
-			nv = mapNavi
-		}
-		if nv != nil {
-			if !nv.havePlan && !nv.BuildPlan(me, dest, time.Now()) {
-				// This planner can't reach it — try the other one before falling back to a carrot.
-				alt := navi
-				if nv == navi {
-					alt = mapNavi
-				}
-				if alt != nil && (alt.havePlan || alt.BuildPlan(me, dest, time.Now())) {
-					nv = alt
-				} else {
-					sx, sy := screenPointToward(me, dest.X-me.X, dest.Y-me.Y)
-					walkToHold(sx, sy, 250)
-					return
-				}
-			}
-			step := nv.Step(me, time.Now())
-			if step.Arrived || step.Diverged {
-				nv.havePlan = false
-				return
-			}
-			hold := step.HoldMs
-			if hold <= 0 {
-				hold = 200
-			}
-			sx, sy := screenPointToward(me, step.Target.X-me.X, step.Target.Y-me.Y)
-			walkToHold(sx, sy, hold)
-			return
-		}
-		sx, sy := screenPointToward(me, dest.X-me.X, dest.Y-me.Y)
-		walkToHold(sx, sy, 250)
 	}
 	deathsSinceRecovery := 0
 
