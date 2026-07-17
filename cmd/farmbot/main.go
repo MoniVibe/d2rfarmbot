@@ -4842,39 +4842,13 @@ mainLoop:
 							continue
 						}
 					}
-					// Frontier target: walkable cell nearest the exit.
-					bestD := 1 << 30
-					var frontier data.Position
-					for _, c := range walkables {
-						w := data.Position{X: c.X + navGrid.OffsetX, Y: c.Y + navGrid.OffsetY}
-						if dd := chebyshev(w, exit); dd < bestD {
-							bestD, frontier = dd, w
-						}
-					}
-					if bestD == 1<<30 || chebyshev(me, frontier) <= 4 {
-						// At (or without) a frontier — nudge raw toward the exit so new rooms load.
-						sx, sy := screenPointToward(me, exit.X-me.X, exit.Y-me.Y)
-						walkToHold(sx, sy, 300)
-						continue
-					}
-					if !navi.havePlan {
-						if !navi.BuildPlan(me, frontier, time.Now()) {
-							sx, sy := screenPointToward(me, exit.X-me.X, exit.Y-me.Y)
-							walkToHold(sx, sy, 250)
-							continue
-						}
-					}
-					step := navi.Step(me, time.Now())
-					if step.Arrived || step.Diverged {
-						navi.havePlan = false
-						continue
-					}
-					hold := step.HoldMs
-					if hold <= 0 {
-						hold = 200
-					}
-					sx, sy := screenPointToward(me, step.Target.X-me.X, step.Target.Y-me.Y)
-					walkToHold(sx, sy, hold)
+					// Travel to the exit through the MOVER — live planner first, FULL MAP-PRIOR
+					// planner when the live grid can't reach. The old greedy walk-to-the-cell-
+					// nearest-the-exit beelined into terrain the map knows how to go around
+					// (measured: Blood Moor->Cold Plains exit, parked at dist=701 on the river
+					// bank for 9 minutes — the bridge is elsewhere and greedy can't see it).
+					navWalk(me, exit)
+					time.Sleep(40 * time.Millisecond)
 					continue
 				}
 			}

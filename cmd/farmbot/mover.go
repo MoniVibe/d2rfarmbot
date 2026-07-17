@@ -86,6 +86,25 @@ func losClear(g *game.Grid, a, b data.Position) bool {
 	return true
 }
 
+// losThin is losClear without the clearance requirement — plain cell walkability along the
+// segment. Only safe for following an A*-planned path (its cells are walkable by construction).
+func losThin(g *game.Grid, a, b data.Position) bool {
+	if g == nil {
+		return false
+	}
+	steps := max(abs(b.X-a.X), abs(b.Y-a.Y))
+	for i := 0; i <= steps; i++ {
+		if steps == 0 {
+			break
+		}
+		p := data.Position{X: a.X + (b.X-a.X)*i/steps, Y: a.Y + (b.Y-a.Y)*i/steps}
+		if !g.IsWalkable(p) {
+			return false
+		}
+	}
+	return true
+}
+
 // Step advances toward dest by one tick. Callers treat MoveBlocked as "pick a new strategy":
 // the mover has already tried planner fallback and clearance escape before saying it.
 func (m *Mover) Step(me data.Position, dest data.Position) MoveStatus {
@@ -179,6 +198,24 @@ func (m *Mover) Step(me data.Position, dest data.Position) MoveStatus {
 		if losClear(grid, me, nv.pts[i]) {
 			tgt = nv.pts[i]
 			break
+		}
+	}
+	// WALL-HUG ESCAPE: alongside a wall the fat ray fails even for near points, degenerating
+	// the carrot to the adjacent waypoint — 1-tile creep with a replan every step (measured at
+	// the Cold Plains border fence: pos advancing ~1 tile/s with div=true churn). The A* path
+	// itself is walkable, so when the fat carrot is that short, take the farthest THIN-ray
+	// (walkability only) plan point instead, capped at 14 tiles so we never commit blind-far.
+	if chebyshev(me, tgt) < 6 {
+		for i := len(nv.pts) - 1; i >= 0; i-- {
+			if chebyshev(me, nv.pts[i]) > 14 {
+				continue
+			}
+			if losThin(grid, me, nv.pts[i]) {
+				if chebyshev(me, nv.pts[i]) > chebyshev(me, tgt) {
+					tgt = nv.pts[i]
+				}
+				break
+			}
 		}
 	}
 	hold := step.HoldMs
