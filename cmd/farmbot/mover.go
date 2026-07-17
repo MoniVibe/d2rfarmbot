@@ -75,7 +75,11 @@ func losClear(g *game.Grid, a, b data.Position) bool {
 	}
 	for i := 0; i <= steps; i++ {
 		p := data.Position{X: a.X + (b.X-a.X)*i/steps, Y: a.Y + (b.Y-a.Y)*i/steps}
-		if !g.IsWalkable(p) {
+		// FAT ray: require a sliver of clearance around the line, or the executor threads
+		// 1-cell gaps into wall creases the force-move can't actually follow (wall-hugging).
+		if !g.IsWalkable(p) ||
+			(!g.IsWalkable(data.Position{X: p.X + 1, Y: p.Y}) && !g.IsWalkable(data.Position{X: p.X - 1, Y: p.Y})) ||
+			(!g.IsWalkable(data.Position{X: p.X, Y: p.Y + 1}) && !g.IsWalkable(data.Position{X: p.X, Y: p.Y - 1})) {
 			return false
 		}
 	}
@@ -88,7 +92,7 @@ func (m *Mover) Step(me data.Position, dest data.Position) MoveStatus {
 	if chebyshev(me, dest) <= 4 {
 		return MoveArrived
 	}
-	if dest != m.dest {
+	if chebyshev(dest, m.dest) > 6 { // tolerance: a drifting target (chased monster) keeps state
 		m.dest = dest
 		m.bestDist, m.bestAt = 1<<30, time.Now()
 		m.preferFull = false

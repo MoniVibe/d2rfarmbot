@@ -28,6 +28,7 @@ import (
 	d2gomem "github.com/hectorgimenez/d2go/pkg/memory"
 	"github.com/hectorgimenez/koolo/internal/config"
 	"github.com/hectorgimenez/koolo/internal/game"
+	"github.com/hectorgimenez/koolo/internal/gear"
 	"github.com/lxn/win"
 	"golang.org/x/sys/windows"
 )
@@ -197,6 +198,7 @@ func main() {
 	bindSkill := flag.String("bindskill", "", "PROBE: 'slotX,slotY,skillX,skillY,key' — click the HUD skill slot to open the selector, HOVER the skill icon, press the hotkey to bind it, screenshot, exit.")
 	pressOnly := flag.String("press", "", "PROBE: press this key once and exit (e.g. esc to close a leaked pause menu)")
 	gearProbe := flag.Bool("gearprobe", false, "PROBE: READ-ONLY gear evaluation — dump every equipped/inventory item with its full stat list, flag unidentified items, and note skill-granting gear that hotkey bindings depend on")
+	gearOracle := flag.Bool("gearoracle", false, "PROBE: READ-ONLY gear recommendations — parse the mod's recipe/item tables, score equipped+inventory for the summoner build, print ranked one-step upgrades (equip / socket / cube)")
 	statSnap := flag.Bool("statsnap", false, "PROBE: open the character panel (c), screenshot to logs/statsnap.png, report banked StatPoints + current str/dex/vita/ene and gear str/dex requirements. Calibration for the stat allocator.")
 	statAlloc := flag.String("statalloc", "", "'strBtnX,strBtnY,dexBtnX,dexBtnY,vitBtnX,vitBtnY': spend banked stat points — str/dex to a small buffer over gear requirements, rest to vitality. Verified via BaseStats. Needs the char panel coords from -statsnap.")
 	moveLab := flag.String("movelab", "", "MEASUREMENT: drive a fixed square course under locomotion modes ('carrot', 'lookahead', 'click', or 'all'), scoring time / stall-seconds / path efficiency per leg. The winner becomes the mover's engine. Needs -move e.")
@@ -301,7 +303,7 @@ func main() {
 	// "move", which on this build is unreliable (D2R ignores injected left-clicks) AND spams
 	// left-clicks that desync D2R's in-process mouse state (the flaky-LMB symptom). Refuse to run
 	// the farming/goto loop without it. Read-only probes don't move, so they're exempt.
-	probeOnly := *mapcheck || *mapalign || *levelprobe || *charProbe || *aimProbe || *objProbe != 0 || *interactWith != "" || *dieTest || *uiSnap != "" || *panelTest != "" || *bindSkill != "" || *pressOnly != "" || *gearProbe || *statSnap || *statAlloc != "" || *moveLab != "" || *collprobe || *roomprobe != 0 || *wpprobe || *hoverProbe || *cursorScan || *cursorAddr != "" || *pathProbe || *pathDrive || *shadowWalk != "" || *findWriter != "" || *inputTest || *clickTest || *wpAt || *fixInput || *resumeThreads || *screenshot != "" || *wpTown || *wpAim || *wpGoto != 0 || *npcProbe != 0 || *hoverGrid
+	probeOnly := *mapcheck || *mapalign || *levelprobe || *charProbe || *aimProbe || *objProbe != 0 || *interactWith != "" || *dieTest || *uiSnap != "" || *panelTest != "" || *bindSkill != "" || *pressOnly != "" || *gearProbe || *gearOracle || *statSnap || *statAlloc != "" || *moveLab != "" || *collprobe || *roomprobe != 0 || *wpprobe || *hoverProbe || *cursorScan || *cursorAddr != "" || *pathProbe || *pathDrive || *shadowWalk != "" || *findWriter != "" || *inputTest || *clickTest || *wpAt || *fixInput || *resumeThreads || *screenshot != "" || *wpTown || *wpAim || *wpGoto != 0 || *npcProbe != 0 || *hoverGrid
 	if !probeOnly && *moveKey == "" {
 		logger.Error("-move is required: bind 'Force Move' in D2R Options>Controls and pass e.g. -move e. " +
 			"Refusing to run without it — the left-click move fallback is unreliable on this build and corrupts D2R's mouse state.")
@@ -803,6 +805,7 @@ func main() {
 		sx, sy := screenPointToward(me, dx, dy)
 		return sx, sy, true
 	}
+	_ = carrotScreen // retired from chase/explore; kept for -walkto until that probe ports
 
 	// Wait until properly in-game with a sane player position (lets the offsets settle;
 	// scanning during a load gives garbage and the character moves the wrong way).
@@ -2268,6 +2271,41 @@ func main() {
 		return
 	}
 
+	// -gearoracle: the oracle speaks. Knowledge from the mod's own tables, valuation for THIS
+	// build, feasibility from what he actually carries. Read-only; execution comes with the
+	// vendor/cube UI work.
+	if *gearOracle {
+		tabs, err := gear.LoadTables(gear.DefaultExcelDir)
+		if err != nil {
+			logger.Error("gearoracle: table load failed", "err", err)
+			return
+		}
+		ps := tabs.Stats
+		logger.Info("gearoracle: tables", "items", ps.ItemsLoaded, "recipes", ps.RecipesParsed, "skipped", ps.RecipesSkipped)
+		d := gr.GetData()
+		eq := d.Inventory.ByLocation(item.LocationEquipped)
+		inv := d.Inventory.ByLocation(item.LocationInventory)
+		gold := statVal(d, stat.Gold)
+		w := gear.DefaultSummonerWeights()
+		for _, it := range eq {
+			sc, reasons := tabs.ScoreItem(it, w)
+			logger.Info("gearoracle: equipped", "name", string(it.Name), "score", fmt.Sprintf("%.1f", sc),
+				"why", strings.Join(reasons, "; "))
+		}
+		sugs := tabs.FeasibleUpgrades(eq, inv, gold, w)
+		if len(sugs) == 0 {
+			logger.Info("gearoracle: no feasible one-step upgrades right now")
+		}
+		for i, sg := range sugs {
+			if i >= 12 {
+				break
+			}
+			logger.Info("gearoracle: SUGGEST", "rank", i+1, "kind", sg.Kind,
+				"gain", fmt.Sprintf("%+.1f", sg.Gain), "gamble", sg.Gamble, "what", sg.What)
+		}
+		return
+	}
+
 	// -statsnap: character-panel calibration + a read of what allocation WOULD do.
 	if *statSnap {
 		d := gr.GetData()
@@ -3729,7 +3767,6 @@ func main() {
 	breakDir := 0
 	var posHist []data.Position // recent positions, to detect being confined to a thin strip
 	breakoutTick := 0
-	wanderTick := 0
 	blacklist := map[data.UnitID]time.Time{} // unreachable targets we've given up on, briefly
 	var exploreDest data.Position
 	var exploreSince time.Time
@@ -3740,6 +3777,8 @@ func main() {
 	var gotoGridRefresh time.Time
 	var gotoLastPos data.Position
 	var entranceContactStart time.Time
+	var exitParkStart time.Time
+	exitRingIdx := 0
 	gotoProgressAt := time.Now()
 	var badDests []data.Position // explore destinations that turned out unreachable (walled off)
 	chickenStreak := 0           // consecutive Chicken ticks, so a one-frame HP dip doesn't spam TP
@@ -3793,6 +3832,7 @@ func main() {
 	summonFails := 0
 	var summonDisabledUntil time.Time
 	var golemAt time.Time
+	lastPosture := "engage"
 	autoStatAt := time.Time{}
 	var corpseTargetPos data.Position
 	// meleeSwing: a left-click attack that actually CONNECTS. A blind interactClick at the
@@ -4585,6 +4625,51 @@ mainLoop:
 						}
 						gotoGridRefresh = time.Now()
 					}
+					// PARKED AT A LYING MAP POINT: the mapped exit produced no entrance and no
+					// border candidates. Measured off by ~30 subtiles at the Den; a full run burned
+					// at Burial Grounds. The park timer counts time-in-NEIGHBORHOOD (<=40) and
+					// survives bounce excursions (resetting on momentary dist>6 made the ring
+					// unreachable — the bouncing WAS the fish). Ring-search at 32; after two full
+					// fruitless rings, give up on this route stop and advance — a lying exit costs
+					// 90 seconds, not a night.
+					if chebyshev(me, exit) <= 40 {
+						if exitParkStart.IsZero() {
+							exitParkStart = time.Now()
+							exitRingIdx = 0
+						}
+						if time.Since(exitParkStart) > 8*time.Second {
+							if exitRingIdx >= 16 {
+								logger.Warn("goto: exit unreachable after 2 rings — abandoning this stop")
+								exitParkStart = time.Time{}
+								if *autoProgress && curGoto == progressTarget && routeIdx < len(progressRoute)-1 {
+									routeIdx++
+									_ = os.WriteFile(routeStateFile, []byte(fmt.Sprintf("%d", routeIdx)), 0644)
+									logger.Info("autoprogress: skipping to next stop", "area", progressRoute[routeIdx])
+									curGoto, progressTarget = progressRoute[routeIdx], progressRoute[routeIdx]
+								} else {
+									curGoto = *gotoArea
+								}
+								continue
+							}
+							angle := float64(exitRingIdx%8) / 8.0 * 2 * math.Pi
+							ring := data.Position{
+								X: exit.X + int(32*math.Cos(angle)),
+								Y: exit.Y + int(32*math.Sin(angle)),
+							}
+							if time.Since(gotoBorderSeekLog) > 5*time.Second {
+								logger.Info("goto: mapped exit is a dud — ring-searching",
+									"sector", exitRingIdx%8, "lap", exitRingIdx/8,
+									"to", fmt.Sprintf("(%d,%d)", ring.X, ring.Y))
+								gotoBorderSeekLog = time.Now()
+							}
+							if chebyshev(me, ring) <= 6 {
+								exitRingIdx++
+							} else {
+								navWalk(me, ring)
+							}
+							continue
+						}
+					}
 					// Frontier target: walkable cell nearest the exit.
 					bestD := 1 << 30
 					var frontier data.Position
@@ -4779,6 +4864,72 @@ mainLoop:
 		}
 
 		// Keep the current target until it's dead/gone; else pick nearest non-blacklisted.
+		// COMBAT ORACLE v1 — posture before targets. Founding incident: a bow necromancer
+		// charged a 12-density pack with two minions and died. Threat = weighted enemy mass in
+		// judgment range; strength = the army + our pools. Postures:
+		//   engage  — fight normally.
+		//   kite    — shoot from range, NEVER advance into the pack; step back when crowded.
+		//   regroup — too weak for this pack: pull back, raise from any corpse, refresh golem;
+		//             with nothing to raise, walk away from the pack entirely (live to farm).
+		threat := 0
+		var packCentroid data.Position
+		packN := 0
+		for i := range d.Monsters {
+			m := &d.Monsters[i]
+			if m.Mode == mode.NpcDeath || m.Mode == mode.NpcDead || m.IsGoodNPC() || m.IsPet() || m.IsMerc() {
+				continue
+			}
+			if dd := chebyshev(me, m.Position); dd <= 30 {
+				w := 1
+				if m.IsElite() {
+					w += 2
+				}
+				if m.IsMonsterRaiser() {
+					w += 2
+				}
+				threat += w
+				packCentroid.X += m.Position.X
+				packCentroid.Y += m.Position.Y
+				packN++
+			}
+		}
+		if packN > 0 {
+			packCentroid.X /= packN
+			packCentroid.Y /= packN
+		}
+		petsAlive := 0
+		for i := range d.Monsters {
+			if d.Monsters[i].IsPet() {
+				petsAlive++
+			}
+		}
+		strength := petsAlive*3 + 2 // the char himself is worth a couple of zombies
+		if d.PlayerUnit.HPPercent() > 60 {
+			strength += 2
+		}
+		posture := "engage"
+		if threat > strength*3 {
+			posture = "regroup"
+		} else if threat > strength {
+			posture = "kite"
+		}
+		if posture != lastPosture {
+			logger.Info("posture", "now", posture, "threat", threat, "strength", strength, "pets", petsAlive)
+			lastPosture = posture
+		}
+		if posture == "regroup" && packN > 0 {
+			// Away from the pack, not through it. Corpse-raising happens via the summon block
+			// next tick once we're clear; with nothing to raise this simply leaves the pack.
+			retreat := data.Position{X: me.X + (me.X-packCentroid.X), Y: me.Y + (me.Y-packCentroid.Y)}
+			if chebyshev(me, packCentroid) > 25 {
+				// Far enough — hold here so summoning can happen; do not re-approach.
+				time.Sleep(200 * time.Millisecond)
+			} else {
+				navWalk(me, retreat)
+			}
+			continue
+		}
+
 		var target data.Monster
 		haveTarget := false
 		if targetID != 0 {
@@ -4953,69 +5104,37 @@ mainLoop:
 				}
 			}
 
-			// SELF-REPAIR / smart exploration: with an aligned map, PATH to a far walkable point
-			// to escape corners and roam productively toward monsters. Pick a new destination when
-			// we have none, arrive, or stall (12s), then A* toward it.
-			if navGrid != nil && len(walkables) > 0 {
-				need := exploreDest.X == 0 && exploreDest.Y == 0
-				if !need && (chebyshev(me, exploreDest) < 15 || time.Since(exploreSince) > 12*time.Second) {
-					need = true
-				}
+			// EXPLORE: frontier-driven, not random. The atlas knows which walkable cells touch
+			// UNKNOWN space; walking to one loads rooms, grows the atlas, and moves the frontier —
+			// by construction never aimless. Random-far-cell picking and the blind wander circle
+			// generator are DELETED. Execution goes through the Mover (LOS-lookahead executor).
+			if navGrid != nil {
+				need := exploreDest.X == 0 || chebyshev(me, exploreDest) < 8 || time.Since(exploreSince) > 25*time.Second
 				if need {
-					for tries := 0; tries < 60; tries++ {
-						c := walkables[rand.Intn(len(walkables))]
-						w := data.Position{X: c.X + navGrid.OffsetX, Y: c.Y + navGrid.OffsetY}
-						// far enough to be worth traveling, and not near a known dead-end (walled-off).
-						if chebyshev(me, w) > 70 && !nearAny(w, badDests, 50) {
-							exploreDest, exploreSince = w, time.Now()
-							break
+					if fp, ok := atlas.FrontierNear(gr.MapSeed(), int(d.PlayerUnit.Area), me); ok && !nearAny(fp, badDests, 30) {
+						exploreDest, exploreSince = fp, time.Now()
+						logger.Info("explore: frontier", "to", fmt.Sprintf("(%d,%d)", fp.X, fp.Y),
+							"dist", chebyshev(me, fp))
+					} else if len(walkables) > 0 {
+						// Fully-mapped area (or frontier unreachable): sweep known ground far from here.
+						for tries := 0; tries < 40; tries++ {
+							c := walkables[rand.Intn(len(walkables))]
+							w := data.Position{X: c.X + navGrid.OffsetX, Y: c.Y + navGrid.OffsetY}
+							if chebyshev(me, w) > 70 && !nearAny(w, badDests, 50) {
+								exploreDest, exploreSince = w, time.Now()
+								break
+							}
 						}
 					}
 				}
-				// Travel to exploreDest via the deliberate Navigator (same follower as chase/-walkto),
-				// not the old A*+losWaypoint+320ms that thrashed. On arrival/divergence, repick.
-				if navi != nil && exploreDest.X != 0 {
-					now := time.Now()
-					if !navi.havePlan || navi.goal != exploreDest {
-						if !navi.BuildPlan(me, exploreDest, now) {
-							badDests = append(badDests, exploreDest)
-							exploreDest = data.Position{}
-						}
-					}
-					if navi.havePlan && exploreDest.X != 0 {
-						step := navi.Step(me, now)
-						if step.Arrived {
-							exploreDest = data.Position{} // reached — repick next tick
-						} else if step.Diverged {
-							if !navi.BuildPlan(me, exploreDest, now) {
-								badDests = append(badDests, exploreDest)
-								exploreDest = data.Position{}
-							}
-						} else if msx, msy, ok := carrotScreen(me, step.Target); ok {
-							hold := step.HoldMs
-							if hold <= 0 {
-								hold = 200
-							}
-							logger.Info("explore", "to", fmt.Sprintf("(%d,%d)", exploreDest.X, exploreDest.Y),
-								"pos", fmt.Sprintf("(%d,%d)", me.X, me.Y))
-							walkToHold(msx, msy, hold)
-							time.Sleep(50 * time.Millisecond)
-							continue
-						}
-					}
+				if exploreDest.X != 0 {
+					navWalk(me, exploreDest)
+					time.Sleep(40 * time.Millisecond)
 					continue
 				}
 			}
-			// Blind wander fallback (no nav): sweep the heading so we explore, not oscillate.
-			wanderTick++
-			// Commit to each heading for several steps so we actually TRAVEL along a wall and
-			// round its corner, instead of jittering in place against it.
-			dir := (wanderTick / 5) % 8
-			angle := float64(dir) / 8.0 * 2 * math.Pi
-			wx := cx + int(300*math.Cos(angle))
-			wy := cy + int(140*math.Sin(angle))
-			logger.Info("wander", "dir", dir, "pos", fmt.Sprintf("(%d,%d)", me.X, me.Y))
-			walkTo(wx, wy)
+			// No grid at all: hold position briefly rather than walk circles.
+			time.Sleep(300 * time.Millisecond)
 			continue
 		}
 
@@ -5094,11 +5213,8 @@ mainLoop:
 				targetID = 0
 				continue
 			}
-			// CLOSE-RANGE FINAL APPROACH: within a short reach, walk STRAIGHT at the monster with
-			// short distance-scaled pulses instead of a fixed 320ms hold. A long pulse at ~15-20
-			// tiles overshoots past the monster (the back-and-forth the player saw); short pulses
-			// let her settle into melee range and bite on the very next tick. No path lookahead
-			// needed this close — the target is basically line-of-sight.
+			// CLOSE-RANGE FINAL APPROACH: within short reach walk STRAIGHT with distance-scaled
+			// pulses (a long hold overshoots past the monster — the original back-and-forth).
 			if dist <= 30 {
 				msx, msy := screenPointToward(me, target.Position.X-me.X, target.Position.Y-me.Y)
 				hold := dist * 9
@@ -5112,47 +5228,25 @@ mainLoop:
 				time.Sleep(40 * time.Millisecond)
 				continue
 			}
-			// Navigation: A* a route around walls to the target, then step toward a waypoint
-			// a little ahead. Falls through to the straight-line heuristic if no path (target
-			// off-grid or on a non-walkable cell — fine for the final melee approach).
-				if navi != nil {
-					now := time.Now()
-					if !navi.havePlan || chebyshev(navi.goal, target.Position) > 10 {
-						navi.BuildPlan(me, target.Position, now)
-					}
-					if navi.havePlan {
-						step := navi.Step(me, now)
-						if step.Diverged {
-							navi.BuildPlan(me, target.Position, now)
-							step = navi.Step(me, now)
-						}
-						if !step.Arrived {
-							if msx, msy, ok := carrotScreen(me, step.Target); ok {
-								hold := step.HoldMs
-								if hold <= 0 {
-									hold = 200
-								}
-								logger.Info("chase", "dist", dist, "me", fmt.Sprintf("(%d,%d)", me.X, me.Y),
-									"carrot", fmt.Sprintf("(%d,%d)", step.Target.X, step.Target.Y))
-								walkToHold(msx, msy, hold)
-								time.Sleep(50 * time.Millisecond)
-								continue
-							}
-						}
-					}
+			if posture == "kite" {
+				// Kiting: do NOT close on a pack that outweighs the army. Step back when crowded,
+				// otherwise hold and let the bite fire at whatever drifts into range.
+				if packN > 0 && chebyshev(me, packCentroid) < *attackRange-5 {
+					retreat := data.Position{X: me.X + (me.X-packCentroid.X)/2, Y: me.Y + (me.Y-packCentroid.Y)/2}
+					navWalk(me, retreat)
+				} else {
+					time.Sleep(150 * time.Millisecond)
 				}
-				// Straight-line approach (final melee closing, or when nav is off). The global
-			// unstick handles wall snags, so this stays simple.
-			dirX, dirY := target.Position.X-me.X, target.Position.Y-me.Y
-			if dist > 20 {
-				dirX, dirY = dirX*20/dist, dirY*20/dist
+				continue
 			}
-			msx, msy := screenPointToward(me, dirX, dirY)
-			logger.Info("move", "dist", dist,
-				"me", fmt.Sprintf("(%d,%d)", me.X, me.Y),
-				"mon", fmt.Sprintf("(%d,%d)", target.Position.X, target.Position.Y))
-			walkTo(msx, msy)
-			time.Sleep(120 * time.Millisecond)
+			// Long chase rides the Mover — the movelab executor with dest tolerance, so a drifting
+			// monster keeps the plan instead of resetting it every tick.
+			if shiftCheck%4 == 0 {
+				logger.Info("chase", "dist", dist, "me", fmt.Sprintf("(%d,%d)", me.X, me.Y),
+					"mon", fmt.Sprintf("(%d,%d)", target.Position.X, target.Position.Y))
+			}
+			navWalk(me, target.Position)
+			time.Sleep(40 * time.Millisecond)
 		}
 	}
 	if err := atlas.Save(); err != nil {

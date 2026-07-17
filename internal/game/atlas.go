@@ -22,6 +22,8 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+
+	"github.com/hectorgimenez/d2go/pkg/data"
 )
 
 type atlasCellState uint8
@@ -82,6 +84,62 @@ func (a *Atlas) overlay(seed uint, area int) *AtlasOverlay {
 	ov := loadOverlayFile(a.filePath(seed, area), seed, area)
 	a.overlays[k] = ov
 	return ov
+}
+
+// FrontierNear returns the known-walkable cell nearest to `from` that touches UNKNOWN space —
+// the natural "go somewhere new" target for exploration: walking to a frontier loads the rooms
+// beyond it, which grows the atlas, which moves the frontier. Returns false when the overlay is
+// empty or fully enclosed (no unknown-adjacent walkables = the area is completely mapped).
+func (a *Atlas) FrontierNear(seed uint, area int, from data.Position) (data.Position, bool) {
+	if a == nil {
+		return data.Position{}, false
+	}
+	ov := a.overlay(seed, area)
+	if ov == nil || ov.cells == nil {
+		return data.Position{}, false
+	}
+	best := 1 << 30
+	var bp data.Position
+	for y := 0; y < ov.Height; y++ {
+		for x := 0; x < ov.Width; x++ {
+			if ov.cells[y*ov.Width+x] != atlasWalkable {
+				continue
+			}
+			frontier := false
+			for _, d := range [4][2]int{{1, 0}, {-1, 0}, {0, 1}, {0, -1}} {
+				nx, ny := x+d[0], y+d[1]
+				if nx < 0 || ny < 0 || nx >= ov.Width || ny >= ov.Height {
+					frontier = true // overlay edge — the world continues beyond what we know
+					break
+				}
+				if ov.cells[ny*ov.Width+nx] == atlasUnknown {
+					frontier = true
+					break
+				}
+			}
+			if !frontier {
+				continue
+			}
+			w := data.Position{X: x + ov.OriginX, Y: y + ov.OriginY}
+			dd := max(absInt(w.X-from.X), absInt(w.Y-from.Y))
+			// Prefer frontiers worth traveling to — very near ones are usually the wall we're
+			// standing next to; weight distance but skip the trivial ring.
+			if dd < 15 {
+				continue
+			}
+			if dd < best {
+				best, bp = dd, w
+			}
+		}
+	}
+	return bp, best < 1<<30
+}
+
+func absInt(v int) int {
+	if v < 0 {
+		return -v
+	}
+	return v
 }
 
 // MergeLiveGrid stamps the live grid's collision into the (seed, area) overlay, restricted to
