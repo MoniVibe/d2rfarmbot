@@ -3779,6 +3779,21 @@ func main() {
 	var entranceContactStart time.Time
 	var exitParkStart time.Time
 	exitRingIdx := 0
+	// Exit-seek GOAL-progress watchdog: the 5s/2-tile freeze watchdog misses treadmills — the
+	// bot jiggles ±3 tiles against a wall pocket (resetting the freeze timer) while dist-to-exit
+	// sits flat (measured: 9 minutes parked at dist=701, run burned). Track best dist ever
+	// achieved toward the current exit; no improvement for 40s -> detour to a frontier so new
+	// rooms load elsewhere; still no improvement 60s after that -> abandon the stop.
+	exitSeekBestDist := 1 << 30
+	var exitSeekBestAt time.Time
+	var exitSeekExit data.Position
+	var exitDetourDest data.Position
+	var exitDetourUntil time.Time
+	// Explore commitment: best-dist-so-far toward exploreDest; re-pick only on arrival or when
+	// progress stalls (frontier re-selection mid-walk sent the bot straight back over its own
+	// footsteps — measured at the end of run 2).
+	exploreBestDist := 1 << 30
+	var exploreBestAt time.Time
 	gotoProgressAt := time.Now()
 	var badDests []data.Position // explore destinations that turned out unreachable (walled off)
 	chickenStreak := 0           // consecutive Chicken ticks, so a one-frame HP dip doesn't spam TP
@@ -4166,6 +4181,9 @@ mainLoop:
 				walkables, walkCentroid = computeWalk(g)
 				buildMapNavi()
 				posHist, exploreDest, badDests, gotoCross = nil, data.Position{}, nil, nil
+				exploreBestDist, exploreBestAt = 1<<30, time.Now()
+				exitSeekExit, exitSeekBestDist = data.Position{}, 1<<30
+				exitDetourDest, exitDetourUntil = data.Position{}, time.Time{}
 				gotoIdx = 0
 				entranceContactStart = time.Time{} // transitioned — reset the contact timer
 				progressAt = time.Now()
@@ -4563,6 +4581,51 @@ mainLoop:
 							"hop", int(hopTarget), "exit", fmt.Sprintf("(%d,%d)", exit.X, exit.Y),
 							"dist", chebyshev(me, exit))
 						gotoBorderSeekLog = time.Now()
+					}
+					// GOAL-progress watchdog (see declaration). Improvement threshold 5 so wall-pocket
+					// jiggle doesn't count as progress.
+					if exit != exitSeekExit {
+						exitSeekExit, exitSeekBestDist, exitSeekBestAt = exit, 1<<30, time.Now()
+						exitDetourDest, exitDetourUntil = data.Position{}, time.Time{}
+					}
+					if dd := chebyshev(me, exit); dd < exitSeekBestDist-5 || exitSeekBestDist == 1<<30 {
+						exitSeekBestDist, exitSeekBestAt = dd, time.Now()
+					}
+					if !exitDetourUntil.IsZero() && time.Now().Before(exitDetourUntil) &&
+						exitDetourDest.X != 0 && chebyshev(me, exitDetourDest) > 6 {
+						// Mid-detour: walk to the frontier so rooms load somewhere new, then let the
+						// normal seek retry with the grown grid.
+						navWalk(me, exitDetourDest)
+						continue
+					}
+					if time.Since(exitSeekBestAt) > 40*time.Second {
+						if exitDetourUntil.IsZero() {
+							// Stage 1: strategy change, not a harder retry — explore a frontier for up
+							// to 60s to load rooms in a different direction.
+							if fp, fok := atlas.FrontierNear(gr.MapSeed(), int(d.PlayerUnit.Area), me); fok {
+								logger.Warn("goto: no exit progress in 40s — frontier detour",
+									"bestDist", exitSeekBestDist, "detour", fmt.Sprintf("(%d,%d)", fp.X, fp.Y))
+								exitDetourDest, exitDetourUntil = fp, time.Now().Add(60*time.Second)
+								exitSeekBestAt = time.Now() // fresh window for the post-detour retry
+								navWalk(me, fp)
+								continue
+							}
+						}
+						// Stage 2 (or no frontier at all): the area won't yield this exit — abandon
+						// the stop, same policy as the lying-exit ring give-up.
+						logger.Warn("goto: no exit progress after detour — abandoning this stop",
+							"bestDist", exitSeekBestDist)
+						exitSeekExit, exitSeekBestDist = data.Position{}, 1<<30
+						exitDetourDest, exitDetourUntil = data.Position{}, time.Time{}
+						if *autoProgress && curGoto == progressTarget && routeIdx < len(progressRoute)-1 {
+							routeIdx++
+							_ = os.WriteFile(routeStateFile, []byte(fmt.Sprintf("%d", routeIdx)), 0644)
+							logger.Info("autoprogress: skipping to next stop", "area", progressRoute[routeIdx])
+							curGoto, progressTarget = progressRoute[routeIdx], progressRoute[routeIdx]
+						} else {
+							curGoto = *gotoArea
+						}
+						continue
 					}
 					// ENTRANCE WARPS (Den, Burial Grounds, caves): these connect via a clickable
 					// warp, not a walkable border, so the room graph NEVER yields candidates.
@@ -5109,8 +5172,31 @@ mainLoop:
 			// by construction never aimless. Random-far-cell picking and the blind wander circle
 			// generator are DELETED. Execution goes through the Mover (LOS-lookahead executor).
 			if navGrid != nil {
-				need := exploreDest.X == 0 || chebyshev(me, exploreDest) < 8 || time.Since(exploreSince) > 25*time.Second
+				// COMMITMENT: hold the current destination until arrival or a genuine progress
+				// stall — the old flat 25s re-pick let FrontierNear retarget mid-walk to a frontier
+				// BEHIND us (rooms loading shift the "nearest"), producing the back-and-forth walk
+				// the user watched. Progress = best-dist-so-far improving; stall = 12s without.
+				if exploreDest.X != 0 {
+					if dd := chebyshev(me, exploreDest); dd < exploreBestDist-3 || exploreBestDist == 1<<30 {
+						exploreBestDist, exploreBestAt = dd, time.Now()
+					}
+				}
+				arrived := exploreDest.X != 0 && chebyshev(me, exploreDest) < 8
+				stalled := exploreDest.X != 0 && time.Since(exploreBestAt) > 12*time.Second &&
+					time.Since(exploreSince) > 12*time.Second
+				if stalled {
+					// Unreachable as planned — remember it so we don't re-pick it immediately.
+					badDests = append(badDests, exploreDest)
+					if len(badDests) > 24 {
+						badDests = badDests[len(badDests)-24:]
+					}
+					logger.Info("explore: stalled — dropping destination",
+						"dest", fmt.Sprintf("(%d,%d)", exploreDest.X, exploreDest.Y), "bestDist", exploreBestDist)
+				}
+				need := exploreDest.X == 0 || arrived || stalled
 				if need {
+					exploreDest, exploreBestDist = data.Position{}, 1<<30
+					exploreBestAt = time.Now()
 					if fp, ok := atlas.FrontierNear(gr.MapSeed(), int(d.PlayerUnit.Area), me); ok && !nearAny(fp, badDests, 30) {
 						exploreDest, exploreSince = fp, time.Now()
 						logger.Info("explore: frontier", "to", fmt.Sprintf("(%d,%d)", fp.X, fp.Y),
