@@ -169,6 +169,9 @@ func main() {
 	meleeBelow := flag.Int("meleebelow", 25, "MP%% threshold below which the bot melees instead of casting")
 	castRange := flag.Int("castrange", 8, "max distance (subtiles) to cast the right skill — Firestorm's flames crawl and dissipate, so casts from bite range (18) burn mana into empty ground")
 	autoSkill := flag.String("autoskill", "", "'tabX,tabY,skillX,skillY': when a skill point is banked and no enemy is near, open the skill tree, click the tab then the skill, verify the point was spent. All overnight points go to one skill.")
+	autoProgress := flag.Bool("autoprogress", false, "farm along the act-1 route (Den of Evil -> Cold Plains -> Burial Grounds -> Stony Field -> Dark Wood -> Black Marsh), advancing when an area runs dry; position persisted across runs")
+	summonKey := flag.String("summon", "", "summon hotkey (e.g. f2 = RaiseSkeleton): when pets are below -maxpets and a monster corpse is near, select the summon and cast it at the corpse; the next bite's -rabies press restores the attack skill")
+	maxPets := flag.Int("maxpets", 3, "stop summoning at this many living pets")
 	spirit := flag.String("spirit", "f3", "spirit/aura buff hotkey")
 	wolves := flag.String("wolves", "f4", "summon wolves hotkey")
 	creeper := flag.String("creeper", "f5", "summon creeper hotkey")
@@ -1184,6 +1187,20 @@ func main() {
 		for id, pts := range p.Skills {
 			logger.Info("charprobe: skill", "id", int(id), "name", skillName(id),
 				"level", pts.Level, "quantity", pts.Quantity, "charges", pts.Charges)
+		}
+		logger.Info("charprobe: belt", "items", len(d.Inventory.Belt.Items),
+			"rows", d.Inventory.Belt.Rows(), "beltName", string(d.Inventory.Belt.Name))
+		for _, bp := range d.Inventory.Belt.Items {
+			logger.Info("charprobe: belt item", "name", string(bp.Name),
+				"pos", fmt.Sprintf("(%d,%d)", bp.Position.X, bp.Position.Y))
+		}
+		for _, loc := range []item.LocationType{item.LocationEquipped, item.LocationInventory} {
+			its := d.Inventory.ByLocation(loc)
+			logger.Info("charprobe: items", "location", string(loc), "count", len(its))
+			for _, it := range its {
+				logger.Info("charprobe: item", "location", string(loc), "name", string(it.Name),
+					"quality", it.Quality.ToString())
+			}
 		}
 		return
 	}
@@ -3232,13 +3249,38 @@ func main() {
 	// cooldowns survive across ticks.
 	var lastHeal, lastMana, lastRejuv time.Time
 
+	// beltHealPos finds the first belt column holding ANYTHING drinkable for HP: vanilla healing
+	// potions, rejuvs, or the mod's Herb. Reimagined replaces starter potions with Herbs, so the
+	// name-based potion matcher saw an EMPTY belt while 4 herbs sat in it — the char starved at
+	// 20hp with a full belt for 4 hours (measured). Match generously; a wasted sip is cheap.
+	beltHealPos := func(d game.Data) (data.Position, bool) {
+		if p, ok := d.Inventory.Belt.GetFirstPotion(data.HealingPotion); ok {
+			return p, true
+		}
+		if p, ok := d.Inventory.Belt.GetFirstPotion(data.RejuvenationPotion); ok {
+			return p, true
+		}
+		for _, i := range d.Inventory.Belt.Items {
+			n := strings.ToLower(string(i.Name))
+			if (strings.Contains(n, "herb") || strings.Contains(n, "potion")) &&
+				i.Position.Y == 0 && i.Position.X >= 0 && i.Position.X <= 3 {
+				return i.Position, true
+			}
+		}
+		return data.Position{}, false
+	}
+
 	// drink presses the belt column holding the first potion of potType, respecting -potcd.
-	// Returns false (no-op) if on cooldown or the potion isn't on the belt.
+	// Returns false (no-op) if on cooldown or the potion isn't on the belt. The healing path
+	// accepts any HP-drinkable (incl. mod herbs) via beltHealPos.
 	drink := func(d game.Data, potType data.PotionType, last *time.Time) bool {
 		if time.Since(*last) < time.Duration(*potcd)*time.Millisecond {
 			return false
 		}
 		pos, ok := d.Inventory.Belt.GetFirstPotion(potType)
+		if !ok && potType == data.HealingPotion {
+			pos, ok = beltHealPos(d)
+		}
 		if !ok || pos.X < 0 || pos.X > 3 {
 			return false
 		}
@@ -3289,6 +3331,14 @@ func main() {
 			return StatusDead
 		}
 		if hp <= *chicken {
+			// DRINK BEFORE FLEEING. Chicken returned before the drink branches ever ran, so in
+			// the band hp <= chicken the bot fled forever while holding a full belt (measured:
+			// hp pinned at 20 with 4 herbs). If anything drinkable exists, quaff it and stay in
+			// the fight this tick — re-evaluate after the potion lands.
+			if drink(d, data.HealingPotion, &lastHeal) {
+				logger.Info("drink", "kind", "emergency", "hp", hp, "mp", mp)
+				return StatusNormal
+			}
 			return StatusChicken
 		}
 		// Rejuv-first: it restores both HP and MP, so prefer it when either is low.
@@ -3382,6 +3432,18 @@ func main() {
 	corpseSweepFails := 0
 	corpseGoneStreak := 0
 	autoSkillAt := time.Time{}
+	progressTarget := 0
+	progressRoute := []int{8, 3, 9, 4, 5, 6} // Den of Evil, Cold Plains, Burial Grounds, Stony Field, Dark Wood, Black Marsh
+	routeIdx := 0
+	routeStateFile := filepath.Join("logs", "route_state.txt")
+	if b, err := os.ReadFile(routeStateFile); err == nil {
+		var ri int
+		if n, _ := fmt.Sscanf(string(b), "%d", &ri); n == 1 && ri >= 0 && ri < len(progressRoute) {
+			routeIdx = ri
+		}
+	}
+	lastEnemySeen := time.Now()
+	summonAt := time.Time{}
 	var corpseTargetPos data.Position
 	// navWalk: ONE deliberate navigation step toward dest — Navigator plan + carrot, wrapped in
 	// the net-progress watchdog (no movement for 8s -> unstick burst + replan). Call it once per
@@ -3509,6 +3571,10 @@ func main() {
 		if strings.Contains(n, "manapotion") {
 			return beltShortOn(d, data.ManaPotion)
 		}
+		if strings.Contains(n, "herb") {
+			// The mod's HP consumable — grab while the belt has room.
+			return len(d.Inventory.Belt.Items) < 4*d.Inventory.Belt.Rows()
+		}
 		return false
 	}
 	nearAny := func(p data.Position, list []data.Position, r int) bool {
@@ -3633,16 +3699,15 @@ mainLoop:
 			// behavior instead — if it ends in death, death recovery respawns at FULL hp, so
 			// death is effectively the healing mechanic for a broke naked character.
 			if !*hardcore {
-				_, hasHeal := d.Inventory.Belt.GetFirstPotion(data.HealingPotion)
-				_, hasRejuv := d.Inventory.Belt.GetFirstPotion(data.RejuvenationPotion)
-				// Bail out of chicken when there's nothing to drink AND either no threat is near
-				// (fleeing forever = frozen run, necros don't regen) or fleeing has demonstrably
-				// failed for ~7s (cornered against a wall with a zombie in reach — measured).
-				// Worst case is death, and death respawns at FULL hp: the fallback healer.
-				if !hasHeal && !hasRejuv && (!anyEnemyWithin(d, me, *dangerRange) || chickenStreak > 20) {
+				_, hasHeal := beltHealPos(d)
+				// NO drinkables -> NO chicken, unconditionally. The earlier threat-gated version
+				// produced a 4-HOUR limit cycle at the dangerRange boundary: chase pulls the
+				// monster into range -> chicken flees -> monster leaves range -> valve resumes ->
+				// chase again; hp pinned at 20, zero kills, zero deaths, zero progress. A broke
+				// softcore char just fights: worst case is death, and death respawns at FULL hp.
+				if !hasHeal {
 					if time.Since(lastTownLog) > 10*time.Second {
-						logger.Warn("low HP, no potions, flee failing or pointless — resuming (death respawn is the fallback healer)",
-							"chickenStreak", chickenStreak)
+						logger.Warn("low HP, no potions — chicken disabled (softcore: death respawn is the healer)")
 						lastTownLog = time.Now()
 					}
 					chickenStreak = 0
@@ -3707,6 +3772,63 @@ mainLoop:
 				logger.Info("nav: re-aligned new area", "area", alignedArea,
 					"origin", fmt.Sprintf("(%d,%d)", g.OffsetX, g.OffsetY), "walkables", len(walkables))
 			}
+		}
+
+		// AUTO-PROGRESS: farm along the act-1 route, advancing when the current area runs dry
+		// (no enemy inside the farm radius for ~2.5 min while standing in the target area).
+		// Route position persists across runs so a restart doesn't re-clear the Den. Never
+		// fights the death recovery's retarget: it only asserts when curGoto is idle or already
+		// the progression target.
+		if *autoProgress && *gotoArea == 0 {
+			if anyEnemyWithin(d, me, *radius) {
+				lastEnemySeen = time.Now()
+			}
+			if curGoto == 0 || curGoto == progressTarget {
+				if int(d.PlayerUnit.Area) == progressTarget && progressTarget != 0 &&
+					time.Since(lastEnemySeen) > 150*time.Second && routeIdx < len(progressRoute)-1 {
+					routeIdx++
+					_ = os.WriteFile(routeStateFile, []byte(fmt.Sprintf("%d", routeIdx)), 0644)
+					logger.Info("autoprogress: area exhausted — advancing", "to", progressRoute[routeIdx])
+					lastEnemySeen = time.Now()
+				}
+				want := progressRoute[routeIdx]
+				if want != progressTarget {
+					logger.Info("autoprogress: farming target", "area", want, "routeIdx", routeIdx)
+				}
+				curGoto, progressTarget = want, want
+			}
+		}
+
+		// SUMMON: the necro flywheel — attacks make corpses, corpses make skeletons, skeletons
+		// tank. Select the summon by its bound hotkey, cast at the nearest monster corpse; the
+		// next bite's -rabies press flips the right skill back to the attack.
+		if *summonKey != "" && time.Since(summonAt) > 2*time.Second && d.PlayerUnit.MPPercent() >= *meleeBelow {
+			pets := 0
+			for i := range d.Monsters {
+				if d.Monsters[i].IsPet() {
+					pets++
+				}
+			}
+			if pets < *maxPets {
+				best := 1 << 30
+				var corpsePos data.Position
+				for i := range d.Corpses {
+					if dd := chebyshev(me, d.Corpses[i].Position); dd < best && dd <= 20 {
+						best, corpsePos = dd, d.Corpses[i].Position
+					}
+				}
+				if best < 1<<30 {
+					sx, sy := gameToScreen(gr, me.X, me.Y, corpsePos.X, corpsePos.Y)
+					hid.PressKey(hid.GetASCIICode(*summonKey))
+					time.Sleep(80 * time.Millisecond)
+					hid.Click(game.RightButton, sx, sy)
+					time.Sleep(150 * time.Millisecond)
+					logger.Info("summon: raise", "pets", pets, "corpseDist", best)
+					summonAt = time.Now()
+					continue
+				}
+			}
+			summonAt = time.Now()
 		}
 
 		// AUTO-SKILL: spend banked points into the configured skill when it's calm. Tab click
@@ -3935,6 +4057,38 @@ mainLoop:
 							"hop", int(hopTarget), "exit", fmt.Sprintf("(%d,%d)", exit.X, exit.Y),
 							"dist", chebyshev(me, exit))
 						gotoBorderSeekLog = time.Now()
+					}
+					// ENTRANCE WARPS (Den, Burial Grounds, caves): these connect via a clickable
+					// warp, not a walkable border, so the room graph NEVER yields candidates.
+					// The live entrance UNIT can sit ~30 subtiles from the map-data exit point
+					// (measured: mapped (5734,4741) vs clickable mouth (5706,4739)), so match
+					// generously and steer at the ENTRANCE, not the mapped point.
+					if chebyshev(me, exit) <= 60 {
+						var went *data.Entrance
+						for i := range d.Entrances {
+							if chebyshev(d.Entrances[i].Position, exit) <= 45 {
+								went = &d.Entrances[i]
+								break
+							}
+						}
+						if went != nil {
+							ed := chebyshev(me, went.Position)
+							if ed > 12 {
+								if time.Since(gotoBorderSeekLog) > 5*time.Second {
+									logger.Info("goto: approaching entrance warp", "name", int(went.Name), "dist", ed)
+									gotoBorderSeekLog = time.Now()
+								}
+								navWalk(me, went.Position)
+								continue
+							}
+							logger.Info("goto: clicking entrance warp", "name", int(went.Name), "dist", ed)
+							if !hoverPickClick(went.Position, went.ID) {
+								sx, sy := gameToScreen(gr, me.X, me.Y, went.Position.X, went.Position.Y)
+								interactClick(sx, sy)
+							}
+							time.Sleep(1500 * time.Millisecond) // walk-in + transition
+							continue
+						}
 					}
 					if time.Since(gotoGridRefresh) > 4*time.Second {
 						if g, ok2 := acquireGrid(); ok2 {
