@@ -3798,6 +3798,12 @@ func main() {
 	var badDests []data.Position // explore destinations that turned out unreachable (walled off)
 	chickenStreak := 0           // consecutive Chicken ticks, so a one-frame HP dip doesn't spam TP
 	tpDone := false              // emergency TP already fired for the current chicken episode
+	// TOWN-TRIP state machine (control command "tp"; -tp key must be bound to the TP tome).
+	// 1=cast, 2=enter field portal, 3=in town (errand hook + return), 0=idle.
+	tpPhase := 0
+	tpOrigArea := 0
+	var tpPhaseAt, tpTripStart time.Time
+	tpRecast := false
 	lootBlacklist := map[data.UnitID]time.Time{}
 	lootAttempts := map[data.UnitID]int{}
 	objBlacklist := map[data.UnitID]time.Time{} // objects already used (so we don't re-open)
@@ -4022,11 +4028,19 @@ mainLoop:
 			if b, err := os.ReadFile(controlFile); err == nil {
 				cmd := strings.TrimSpace(string(b))
 				_ = os.Remove(controlFile)
-				if cmd == "exit" {
+				switch cmd {
+				case "exit":
 					logger.Info("control: graceful exit requested")
 					break mainLoop
-				}
-				if cmd != "" {
+				case "tp":
+					if *tp == "" {
+						logger.Warn("control: tp requested but -tp key not set")
+					} else if tpPhase == 0 {
+						logger.Info("control: town round-trip requested")
+						tpPhase, tpTripStart = 1, time.Now()
+					}
+				case "":
+				default:
 					logger.Warn("control: unknown command", "cmd", cmd)
 				}
 			}
@@ -4038,6 +4052,80 @@ mainLoop:
 
 		d := gr.GetData()
 		me := d.PlayerUnit.Position
+
+		// TOWN TRIP: cast TP -> enter -> town (errand hook) -> return through the same portal.
+		// Every step verifies by observed area/object change; every phase is time-boxed.
+		if tpPhase != 0 {
+			nearestPortal := func(r int) (data.Object, bool) {
+				best, bd := data.Object{}, r+1
+				for _, o := range d.Objects {
+					if (o.IsPortal() || o.IsRedPortal()) && chebyshev(me, o.Position) < bd {
+						best, bd = o, chebyshev(me, o.Position)
+					}
+				}
+				return best, bd <= r
+			}
+			switch tpPhase {
+			case 1: // cast at our feet
+				if d.PlayerUnit.Area.IsTown() {
+					logger.Warn("towntrip: already in town — aborting")
+					tpPhase = 0
+					continue
+				}
+				tpOrigArea = int(d.PlayerUnit.Area)
+				castSelf(*tp)
+				logger.Info("towntrip: cast", "area", tpOrigArea, "pos", fmt.Sprintf("(%d,%d)", me.X, me.Y))
+				tpPhaseAt, tpPhase, tpRecast = time.Now(), 2, false
+			case 2: // the blue portal should appear beside us — click through it
+				if d.PlayerUnit.Area.IsTown() {
+					logger.Info("towntrip: arrived in town", "tookS", int(time.Since(tpTripStart).Seconds()))
+					tpPhaseAt, tpPhase = time.Now(), 3
+					continue
+				}
+				if p, ok := nearestPortal(20); ok {
+					if !hoverPickClick(p.Position, p.ID) {
+						sx, sy := gameToScreen(gr, me.X, me.Y, p.Position.X, p.Position.Y)
+						interactClick(sx, sy)
+					}
+					time.Sleep(600 * time.Millisecond)
+				} else if time.Since(tpPhaseAt) > 5*time.Second && !tpRecast {
+					logger.Warn("towntrip: no portal appeared — recasting once")
+					castSelf(*tp)
+					tpPhaseAt, tpRecast = time.Now(), true
+				} else if time.Since(tpPhaseAt) > 10*time.Second {
+					logger.Warn("towntrip: portal entry failed — aborting")
+					tpPhase = 0
+				}
+			case 3: // in town. (Errand hook lands here later.) Return through our portal.
+				if int(d.PlayerUnit.Area) == tpOrigArea {
+					logger.Info("towntrip: ROUND TRIP COMPLETE",
+						"totalS", int(time.Since(tpTripStart).Seconds()))
+					tpPhase = 0
+					continue
+				}
+				if time.Since(tpPhaseAt) < 2*time.Second {
+					time.Sleep(200 * time.Millisecond) // let the town load settle
+					continue
+				}
+				if time.Since(tpPhaseAt) > 25*time.Second {
+					logger.Warn("towntrip: could not return through portal — staying in town for the guard")
+					tpPhase = 0
+					continue
+				}
+				if p, ok := nearestPortal(30); ok {
+					if chebyshev(me, p.Position) > 5 {
+						navWalk(me, p.Position)
+						continue
+					}
+					if !hoverPickClick(p.Position, p.ID) {
+						sx, sy := gameToScreen(gr, me.X, me.Y, p.Position.X, p.Position.Y)
+						interactClick(sx, sy)
+					}
+					time.Sleep(600 * time.Millisecond)
+				}
+			}
+			continue
+		}
 
 		// TOWN GUARD. Nothing stopped the farm loop from hunting and exploring in town: it would
 		// pre-buff, shapeshift, and go looking for targets in Lut Gholein. Enemy filtering leans on

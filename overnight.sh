@@ -18,7 +18,7 @@ for i in $(seq 1 36); do
     -radius 90 -diff normal -dpiscale 1.25 \
     -werewolf "" -rabies "" -spirit "" -wolves "" -creeper "" \
     -attackrange 25 -meleebelow 15 -loot -objects -autoprogress \
-    -summon f1 -maxpets 4 -golem f2 -autostat "347,305,347,428,347,552" \
+    -summon f1 -maxpets 4 -golem f2 -tp f3 -autostat "347,305,347,428,347,552" \
     > logs/overnight_$i.log 2>&1
   echo "[$i] exit=$? end $(date +%H:%M:%S)"
   ./farmbot.exe -charprobe 2>&1 | grep -oE 'level=[0-9]+ xp=[0-9]+ area=[0-9]+' | head -1
