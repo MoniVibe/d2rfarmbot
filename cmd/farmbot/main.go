@@ -192,6 +192,8 @@ func main() {
 	panelKey := flag.String("panelkey", "t", "key -paneltest presses to open the panel first; 'none' clicks with no panel opened (e.g. the skill-select slot on the HUD)")
 	bindSkill := flag.String("bindskill", "", "PROBE: 'slotX,slotY,skillX,skillY,key' — click the HUD skill slot to open the selector, HOVER the skill icon, press the hotkey to bind it, screenshot, exit.")
 	pressOnly := flag.String("press", "", "PROBE: press this key once and exit (e.g. esc to close a leaked pause menu)")
+	gearProbe := flag.Bool("gearprobe", false, "PROBE: READ-ONLY gear evaluation — dump every equipped/inventory item with its full stat list, flag unidentified items, and note skill-granting gear that hotkey bindings depend on")
+	moveLab := flag.String("movelab", "", "MEASUREMENT: drive a fixed square course under locomotion modes ('carrot', 'lookahead', 'click', or 'all'), scoring time / stall-seconds / path efficiency per leg. The winner becomes the mover's engine. Needs -move e.")
 	gotoArea := flag.Int("goto", 0, "with -nav: travel to this area ID first (e.g. 2=Blood Moor) via its exit, then farm")
 	roomprobe := flag.Int("roomprobe", 0, "probe: dump live Room2 graph + borders to this destination area ID, exit")
 	collprobe := flag.Bool("collprobe", false, "probe: live-room collision availability + compare live vs koolo-map grid at player, exit")
@@ -293,7 +295,7 @@ func main() {
 	// "move", which on this build is unreliable (D2R ignores injected left-clicks) AND spams
 	// left-clicks that desync D2R's in-process mouse state (the flaky-LMB symptom). Refuse to run
 	// the farming/goto loop without it. Read-only probes don't move, so they're exempt.
-	probeOnly := *mapcheck || *mapalign || *levelprobe || *charProbe || *aimProbe || *objProbe != 0 || *interactWith != "" || *dieTest || *uiSnap != "" || *panelTest != "" || *bindSkill != "" || *pressOnly != "" || *collprobe || *roomprobe != 0 || *wpprobe || *hoverProbe || *cursorScan || *cursorAddr != "" || *pathProbe || *pathDrive || *shadowWalk != "" || *findWriter != "" || *inputTest || *clickTest || *wpAt || *fixInput || *resumeThreads || *screenshot != "" || *wpTown || *wpAim || *wpGoto != 0 || *npcProbe != 0 || *hoverGrid
+	probeOnly := *mapcheck || *mapalign || *levelprobe || *charProbe || *aimProbe || *objProbe != 0 || *interactWith != "" || *dieTest || *uiSnap != "" || *panelTest != "" || *bindSkill != "" || *pressOnly != "" || *gearProbe || *moveLab != "" || *collprobe || *roomprobe != 0 || *wpprobe || *hoverProbe || *cursorScan || *cursorAddr != "" || *pathProbe || *pathDrive || *shadowWalk != "" || *findWriter != "" || *inputTest || *clickTest || *wpAt || *fixInput || *resumeThreads || *screenshot != "" || *wpTown || *wpAim || *wpGoto != 0 || *npcProbe != 0 || *hoverGrid
 	if !probeOnly && *moveKey == "" {
 		logger.Error("-move is required: bind 'Force Move' in D2R Options>Controls and pass e.g. -move e. " +
 			"Refusing to run without it — the left-click move fallback is unreliable on this build and corrupts D2R's mouse state.")
@@ -1542,11 +1544,21 @@ func main() {
 	// collision (mod-accurate, needs no FetchMapData) when -livegrid is set; otherwise falls
 	// back to koolo-map's aligned grid. This is the single choke point for grid acquisition,
 	// used by both initial nav setup and per-area re-alignment.
+	// The CARTOGRAPHER: every live grid build feeds the persistent atlas (mod-accurate collision
+	// keyed by map seed + area, on disk), and the atlas immediately pays it back — rooms Benji
+	// has EVER visited overlay onto the fresh grid, so navigation remembers terrain the room
+	// streamer has since unloaded. Truth accumulates; the fish-flop radius shrinks.
+	atlas := game.NewAtlas(filepath.Join("logs", "atlas"))
 	acquireGrid := func() (*game.Grid, bool) {
 		if *liveGrid {
-			if lg, n, err := gr.BuildLiveGrid(); err == nil {
-				logger.Info("nav: live grid built", "roomsLoaded", n,
-					"origin", fmt.Sprintf("(%d,%d)", lg.OffsetX, lg.OffsetY))
+			if lg, rooms, err := gr.BuildLiveGridRooms(); err == nil {
+				seed := gr.MapSeed()
+				areaID := int(gr.GetData().PlayerUnit.Area)
+				atlas.MergeLiveGrid(seed, areaID, lg, rooms)
+				atlas.Overlay(seed, areaID).OverlayOnto(lg)
+				logger.Info("nav: live grid built", "roomsLoaded", len(rooms),
+					"origin", fmt.Sprintf("(%d,%d)", lg.OffsetX, lg.OffsetY),
+					"atlasKnown", atlas.KnownCells(seed, areaID))
 				return lg, true
 			} else {
 				logger.Warn("nav: BuildLiveGrid failed, falling back to koolo-map", "err", err)
@@ -2031,6 +2043,234 @@ func main() {
 		}
 		time.Sleep(200 * time.Millisecond)
 		hid.PressKey(hid.GetASCIICode("esc"))
+		return
+	}
+
+	// -movelab: the executor bake-off. Same course, three locomotion modes, hard numbers.
+	// This decides HOW the mover walks — measured, not argued.
+	if *moveLab != "" {
+		if *moveKey == "" {
+			logger.Error("-movelab needs -move e")
+			return
+		}
+		lg, nRooms, err := gr.BuildLiveGrid()
+		if err != nil {
+			logger.Error("movelab: live grid failed", "err", err)
+			return
+		}
+		logger.Info("movelab: grid", "rooms", nRooms, "origin", fmt.Sprintf("(%d,%d)", lg.OffsetX, lg.OffsetY))
+		losClear := func(g *game.Grid, a, b data.Position) bool {
+			steps := max(abs(b.X-a.X), abs(b.Y-a.Y))
+			if steps == 0 {
+				return true
+			}
+			for i := 0; i <= steps; i++ {
+				p := data.Position{
+					X: a.X + (b.X-a.X)*i/steps,
+					Y: a.Y + (b.Y-a.Y)*i/steps,
+				}
+				if !g.IsWalkable(p) {
+					return false
+				}
+			}
+			return true
+		}
+		start := gr.GetData().PlayerUnit.Position
+		// Course: nearest walkable cells to a square around the start. Legs are ~55 subtiles,
+		// picked on the LIVE grid so all modes chase identical targets.
+		nearWalk := func(want data.Position) data.Position {
+			best, bp := 1<<30, want
+			for y := 0; y < lg.Height; y += 2 {
+				for x := 0; x < lg.Width; x += 2 {
+					if lg.CollisionGrid[y][x] != game.CollisionTypeWalkable {
+						continue
+					}
+					w := data.Position{X: x + lg.OffsetX, Y: y + lg.OffsetY}
+					if dd := chebyshev(w, want); dd < best {
+						best, bp = dd, w
+					}
+				}
+			}
+			return bp
+		}
+		course := []data.Position{
+			nearWalk(data.Position{X: start.X + 55, Y: start.Y}),
+			nearWalk(data.Position{X: start.X + 55, Y: start.Y + 55}),
+			nearWalk(data.Position{X: start.X, Y: start.Y + 55}),
+			nearWalk(start),
+		}
+		logger.Info("movelab: course", "start", fmt.Sprintf("(%d,%d)", start.X, start.Y),
+			"wp1", fmt.Sprintf("(%d,%d)", course[0].X, course[0].Y),
+			"wp2", fmt.Sprintf("(%d,%d)", course[1].X, course[1].Y),
+			"wp3", fmt.Sprintf("(%d,%d)", course[2].X, course[2].Y),
+			"wp4", fmt.Sprintf("(%d,%d)", course[3].X, course[3].Y))
+
+		runLeg := func(mode string, dest data.Position) (secs float64, stallSecs float64, walked int, arrived bool) {
+			navi := NewNavigator(lg)
+			legStart := time.Now()
+			last := gr.GetData().PlayerUnit.Position
+			lastMoveAt := time.Now()
+			lastClick := time.Time{}
+			for time.Since(legStart) < 45*time.Second {
+				me := gr.GetData().PlayerUnit.Position
+				if d := chebyshev(me, last); d > 0 {
+					walked += d
+					if d > 1 {
+						lastMoveAt = time.Now()
+					}
+				}
+				last = me
+				if chebyshev(me, dest) <= 5 {
+					arrived = true
+					break
+				}
+				if time.Since(lastMoveAt) > 700*time.Millisecond {
+					stallSecs += 0.35
+				}
+				switch mode {
+				case "carrot":
+					if !navi.havePlan && !navi.BuildPlan(me, dest, time.Now()) {
+						sx, sy := screenPointToward(me, dest.X-me.X, dest.Y-me.Y)
+						walkToHold(sx, sy, 250)
+						continue
+					}
+					step := navi.Step(me, time.Now())
+					if step.Arrived || step.Diverged {
+						navi.havePlan = false
+						continue
+					}
+					hold := step.HoldMs
+					if hold <= 0 {
+						hold = 200
+					}
+					sx, sy := screenPointToward(me, step.Target.X-me.X, step.Target.Y-me.Y)
+					walkToHold(sx, sy, hold)
+				case "lookahead":
+					// Aim at the FARTHEST point toward dest with clear line of sight — long
+					// smooth segments instead of near-waypoint jitter.
+					tgt := dest
+					if !losClear(lg, me, dest) {
+						if !navi.havePlan && !navi.BuildPlan(me, dest, time.Now()) {
+							sx, sy := screenPointToward(me, dest.X-me.X, dest.Y-me.Y)
+							walkToHold(sx, sy, 250)
+							continue
+						}
+						step := navi.Step(me, time.Now())
+						if step.Arrived || step.Diverged {
+							navi.havePlan = false
+							continue
+						}
+						// walk the plan but target the farthest planned point we can SEE
+						far := step.Target
+						for i := len(navi.pts) - 1; i >= 0; i-- {
+							if losClear(lg, me, navi.pts[i]) {
+								far = navi.pts[i]
+								break
+							}
+						}
+						tgt = far
+					}
+					sx, sy := screenPointToward(me, tgt.X-me.X, tgt.Y-me.Y)
+					walkToHold(sx, sy, 300)
+				case "click":
+					// The game's own pathfinder: a reliable (VK-override) left-click on a far
+					// visible point; re-click sparingly and let D2R walk.
+					if time.Since(lastClick) < 1200*time.Millisecond {
+						time.Sleep(120 * time.Millisecond)
+						continue
+					}
+					tgt := dest
+					if !losClear(lg, me, dest) {
+						if !navi.havePlan && !navi.BuildPlan(me, dest, time.Now()) {
+							tgt = dest // click blind at it; the game may still path
+						} else {
+							step := navi.Step(me, time.Now())
+							_ = step
+							far := dest
+							for i := len(navi.pts) - 1; i >= 0; i-- {
+								if losClear(lg, me, navi.pts[i]) {
+									far = navi.pts[i]
+									break
+								}
+							}
+							tgt = far
+						}
+					}
+					sx, sy := screenPointToward(me, tgt.X-me.X, tgt.Y-me.Y)
+					interactClick(sx, sy)
+					lastClick = time.Now()
+				}
+				time.Sleep(60 * time.Millisecond)
+			}
+			return time.Since(legStart).Seconds(), stallSecs, walked, arrived
+		}
+
+		modes := []string{"carrot", "lookahead", "click"}
+		if *moveLab != "all" {
+			modes = []string{*moveLab}
+		}
+		for _, m := range modes {
+			var tSecs, tStall float64
+			var tWalk, tStraight, arrivals int
+			pos := gr.GetData().PlayerUnit.Position
+			for li, wp := range course {
+				straight := chebyshev(pos, wp)
+				secs, stall, walked, ok := runLeg(m, wp)
+				logger.Info("movelab: leg", "mode", m, "leg", li, "secs", fmt.Sprintf("%.1f", secs),
+					"stall", fmt.Sprintf("%.1f", stall), "walked", walked, "straight", straight, "arrived", ok)
+				tSecs += secs
+				tStall += stall
+				tWalk += walked
+				tStraight += straight
+				if ok {
+					arrivals++
+				}
+				pos = gr.GetData().PlayerUnit.Position
+			}
+			eff := 0.0
+			if tWalk > 0 {
+				eff = float64(tStraight) / float64(tWalk)
+			}
+			logger.Info("movelab: MODE SUMMARY", "mode", m, "totalSecs", fmt.Sprintf("%.1f", tSecs),
+				"stallSecs", fmt.Sprintf("%.1f", tStall), "arrivals", fmt.Sprintf("%d/%d", arrivals, len(course)),
+				"pathEfficiency", fmt.Sprintf("%.2f", eff))
+		}
+		return
+	}
+
+	// -gearprobe: READ-ONLY gear evaluation. Unidentified items hide their magic affixes even
+	// in memory, so the honest pipeline is ID -> read -> evaluate -> equip/stash; this probe is
+	// the "read" stage plus the caveats that gate the others.
+	if *gearProbe {
+		d := gr.GetData()
+		dumpItem := func(loc string, it data.Item) {
+			logger.Info("gearprobe: item", "loc", loc, "name", string(it.Name),
+				"quality", it.Quality.ToString(), "identified", it.Identified,
+				"ethereal", it.Ethereal, "levelReq", it.LevelReq,
+				"idName", it.IdentifiedName)
+			for _, st := range it.Stats {
+				logger.Info("gearprobe: stat", "item", string(it.Name), "stat", st.ID.String(),
+					"value", st.Value, "layer", st.Layer)
+			}
+			for _, st := range it.BaseStats {
+				logger.Info("gearprobe: basestat", "item", string(it.Name), "stat", st.ID.String(),
+					"value", st.Value)
+			}
+		}
+		for _, it := range d.Inventory.ByLocation(item.LocationEquipped) {
+			dumpItem("equipped", it)
+		}
+		for _, it := range d.Inventory.ByLocation(item.LocationInventory) {
+			dumpItem("inventory", it)
+		}
+		// Skill-granting gear the bindings depend on: any skill in the char's list at hard
+		// level 0 exists only via an item — swapping that item silently breaks its hotkey.
+		for id, pts := range d.PlayerUnit.Skills {
+			if pts.Level == 0 && id != 0 {
+				logger.Info("gearprobe: ITEM-GRANTED skill — the granting item is load-bearing",
+					"skill", int(id), "name", skill.SkillNames[id])
+			}
+		}
 		return
 	}
 
@@ -4773,6 +5013,11 @@ mainLoop:
 			walkTo(msx, msy)
 			time.Sleep(120 * time.Millisecond)
 		}
+	}
+	if err := atlas.Save(); err != nil {
+		logger.Warn("atlas: save failed", "err", err)
+	} else {
+		logger.Info("atlas: saved")
 	}
 	logger.Info("done")
 }

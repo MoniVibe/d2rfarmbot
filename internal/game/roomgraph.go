@@ -245,17 +245,29 @@ func (gd *MemoryReader) LiveBlockedAt(c LiveCollision, x, y int) (blocked, ok bo
 // are set walkable/blocked from that room's mask; cells in rooms not yet streamed stay
 // NonWalkable (unknown = blocked, safe — they fill in as the player approaches and rooms load).
 // Origin/size come from the live DrlgLevel frame, so the grid is aligned by construction.
+// BuildLiveGridRooms is BuildLiveGrid returning the loaded rooms as well, so the caller can
+// feed the Atlas (the persistent cartographer) with exactly the rooms this grid was built from.
+func (gd *MemoryReader) BuildLiveGridRooms() (*Grid, []LiveRoom, error) {
+	g, rooms, _, err := gd.buildLiveGridInner()
+	return g, rooms, err
+}
+
 func (gd *MemoryReader) BuildLiveGrid() (*Grid, int, error) {
+	g, _, n, err := gd.buildLiveGridInner()
+	return g, n, err
+}
+
+func (gd *MemoryReader) buildLiveGridInner() (*Grid, []LiveRoom, int, error) {
 	lf, err := gd.ReadLiveLevelFrame()
 	if err != nil {
-		return nil, 0, err
+		return nil, nil, 0, err
 	}
 	if lf.SizeX <= 0 || lf.SizeY <= 0 || lf.SizeX > 4000 || lf.SizeY > 4000 {
-		return nil, 0, fmt.Errorf("implausible live level size %dx%d", lf.SizeX, lf.SizeY)
+		return nil, nil, 0, fmt.Errorf("implausible live level size %dx%d", lf.SizeX, lf.SizeY)
 	}
 	graph, err := gd.ReadCurrentRoomGraph()
 	if err != nil {
-		return nil, 0, err
+		return nil, nil, 0, err
 	}
 	W, H, ox, oy := lf.SizeX, lf.SizeY, lf.OriginX, lf.OriginY
 	cg := make([][]CollisionType, H)
@@ -263,6 +275,7 @@ func (gd *MemoryReader) BuildLiveGrid() (*Grid, int, error) {
 		cg[y] = make([]CollisionType, W) // zero value = CollisionTypeNonWalkable (unknown = blocked)
 	}
 	loaded := 0
+	usedRooms := make([]LiveRoom, 0, 32)
 	for _, room := range graph.Rooms {
 		if room.Room1Ptr == 0 || int(room.LevelID) != lf.Area {
 			continue
@@ -292,11 +305,12 @@ func (gd *MemoryReader) BuildLiveGrid() (*Grid, int, error) {
 			}
 		}
 		loaded++
+		usedRooms = append(usedRooms, room)
 	}
 	if loaded == 0 {
-		return nil, 0, errors.New("no rooms with streamed-in collision")
+		return nil, nil, 0, errors.New("no rooms with streamed-in collision")
 	}
-	return NewGrid(cg, ox, oy), loaded, nil
+	return NewGrid(cg, ox, oy), usedRooms, loaded, nil
 }
 
 // CountLoadedRooms reports how many rooms in the graph have their Room1 collision streamed in.
