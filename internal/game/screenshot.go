@@ -8,10 +8,16 @@ import (
 )
 
 func (gd *MemoryReader) Screenshot() image.Image {
+	// PrintWindow blits the window's PHYSICAL pixels (1920x1080 fullscreen), while
+	// GameAreaSize is the LOGICAL client rect a DPI-unaware process sees (1536x840 at 125%).
+	// Capture at physical size or the right/bottom of the frame is silently cropped —
+	// measured: the skill tree panel (right edge of screen) was missing from every shot.
+	shotW := int(float64(gd.GameAreaSizeX) * physicalScale)
+	shotH := int(float64(gd.GameAreaSizeY) * physicalScale)
 	// Create a device context compatible with the window
 	hdcWindow, _, _ := winproc.GetWindowDC.Call(uintptr(gd.HWND))
 	hdcMem, _, _ := winproc.CreateCompatibleDC.Call(hdcWindow)
-	hbmMem, _, _ := winproc.CreateCompatibleBitmap.Call(hdcWindow, uintptr(gd.GameAreaSizeX), uintptr(gd.GameAreaSizeY))
+	hbmMem, _, _ := winproc.CreateCompatibleBitmap.Call(hdcWindow, uintptr(shotW), uintptr(shotH))
 	_, _, _ = winproc.SelectObject.Call(hdcMem, hbmMem)
 
 	// Use PrintWindow to copy the window into the bitmap
@@ -31,28 +37,28 @@ func (gd *MemoryReader) Screenshot() image.Image {
 		BiClrImportant    uint32
 	}{
 		BiSize:        40, // The size of the BITMAPINFOHEADER structure
-		BiWidth:       int32(gd.GameAreaSizeX),
-		BiHeight:      -int32(gd.GameAreaSizeY), // negative to indicate top-down bitmap
+		BiWidth:       int32(shotW),
+		BiHeight:      -int32(shotH), // negative to indicate top-down bitmap
 		BiPlanes:      1,
 		BiBitCount:    32, // 32 bits-per-pixel
 		BiCompression: 0,  // BI_RGB, no compression
 		BiSizeImage:   0,  // 0 for BI_RGB
 	}
 
-	bufSize := gd.GameAreaSizeX * gd.GameAreaSizeY * 4
+	bufSize := shotW * shotH * 4
 	buf := make([]byte, bufSize)
 	winproc.GetDIBits.Call(
 		hdcMem,
 		hbmMem,
 		0,
-		uintptr(gd.GameAreaSizeY),
+		uintptr(shotH),
 		uintptr(unsafe.Pointer(&buf[0])),
 		uintptr(unsafe.Pointer(&bmpInfo)),
 		0, // DIB_RGB_COLORS
 	)
 
 	// Convert raw bytes to *image.RGBA
-	img := image.NewRGBA(image.Rect(0, 0, gd.GameAreaSizeX, gd.GameAreaSizeY))
+	img := image.NewRGBA(image.Rect(0, 0, shotW, shotH))
 	copy(img.Pix, buf)
 
 	// Windows is using BRG instead of RGB, let's swap red and blue layers

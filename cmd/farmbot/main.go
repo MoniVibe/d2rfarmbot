@@ -77,6 +77,21 @@ func findHWND(pid uint32) win.HWND {
 // nextHopArea BFSes the map-data area graph (d.Areas, from FetchMapData) for the first hop on
 // the route from -> to. Returns 0 when unknown (no map data / no route) — the caller then falls
 // back to treating `to` as directly adjacent.
+// nakedCorpseHunt picks the first adjacent non-town area (from map data) to search for a corpse
+// after a death this process didn't witness. Returns 0 when map data is absent.
+func nakedCorpseHunt(d game.Data) area.ID {
+	ad, ok := d.Areas[d.PlayerUnit.Area]
+	if !ok {
+		return 0
+	}
+	for _, al := range ad.AdjacentLevels {
+		if !al.Area.IsTown() {
+			return al.Area
+		}
+	}
+	return 0
+}
+
 func nextHopArea(d game.Data, from, to area.ID) area.ID {
 	if from == to || len(d.Areas) == 0 {
 		return 0
@@ -153,6 +168,7 @@ func main() {
 	melee := flag.String("melee", "", "normal-attack hotkey: pressed instead of -rabies when MP%% is below -meleebelow (pre-skills fallback for a low-level char — bind Attack to a key in-game). Empty = left-click normal attack (no binding needed).")
 	meleeBelow := flag.Int("meleebelow", 25, "MP%% threshold below which the bot melees instead of casting")
 	castRange := flag.Int("castrange", 8, "max distance (subtiles) to cast the right skill — Firestorm's flames crawl and dissipate, so casts from bite range (18) burn mana into empty ground")
+	autoSkill := flag.String("autoskill", "", "'tabX,tabY,skillX,skillY': when a skill point is banked and no enemy is near, open the skill tree, click the tab then the skill, verify the point was spent. All overnight points go to one skill.")
 	spirit := flag.String("spirit", "f3", "spirit/aura buff hotkey")
 	wolves := flag.String("wolves", "f4", "summon wolves hotkey")
 	creeper := flag.String("creeper", "f5", "summon creeper hotkey")
@@ -168,6 +184,11 @@ func main() {
 	objProbe := flag.Int("objprobe", 0, "probe: READ-ONLY dump of objects/entrances within this radius (subtiles) of the player — name/id/selectable/interactType/mode/portal. The interactables inventory for this area.")
 	interactWith := flag.String("interact", "", "PROBE: walk to and operate the nearest matching interactable, then report every observable state change. Kinds: chest|shrine|wp|portal|entrance|<numeric object id>. Needs -move e.")
 	dieTest := flag.Bool("dietest", false, "DEATH-CYCLE PROBE — SOFTCORE ONLY: leave town, aggro, die on purpose, learn the respawn input, confirm town respawn, corpse-run, recover the body. Needs -move e.")
+	uiSnap := flag.String("uisnap", "", "PROBE: press this key (e.g. 't' for the skill tree), screenshot the panel to logs/uisnap.png, press esc to close, exit. For mapping panel coordinates.")
+	panelTest := flag.String("paneltest", "", "PROBE: open the panel via -panelkey, uiClick at 'x,y' (screenshot pixel coords), screenshot the result, close, exit. Calibrates the panel click space.")
+	panelKey := flag.String("panelkey", "t", "key -paneltest presses to open the panel first; 'none' clicks with no panel opened (e.g. the skill-select slot on the HUD)")
+	bindSkill := flag.String("bindskill", "", "PROBE: 'slotX,slotY,skillX,skillY,key' — click the HUD skill slot to open the selector, HOVER the skill icon, press the hotkey to bind it, screenshot, exit.")
+	pressOnly := flag.String("press", "", "PROBE: press this key once and exit (e.g. esc to close a leaked pause menu)")
 	gotoArea := flag.Int("goto", 0, "with -nav: travel to this area ID first (e.g. 2=Blood Moor) via its exit, then farm")
 	roomprobe := flag.Int("roomprobe", 0, "probe: dump live Room2 graph + borders to this destination area ID, exit")
 	collprobe := flag.Bool("collprobe", false, "probe: live-room collision availability + compare live vs koolo-map grid at player, exit")
@@ -269,7 +290,7 @@ func main() {
 	// "move", which on this build is unreliable (D2R ignores injected left-clicks) AND spams
 	// left-clicks that desync D2R's in-process mouse state (the flaky-LMB symptom). Refuse to run
 	// the farming/goto loop without it. Read-only probes don't move, so they're exempt.
-	probeOnly := *mapcheck || *mapalign || *levelprobe || *charProbe || *aimProbe || *objProbe != 0 || *interactWith != "" || *dieTest || *collprobe || *roomprobe != 0 || *wpprobe || *hoverProbe || *cursorScan || *cursorAddr != "" || *pathProbe || *pathDrive || *shadowWalk != "" || *findWriter != "" || *inputTest || *clickTest || *wpAt || *fixInput || *resumeThreads || *screenshot != "" || *wpTown || *wpAim || *wpGoto != 0 || *npcProbe != 0 || *hoverGrid
+	probeOnly := *mapcheck || *mapalign || *levelprobe || *charProbe || *aimProbe || *objProbe != 0 || *interactWith != "" || *dieTest || *uiSnap != "" || *panelTest != "" || *bindSkill != "" || *pressOnly != "" || *collprobe || *roomprobe != 0 || *wpprobe || *hoverProbe || *cursorScan || *cursorAddr != "" || *pathProbe || *pathDrive || *shadowWalk != "" || *findWriter != "" || *inputTest || *clickTest || *wpAt || *fixInput || *resumeThreads || *screenshot != "" || *wpTown || *wpAim || *wpGoto != 0 || *npcProbe != 0 || *hoverGrid
 	if !probeOnly && *moveKey == "" {
 		logger.Error("-move is required: bind 'Force Move' in D2R Options>Controls and pass e.g. -move e. " +
 			"Refusing to run without it — the left-click move fallback is unreliable on this build and corrupts D2R's mouse state.")
@@ -1361,8 +1382,11 @@ func main() {
 			return nil, data.Position{}, false
 		}
 		delta := data.Position{X: lf.OriginX - g.OffsetX, Y: lf.OriginY - g.OffsetY}
-		g.OffsetX, g.OffsetY = lf.OriginX, lf.OriginY
-		return g, delta, true
+		// CLONE before aligning — g points into the cached map data, and mutating its offsets
+		// breaks every later map-frame->live translation (mapExitTo's delta degenerates to 0).
+		ng := *g
+		ng.OffsetX, ng.OffsetY = lf.OriginX, lf.OriginY
+		return &ng, delta, true
 	}
 	computeWalk := func(g *game.Grid) ([]data.Position, data.Position) {
 		var cells []data.Position
@@ -1380,6 +1404,102 @@ func main() {
 			c = data.Position{X: sx/len(cells) + g.OffsetX, Y: sy/len(cells) + g.OffsetY}
 		}
 		return cells, c
+	}
+
+	// mapNavi plans on the FULL-AREA map grid (aligned to the live origin) — the live grid only
+	// spans loaded rooms, so long-range paths (across the river to a corpse, to a far exit) fail
+	// on it while the map grid knows every bridge. NOT built in town: the classic town collision
+	// is wrong for the mod (phantom sliver — desktop-measured).
+	var mapNavi *Navigator
+	buildMapNavi := func() {
+		mapNavi = nil
+		d := gr.GetData()
+		if d.PlayerUnit.Area.IsTown() {
+			return
+		}
+		if mg, _, ok := alignArea(); ok {
+			mapNavi = NewNavigator(mg)
+			return
+		}
+		g := d.AreaData.Grid
+		lf, err := gr.ReadLiveLevelFrame()
+		switch {
+		case g == nil:
+			logger.Warn("mapNavi: no map grid for area", "area", int(d.PlayerUnit.Area))
+		case err != nil:
+			logger.Warn("mapNavi: live frame read failed", "err", err)
+		case lf.SizeX == g.Height && lf.SizeY == g.Width && navGrid != nil:
+			// TRANSPOSED dimensions (measured: live Blood Moor 280x480 vs map 480x280 while town
+			// matches exactly). Orientation is NOT assumed: build all four transpose variants and
+			// score each against the live grid's collision in the loaded region — walkable AND
+			// blocked agreement both, so an all-walkable garbage grid can't fake a match.
+			variant := func(fx, fy bool) *game.Grid {
+				cg := make([][]game.CollisionType, lf.SizeY)
+				for r := 0; r < lf.SizeY; r++ {
+					row := make([]game.CollisionType, lf.SizeX)
+					for c := 0; c < lf.SizeX; c++ {
+						rc, cc := c, r
+						if fx {
+							rc = lf.SizeX - 1 - c
+						}
+						if fy {
+							cc = lf.SizeY - 1 - r
+						}
+						row[c] = g.CollisionGrid[rc][cc]
+					}
+					cg[r] = row
+				}
+				return game.NewGrid(cg, lf.OriginX, lf.OriginY)
+			}
+			var blocked []data.Position
+			for y := 0; y < navGrid.Height && len(blocked) < 2000; y += 3 {
+				for x := 0; x < navGrid.Width && len(blocked) < 2000; x += 3 {
+					if navGrid.CollisionGrid[y][x] == game.CollisionTypeNonWalkable {
+						blocked = append(blocked, data.Position{X: x + navGrid.OffsetX, Y: y + navGrid.OffsetY})
+					}
+				}
+			}
+			score := func(t *game.Grid) float64 {
+				wa, wt := 0, 0
+				for i := 0; i < len(walkables); i += 5 {
+					w := data.Position{X: walkables[i].X + navGrid.OffsetX, Y: walkables[i].Y + navGrid.OffsetY}
+					if t.IsWalkable(w) {
+						wa++
+					}
+					wt++
+				}
+				ba, bt := 0, 0
+				for _, b := range blocked {
+					if !t.IsWalkable(b) {
+						ba++
+					}
+					bt++
+				}
+				if wt == 0 || bt == 0 {
+					return 0
+				}
+				return (float64(wa)/float64(wt) + float64(ba)/float64(bt)) / 2
+			}
+			bestScore, bestFx, bestFy := 0.0, false, false
+			for _, v := range [][2]bool{{false, false}, {true, false}, {false, true}, {true, true}} {
+				if s := score(variant(v[0], v[1])); s > bestScore {
+					bestScore, bestFx, bestFy = s, v[0], v[1]
+				}
+			}
+			if bestScore > 0.65 {
+				mapNavi = NewNavigator(variant(bestFx, bestFy))
+				logger.Info("mapNavi: TRANSPOSED map grid aligned", "agreement", fmt.Sprintf("%.2f", bestScore),
+					"flipX", bestFx, "flipY", bestFy)
+			} else {
+				logger.Warn("mapNavi: no transpose variant agrees with live collision",
+					"best", fmt.Sprintf("%.2f", bestScore))
+			}
+		default:
+			logger.Warn("mapNavi: align failed", "liveSize", fmt.Sprintf("%dx%d", lf.SizeX, lf.SizeY),
+				"mapSize", fmt.Sprintf("%dx%d", g.Width, g.Height),
+				"liveOrigin", fmt.Sprintf("(%d,%d)", lf.OriginX, lf.OriginY),
+				"playerIn", d.PlayerUnit.Position.X >= lf.OriginX && d.PlayerUnit.Position.X < lf.OriginX+lf.SizeX)
+		}
 	}
 
 	// mapExitTo translates the CURRENT area's map-frame exit toward `hop` into live coords:
@@ -1875,6 +1995,114 @@ func main() {
 			return
 		}
 		logger.Error("interact: 90s deadline hit while approaching")
+		return
+	}
+
+	// -uisnap: open a panel by hotkey, screenshot it, close it. The raw material for mapping
+	// panel click coordinates (skill tree, character screen, inventory).
+	if *uiSnap != "" {
+		d := gr.GetData()
+		sp, _ := d.PlayerUnit.Stats.FindStat(stat.SkillPoints, 0)
+		stp, _ := d.PlayerUnit.Stats.FindStat(stat.StatPoints, 0)
+		logger.Info("uisnap: before", "skillPoints", sp.Value, "statPoints", stp.Value)
+		hid.PressKey(hid.GetASCIICode(*uiSnap))
+		time.Sleep(800 * time.Millisecond)
+		if f, err := os.Create(shotPath("uisnap.png")); err == nil {
+			_ = png.Encode(f, gr.Screenshot())
+			f.Close()
+			logger.Info("uisnap: saved", "path", shotPath("uisnap.png"))
+		}
+		time.Sleep(200 * time.Millisecond)
+		hid.PressKey(hid.GetASCIICode("esc"))
+		return
+	}
+
+	// -press: one key, nothing else. For closing leaked menus surgically.
+	if *pressOnly != "" {
+		hid.PressKey(hid.GetASCIICode(*pressOnly))
+		time.Sleep(400 * time.Millisecond)
+		if f, err := os.Create(shotPath("press.png")); err == nil {
+			_ = png.Encode(f, gr.Screenshot())
+			f.Close()
+		}
+		logger.Info("press: done", "key", *pressOnly, "shot", shotPath("press.png"))
+		return
+	}
+
+	// -bindskill: open the HUD skill selector, hover a skill, press a hotkey to BIND it.
+	// Bindings persist across deaths (unlike the right-skill selection, which resets to Attack),
+	// so a bound key + the -rabies press-before-bite mechanism survives the whole death cycle.
+	if *bindSkill != "" {
+		var sx, sy, hx, hy int
+		var key string
+		if _, err := fmt.Sscanf(*bindSkill, "%d,%d,%d,%d,%s", &sx, &sy, &hx, &hy, &key); err != nil {
+			logger.Error("bindskill: want 'slotX,slotY,skillX,skillY,key'", "got", *bindSkill)
+			return
+		}
+		before := gr.GetData().PlayerUnit.RightSkill
+		uiClick(sx, sy) // open the selector
+		time.Sleep(700 * time.Millisecond)
+		if key == "click" {
+			uiClick(hx, hy) // select the skill by clicking it in the popup
+			time.Sleep(500 * time.Millisecond)
+		} else {
+			aimPanel(hx, hy) // hover the skill — PANEL cursor space (unscaled), not world space
+			hid.MouseMoveClient(hx, hy)
+			time.Sleep(500 * time.Millisecond)
+			hid.PressKey(hid.GetASCIICode(key))
+			time.Sleep(500 * time.Millisecond)
+		}
+		if f, err := os.Create(shotPath("bindskill.png")); err == nil {
+			_ = png.Encode(f, gr.Screenshot())
+			f.Close()
+		}
+		if key != "click" {
+			time.Sleep(300 * time.Millisecond)
+			hid.PressKey(hid.GetASCIICode(key)) // press the hotkey — selects the skill if bound
+			time.Sleep(400 * time.Millisecond)
+		}
+		after := gr.GetData().PlayerUnit.RightSkill
+		logger.Info("bindskill: result", "rightSkillBefore", int(before), "rightSkillAfter", int(after),
+			"boundAndSelected", after != before, "shot", shotPath("bindskill.png"))
+		return
+	}
+
+	// -paneltest: open the skill tree, click one point, screenshot the outcome. The screenshot
+	// is the truth signal for calibrating the panel click space on this machine (panels recover
+	// the UNSCALED client offset per the desktop measurement — verify, don't assume).
+	if *panelTest != "" {
+		var px, py int
+		if _, err := fmt.Sscanf(*panelTest, "%d,%d", &px, &py); err != nil {
+			logger.Error("paneltest: want 'x,y'", "got", *panelTest)
+			return
+		}
+		d := gr.GetData()
+		sp, spOK := d.PlayerUnit.Stats.FindStat(stat.SkillPoints, 0)
+		if !spOK {
+			sp, _ = d.PlayerUnit.BaseStats.FindStat(stat.SkillPoints, 0)
+		}
+		logger.Info("paneltest: before", "skillPoints", sp.Value,
+			"rightSkill", int(d.PlayerUnit.RightSkill),
+			"raiseSkeletonLvl", d.PlayerUnit.Skills[skill.RaiseSkeleton].Level)
+		if *panelKey != "none" {
+			hid.PressKey(hid.GetASCIICode(*panelKey))
+		}
+		time.Sleep(900 * time.Millisecond)
+		uiClick(px, py)
+		time.Sleep(700 * time.Millisecond)
+		if f, err := os.Create(shotPath("paneltest.png")); err == nil {
+			_ = png.Encode(f, gr.Screenshot())
+			f.Close()
+		}
+		d2 := gr.GetData()
+		sp2, ok2 := d2.PlayerUnit.Stats.FindStat(stat.SkillPoints, 0)
+		if !ok2 {
+			sp2, _ = d2.PlayerUnit.BaseStats.FindStat(stat.SkillPoints, 0)
+		}
+		logger.Info("paneltest: after", "skillPoints", sp2.Value,
+			"rightSkill", int(d2.PlayerUnit.RightSkill),
+			"raiseSkeletonLvl", d2.PlayerUnit.Skills[skill.RaiseSkeleton].Level,
+			"shot", shotPath("paneltest.png"))
 		return
 	}
 
@@ -2985,10 +3213,12 @@ func main() {
 			navi = NewNavigator(g)
 			alignedArea = int(gr.GetData().PlayerUnit.Area)
 			walkables, walkCentroid = computeWalk(g)
+			buildMapNavi()
 			p := gr.GetData().PlayerUnit.Position
 			logger.Info("nav: ENABLED", "area", alignedArea, "live", *liveGrid,
 				"origin", fmt.Sprintf("(%d,%d)", g.OffsetX, g.OffsetY),
-				"walkables", len(walkables), "playerWalkable", g.IsWalkable(p))
+				"walkables", len(walkables), "playerWalkable", g.IsWalkable(p),
+				"mapNavi", mapNavi != nil)
 		} else {
 			logger.Warn("nav: could not acquire grid — staying heuristic")
 		}
@@ -3118,6 +3348,8 @@ func main() {
 	gotoTryAt := time.Now()
 	var gotoBorderSeekLog time.Time
 	var gotoGridRefresh time.Time
+	var gotoLastPos data.Position
+	gotoProgressAt := time.Now()
 	var badDests []data.Position // explore destinations that turned out unreachable (walled off)
 	chickenStreak := 0           // consecutive Chicken ticks, so a one-frame HP dip doesn't spam TP
 	tpDone := false              // emergency TP already fired for the current chicken episode
@@ -3132,20 +3364,120 @@ func main() {
 	// fresh process in town has NO way to know a corpse is waiting two zones away. The file is
 	// written on death, cleared on recovery or give-up.
 	deathStateFile := filepath.Join("logs", "death_state.txt")
+	deathHuntArea := 0
+	var deathHuntPos data.Position
 	if b, err := os.ReadFile(deathStateFile); err == nil {
-		if a, err2 := fmt.Sscanf(string(b), "%d", new(int)); a == 1 && err2 == nil {
-			var deathA int
-			fmt.Sscanf(string(b), "%d", &deathA)
-			if deathA != 0 {
-				curGoto = deathA
-				logger.Info("resuming corpse recovery from a previous run", "deathArea", deathA)
-			}
+		var a, x, y int
+		if n, _ := fmt.Sscanf(string(b), "%d %d %d", &a, &x, &y); n >= 1 && a != 0 {
+			curGoto = a
+			deathHuntArea = a
+			deathHuntPos = data.Position{X: x, Y: y}
+			logger.Info("resuming corpse recovery from a previous run", "deathArea", a,
+				"deathPos", fmt.Sprintf("(%d,%d)", x, y))
 		}
 	}
 	var corpseRecoverStart time.Time // zero = not currently recovering
 	var corpseGiveUp time.Time       // set when a recovery attempt timed out (retry cooldown)
 	var corpseLogAt time.Time
 	corpseSweepFails := 0
+	corpseGoneStreak := 0
+	autoSkillAt := time.Time{}
+	var corpseTargetPos data.Position
+	// navWalk: ONE deliberate navigation step toward dest — Navigator plan + carrot, wrapped in
+	// the net-progress watchdog (no movement for 8s -> unstick burst + replan). Call it once per
+	// tick and `continue`; it owns wedge escape. The third reimplementation of this pattern was
+	// the sign it needed to be a function.
+	navWalkLastPos := data.Position{}
+	navWalkProgressAt := time.Now()
+	navWalkDest := data.Position{}
+	navWalkBestDist := 1 << 30
+	navWalkBestAt := time.Now()
+	navWalkPreferMap := false
+	navWalk := func(me, dest data.Position) {
+		// OSCILLATION detector: bouncing ±2 subtiles against an obstacle satisfies the plain
+		// no-movement watchdog forever (measured: 3min at dist 14-18 from a corpse across a
+		// water pocket). Track the BEST distance achieved; no improvement in 20s -> burst,
+		// drop both plans, and flip planner preference (the map grid knows crossings the
+		// partial live grid doesn't, and vice versa for mod-altered terrain).
+		if dest != navWalkDest {
+			navWalkDest, navWalkBestDist, navWalkBestAt = dest, 1<<30, time.Now()
+		}
+		if dcur := chebyshev(me, dest); dcur < navWalkBestDist-1 {
+			navWalkBestDist, navWalkBestAt = dcur, time.Now()
+		}
+		if time.Since(navWalkBestAt) > 20*time.Second {
+			navWalkPreferMap = !navWalkPreferMap
+			logger.Warn("navWalk: oscillating (no closest-approach progress 20s) — burst + planner flip",
+				"bestDist", navWalkBestDist, "preferMap", navWalkPreferMap)
+			for i := 0; i < 5; i++ {
+				dir := (i * 3) % 8
+				angle := float64(dir) / 8.0 * 2 * math.Pi
+				walkToHold(cx+int(300*math.Cos(angle)), cy+int(140*math.Sin(angle)), 260)
+			}
+			if navi != nil {
+				navi.havePlan = false
+			}
+			if mapNavi != nil {
+				mapNavi.havePlan = false
+			}
+			navWalkBestDist, navWalkBestAt = 1<<30, time.Now()
+			return
+		}
+		if chebyshev(me, navWalkLastPos) > 2 {
+			navWalkLastPos, navWalkProgressAt = me, time.Now()
+		}
+		if time.Since(navWalkProgressAt) > 8*time.Second {
+			logger.Warn("navWalk: no net movement for 8s — unstick burst", "pos", fmt.Sprintf("(%d,%d)", me.X, me.Y))
+			for i := 0; i < 5; i++ {
+				dir := (i * 3) % 8
+				angle := float64(dir) / 8.0 * 2 * math.Pi
+				walkToHold(cx+int(300*math.Cos(angle)), cy+int(140*math.Sin(angle)), 260)
+			}
+			if navi != nil {
+				navi.havePlan = false
+			}
+			navWalkLastPos = gr.GetData().PlayerUnit.Position
+			navWalkProgressAt = time.Now()
+			return
+		}
+		// Long hauls plan on the FULL-AREA map grid (knows every bridge the partial live grid
+		// doesn't); short/local movement uses the live grid (mod-accurate collision).
+		nv := navi
+		if mapNavi != nil && (chebyshev(me, dest) > 25 || navWalkPreferMap) {
+			nv = mapNavi
+		}
+		if nv != nil {
+			if !nv.havePlan && !nv.BuildPlan(me, dest, time.Now()) {
+				// This planner can't reach it — try the other one before falling back to a carrot.
+				alt := navi
+				if nv == navi {
+					alt = mapNavi
+				}
+				if alt != nil && (alt.havePlan || alt.BuildPlan(me, dest, time.Now())) {
+					nv = alt
+				} else {
+					sx, sy := screenPointToward(me, dest.X-me.X, dest.Y-me.Y)
+					walkToHold(sx, sy, 250)
+					return
+				}
+			}
+			step := nv.Step(me, time.Now())
+			if step.Arrived || step.Diverged {
+				nv.havePlan = false
+				return
+			}
+			hold := step.HoldMs
+			if hold <= 0 {
+				hold = 200
+			}
+			sx, sy := screenPointToward(me, step.Target.X-me.X, step.Target.Y-me.Y)
+			walkToHold(sx, sy, hold)
+			return
+		}
+		sx, sy := screenPointToward(me, dest.X-me.X, dest.Y-me.Y)
+		walkToHold(sx, sy, 250)
+	}
+	deathsSinceRecovery := 0
 
 	// Loot filter: what's worth walking to. Quality reads work on 3.2 (verified for player
 	// stats; item quality is the same statlist machinery). Potions count as needed only while
@@ -3214,6 +3546,17 @@ mainLoop:
 		// cannot be wrong about the mod. -goto is exempt: leaving town is the one town errand the
 		// loop currently knows how to run.
 		if d.PlayerUnit.Area.IsTown() && curGoto == 0 {
+			// NAKED-IN-TOWN = a death this process never saw (probe-time death, crash, esc by
+			// hand). The corpse holds the gear and Corpse.Found can't see across areas, so hunt:
+			// walk the adjacent non-town areas until the corpse turns up. At current progression
+			// that's one hop; the corpse block preempts the moment Found flips.
+			if len(d.Inventory.ByLocation(item.LocationEquipped)) == 0 {
+				if hunt := nakedCorpseHunt(d); hunt != 0 {
+					logger.Warn("naked in town with no goto — corpse hunt", "tryArea", int(hunt))
+					curGoto = int(hunt)
+					continue
+				}
+			}
 			if time.Since(lastTownLog) > 10*time.Second {
 				logger.Info("in town — combat/explore suppressed (pass -goto <area> to travel out)",
 					"area", int(d.PlayerUnit.Area), "pos", fmt.Sprintf("(%d,%d)", me.X, me.Y))
@@ -3240,6 +3583,11 @@ mainLoop:
 		case StatusDead:
 			if *hardcore {
 				logger.Error("DEAD (hardcore) — stopping", "pos", fmt.Sprintf("(%d,%d)", me.X, me.Y))
+				break mainLoop
+			}
+			deathsSinceRecovery++
+			if deathsSinceRecovery >= 5 {
+				logger.Error("5 deaths without a successful corpse recovery — stopping so the night isn't a death loop")
 				break mainLoop
 			}
 			deathArea := int(d.PlayerUnit.Area)
@@ -3272,13 +3620,35 @@ mainLoop:
 				break mainLoop
 			}
 			logger.Info("death: respawned in town", "via", respawnKey)
-			_ = os.WriteFile(deathStateFile, []byte(fmt.Sprintf("%d", deathArea)), 0644)
+			_ = os.WriteFile(deathStateFile, []byte(fmt.Sprintf("%d %d %d", deathArea, me.X, me.Y)), 0644)
+			deathHuntArea, deathHuntPos = deathArea, me
 			curGoto = deathArea // ride the goto machinery back to the corpse
 			targetID, engagedID = 0, 0
 			chickenStreak = 0
 			tpDone = false
 			continue
 		case StatusChicken:
+			// SOFTCORE ESCAPE VALVE: with no potions to drink and no enemy in danger range,
+			// fleeing forever just freezes the run at low HP (no natural regen). Resume normal
+			// behavior instead — if it ends in death, death recovery respawns at FULL hp, so
+			// death is effectively the healing mechanic for a broke naked character.
+			if !*hardcore {
+				_, hasHeal := d.Inventory.Belt.GetFirstPotion(data.HealingPotion)
+				_, hasRejuv := d.Inventory.Belt.GetFirstPotion(data.RejuvenationPotion)
+				// Bail out of chicken when there's nothing to drink AND either no threat is near
+				// (fleeing forever = frozen run, necros don't regen) or fleeing has demonstrably
+				// failed for ~7s (cornered against a wall with a zombie in reach — measured).
+				// Worst case is death, and death respawns at FULL hp: the fallback healer.
+				if !hasHeal && !hasRejuv && (!anyEnemyWithin(d, me, *dangerRange) || chickenStreak > 20) {
+					if time.Since(lastTownLog) > 10*time.Second {
+						logger.Warn("low HP, no potions, flee failing or pointless — resuming (death respawn is the fallback healer)",
+							"chickenStreak", chickenStreak)
+						lastTownLog = time.Now()
+					}
+					chickenStreak = 0
+					break
+				}
+			}
 			chickenStreak++
 			targetID = 0
 			nearestDist := 1 << 30
@@ -3330,6 +3700,7 @@ mainLoop:
 				navi = NewNavigator(g)
 				alignedArea = int(d.PlayerUnit.Area)
 				walkables, walkCentroid = computeWalk(g)
+				buildMapNavi()
 				posHist, exploreDest, badDests, gotoCross = nil, data.Position{}, nil, nil
 				gotoIdx = 0
 				progressAt = time.Now()
@@ -3338,38 +3709,88 @@ mainLoop:
 			}
 		}
 
-		// CORPSE RECOVERY: preempts combat/loot/explore. Corpse.Found only reads in the corpse's
-		// own area, so the cross-area leg of a death run happens via curGoto (set on death) and
-		// this block takes over on arrival. Time-boxed: a corpse we can't reach in 3 minutes gets
-		// a 10-minute cooldown so the bot farms instead of humping a wall.
-		if d.Corpse.Found && !d.Corpse.StateNotInteractable() && time.Since(corpseGiveUp) > 10*time.Minute {
+		// AUTO-SKILL: spend banked points into the configured skill when it's calm. Tab click
+		// first (idempotent — the tree remembers its last tab, which may not be ours), then the
+		// icon; verified by the SkillPoints stat, so a missed click just retries next level.
+		if *autoSkill != "" && !anyEnemyWithin(d, me, *dangerRange) && time.Since(autoSkillAt) > 30*time.Second {
+			sp, ok := d.PlayerUnit.Stats.FindStat(stat.SkillPoints, 0)
+			if !ok {
+				sp, _ = d.PlayerUnit.BaseStats.FindStat(stat.SkillPoints, 0)
+			}
+			if sp.Value > 0 {
+				var tx, ty, kx, ky int
+				if _, err := fmt.Sscanf(*autoSkill, "%d,%d,%d,%d", &tx, &ty, &kx, &ky); err == nil {
+					logger.Info("autoskill: spending point", "banked", sp.Value)
+					hid.PressKey(hid.GetASCIICode("t"))
+					time.Sleep(800 * time.Millisecond)
+					uiClick(tx, ty)
+					time.Sleep(400 * time.Millisecond)
+					uiClick(kx, ky)
+					time.Sleep(500 * time.Millisecond)
+					hid.PressKey(hid.GetASCIICode("t")) // toggle the tree closed (esc would open the pause menu)
+					time.Sleep(300 * time.Millisecond)
+					d2 := gr.GetData()
+					sp2, ok2 := d2.PlayerUnit.Stats.FindStat(stat.SkillPoints, 0)
+					if !ok2 {
+						sp2, _ = d2.PlayerUnit.BaseStats.FindStat(stat.SkillPoints, 0)
+					}
+					logger.Info("autoskill: result", "before", sp.Value, "after", sp2.Value,
+						"spent", sp2.Value < sp.Value)
+				}
+				autoSkillAt = time.Now()
+				continue
+			}
+			autoSkillAt = time.Now()
+		}
+
+		// CORPSE RECOVERY: preempts combat/loot/explore. Corpses don't move, so once seen the
+		// POSITION is remembered and navigated to unconditionally — the live Corpse.Found flag
+		// flickers as rooms stream in/out at range, so it is only trusted as a "gone" signal when
+		// standing close enough (<=10) that the corpse's rooms must be loaded.
+		if d.Corpse.Found && !d.Corpse.StateNotInteractable() {
+			corpseTargetPos = d.Corpse.Position
+		}
+		if corpseTargetPos.X != 0 && time.Since(corpseGiveUp) > 10*time.Minute {
 			if corpseRecoverStart.IsZero() {
 				corpseRecoverStart = time.Now()
-				logger.Info("corpse: recovery started", "pos", fmt.Sprintf("(%d,%d)", d.Corpse.Position.X, d.Corpse.Position.Y))
+				logger.Info("corpse: recovery started", "pos", fmt.Sprintf("(%d,%d)", corpseTargetPos.X, corpseTargetPos.Y))
 			}
 			if time.Since(corpseRecoverStart) > 3*time.Minute {
 				logger.Warn("corpse: giving up for now (10min cooldown)")
 				corpseGiveUp, corpseRecoverStart = time.Now(), time.Time{}
+				corpseTargetPos = data.Position{}
 				_ = os.Remove(deathStateFile)
 				curGoto = *gotoArea
 				continue
 			}
-			cd := chebyshev(me, d.Corpse.Position)
+			cd := chebyshev(me, corpseTargetPos)
 			if time.Since(corpseLogAt) > 3*time.Second {
 				logger.Info("corpse: recovering", "dist", cd, "pos", fmt.Sprintf("(%d,%d)", me.X, me.Y),
-					"corpse", fmt.Sprintf("(%d,%d)", d.Corpse.Position.X, d.Corpse.Position.Y),
-					"sweepFails", corpseSweepFails)
+					"corpse", fmt.Sprintf("(%d,%d)", corpseTargetPos.X, corpseTargetPos.Y),
+					"found", d.Corpse.Found, "sweepFails", corpseSweepFails)
 				corpseLogAt = time.Now()
 			}
 			switch {
-			case cd > 6:
-				sx, sy := screenPointToward(me, d.Corpse.Position.X-me.X, d.Corpse.Position.Y-me.Y)
-				walkToHold(sx, sy, min(240, max(90, cd*9)))
+			case cd > 10:
+				navWalk(me, corpseTargetPos)
+			case !d.Corpse.Found:
+				// Close enough that its rooms are loaded — a consistent absence here is REAL.
+				corpseGoneStreak++
+				if corpseGoneStreak >= 8 {
+					logger.Info("corpse: no corpse at remembered spot — clearing", "dist", cd)
+					corpseTargetPos = data.Position{}
+					corpseRecoverStart = time.Time{}
+					corpseGoneStreak = 0
+					_ = os.Remove(deathStateFile)
+					curGoto = *gotoArea
+				}
+				time.Sleep(150 * time.Millisecond)
 			case cd <= 1:
 				// Standing on it hides the label under the character — step off a couple tiles.
-				sx, sy := screenPointToward(me, me.X-d.Corpse.Position.X, me.Y-d.Corpse.Position.Y)
+				sx, sy := screenPointToward(me, me.X-corpseTargetPos.X, me.Y-corpseTargetPos.Y)
 				walkToHold(sx, sy, 150)
 			default:
+				corpseGoneStreak = 0
 				bx, by := gameToScreen(gr, me.X, me.Y, d.Corpse.Position.X, d.Corpse.Position.Y)
 				got := false
 				hoverSeen := ""
@@ -3407,8 +3828,6 @@ mainLoop:
 					logger.Info("corpse: sweep found no Corpse.IsHovered", "fails", corpseSweepFails,
 						"anyHover", hoverSeen)
 					if corpseSweepFails >= 3 {
-						// Corpse.IsHovered may simply not wire up on 3.2 — blind reliable-click at
-						// the predicted point and check the outcome instead of trusting the flag.
 						sx2, sy2 := gameToScreen(gr, me.X, me.Y, d.Corpse.Position.X, d.Corpse.Position.Y)
 						logger.Info("corpse: blind interactClick fallback", "screen", fmt.Sprintf("(%d,%d)", sx2, sy2))
 						interactClick(sx2, sy2)
@@ -3423,22 +3842,64 @@ mainLoop:
 						"after", time.Since(corpseRecoverStart).Round(time.Second).String())
 					corpseRecoverStart = time.Time{}
 					corpseSweepFails = 0
+					deathsSinceRecovery = 0
+					corpseTargetPos = data.Position{}
 					_ = os.Remove(deathStateFile)
 					curGoto = *gotoArea
 				}
 			}
 			continue
 		}
-		if !d.Corpse.Found && !corpseRecoverStart.IsZero() {
-			// Corpse vanished without our click (picked up on approach, or state change) — done.
-			corpseRecoverStart = time.Time{}
-			curGoto = *gotoArea
+
+		// DEATH-SPOT SEEK: we're in the death area but the corpse isn't in a loaded room yet.
+		// Navigate to the RECORDED death position — rooms load on approach and Corpse.Found
+		// flips, handing off to the recovery block above.
+		if !d.Corpse.Found && deathHuntPos.X != 0 && int(d.PlayerUnit.Area) == deathHuntArea {
+			if chebyshev(me, deathHuntPos) <= 8 {
+				logger.Warn("death spot reached but no corpse — clearing death state")
+				deathHuntPos, deathHuntArea = data.Position{}, 0
+				_ = os.Remove(deathStateFile)
+				curGoto = *gotoArea
+			} else {
+				if time.Since(corpseLogAt) > 3*time.Second {
+					logger.Info("death-spot seek", "dist", chebyshev(me, deathHuntPos),
+						"pos", fmt.Sprintf("(%d,%d)", me.X, me.Y))
+					corpseLogAt = time.Now()
+				}
+				navWalk(me, deathHuntPos)
+				continue
+			}
+		}
+		if d.Corpse.Found && deathHuntPos.X != 0 {
+			deathHuntPos, deathHuntArea = data.Position{}, 0 // recovery block owns it now
 		}
 
 		// GOTO: travel to a target area via a live room-graph border, using the clearance-aware
 		// Navigator (owns its own recovery). Runs BEFORE the generic break-out/unstick so those
 		// path-agnostic behaviors don't drag us off a legitimate route.
 		if curGoto != 0 && navi != nil && navGrid != nil && int(d.PlayerUnit.Area) != curGoto {
+			// NET-PROGRESS WATCHDOG: the goto path skips the generic unstick (by design), so a
+			// physical wedge the grid can't see (fence pockets the live town collision marks
+			// walkable) would freeze travel forever — measured twice, minutes of bit-identical
+			// position while "walking". No net movement for 8s -> unstick burst + rotate + replan.
+			if chebyshev(me, gotoLastPos) > 2 {
+				gotoLastPos, gotoProgressAt = me, time.Now()
+			}
+			if time.Since(gotoProgressAt) > 8*time.Second {
+				logger.Warn("goto: no net movement for 8s — unstick burst", "pos", fmt.Sprintf("(%d,%d)", me.X, me.Y))
+				for i := 0; i < 5; i++ {
+					dir := (i * 3) % 8
+					angle := float64(dir) / 8.0 * 2 * math.Pi
+					walkToHold(cx+int(300*math.Cos(angle)), cy+int(140*math.Sin(angle)), 260)
+				}
+				if len(gotoCross) > 0 {
+					gotoIdx, gotoTryAt = (gotoIdx+1)%len(gotoCross), time.Now()
+				}
+				navi.havePlan = false
+				gotoLastPos = gr.GetData().PlayerUnit.Position
+				gotoProgressAt = time.Now()
+				continue
+			}
 			// MULTI-HOP: the room graph only has DIRECT borders, so a non-adjacent target (e.g.
 			// town -> Cold Plains) yields 0 candidates forever. BFS the area graph from map data
 			// for the next hop; each crossing re-aligns and re-plans, so the chain emerges hop
@@ -3534,6 +3995,13 @@ mainLoop:
 				if !navi.havePlan || navi.goal != ap {
 					obs := make([]data.Position, 0, 64)
 					for _, o := range d.Objects {
+						// Only objects that physically COLLIDE. d.Objects is now populated from the
+						// unit table everywhere (it used to be empty without map data), and feeding
+						// every decorative torch/stall into SetObstacles closed the town's exit
+						// corridor — measured: town crossing went from 77s clean to burst-crawling.
+						if !o.Desc().HasCollision {
+							continue
+						}
 						if chebyshev(me, o.Position) < 70 { // near, and in the live frame (koolo-map-frame dupes are far)
 							obs = append(obs, o.Position)
 							if chebyshev(me, o.Position) < 12 {
