@@ -74,6 +74,40 @@ func findHWND(pid uint32) win.HWND {
 	return hwnd
 }
 
+// nextHopArea BFSes the map-data area graph (d.Areas, from FetchMapData) for the first hop on
+// the route from -> to. Returns 0 when unknown (no map data / no route) — the caller then falls
+// back to treating `to` as directly adjacent.
+func nextHopArea(d game.Data, from, to area.ID) area.ID {
+	if from == to || len(d.Areas) == 0 {
+		return 0
+	}
+	prev := map[area.ID]area.ID{from: from}
+	queue := []area.ID{from}
+	for len(queue) > 0 {
+		cur := queue[0]
+		queue = queue[1:]
+		ad, ok := d.Areas[cur]
+		if !ok {
+			continue
+		}
+		for _, al := range ad.AdjacentLevels {
+			if _, seen := prev[al.Area]; seen {
+				continue
+			}
+			prev[al.Area] = cur
+			if al.Area == to {
+				hop := to
+				for prev[hop] != from {
+					hop = prev[hop]
+				}
+				return hop
+			}
+			queue = append(queue, al.Area)
+		}
+	}
+	return 0
+}
+
 func gameToScreen(gr *game.MemoryReader, px, py, dx, dy int) (int, int) {
 	diffX := dx - px
 	diffY := dy - py
@@ -160,6 +194,8 @@ func main() {
 	tp := flag.String("tp", "", "Tome of Town Portal hotkey; empty disables emergency TP on chicken")
 	loot := flag.Bool("loot", false, "enable ground-item looting between fights")
 	lootradius := flag.Int("lootradius", 30, "only pick up ground items within this many units")
+	lootAll := flag.Bool("lootall", false, "loot every ground item (old behavior). Default is the filter: unique/set/rare/crafted + gold + potions the belt is short on")
+	hardcore := flag.Bool("hc", false, "hardcore mode: STOP on death. Default (softcore): respawn via esc, travel back, recover the corpse, resume farming")
 	objects := flag.Bool("objects", false, "open chests / smash barrels / use nearby selectable objects between fights")
 	objradius := flag.Int("objradius", 40, "only interact with objects within this many units")
 	hpcol := flag.Int("hpcol", -1, "fixed belt column (0-3) to press for healing instead of auto-detecting; -1=auto")
@@ -681,6 +717,28 @@ func main() {
 
 	// screenPointToward returns the FURTHEST on-screen point along a direction from the player.
 	// The window is small, so a straight click can land off-edge and the game ignores it.
+	// minCarrot pushes a screen point out to a minimum radius from the character. A carrot
+	// inside D2's ~40px click dead-zone around the char produces ZERO movement — and since the
+	// cursor only sets force-move DIRECTION (holdMs sets distance), a short Navigator step then
+	// never advances committedS and the same tiny step re-issues forever: a hard nav deadlock
+	// (measured: 5 minutes bit-identical position in town while "walking"). Extending the radius
+	// is free — overshoot is impossible, the hold duration limits the step.
+	minCarrot := func(sx, sy int) (int, int) {
+		maxY := int(float32(gr.GameAreaSizeY) / 1.25)
+		ox, oy := float64(sx-cx), float64(sy-cy)
+		n := math.Hypot(ox, oy)
+		const minR = 120
+		if n == 0 {
+			return sx, sy
+		}
+		if n < minR {
+			sx = cx + int(ox*minR/n)
+			sy = cy + int(oy*minR/n)
+			sx = max(50, min(gr.GameAreaSizeX-50, sx))
+			sy = max(50, min(maxY-4, sy))
+		}
+		return sx, sy
+	}
 	screenPointToward := func(me data.Position, dx, dy int) (int, int) {
 		maxY := int(float32(gr.GameAreaSizeY) / 1.25) // stay above the HUD
 		sx, sy := cx, cy
@@ -691,7 +749,7 @@ func main() {
 				break
 			}
 		}
-		return sx, sy
+		return minCarrot(sx, sy)
 	}
 
 	// carrotScreen returns the on-screen point to force-move toward to reach world point w, never
@@ -706,6 +764,7 @@ func main() {
 		for f := 100; f >= 10; f -= 10 {
 			sx, sy := gameToScreen(gr, me.X, me.Y, me.X+dx*f/100, me.Y+dy*f/100)
 			if sx > 40 && sx < gr.GameAreaSizeX-40 && sy > 40 && sy < maxY {
+				sx, sy = minCarrot(sx, sy) // dead-zone escape — see minCarrot
 				return sx, sy, true
 			}
 		}
@@ -1257,6 +1316,17 @@ func main() {
 		return
 	}
 
+	// Map data (the "maphack"): full-area grids + the area adjacency graph, generated from the
+	// live map seed via koolo-map + D2LoD. Best-effort — the LIVE grid stays the collision
+	// authority (especially in town, where classic collision is wrong for the mod); map data
+	// powers multi-hop -goto routing, far-object knowledge, and adjacency.
+	cfg.Game.Difficulty = difficulty.Difficulty(*diff)
+	if err := gr.FetchMapData(); err != nil {
+		logger.Warn("map data unavailable — multi-hop -goto disabled", "err", err)
+	} else {
+		logger.Info("map data loaded", "areas", len(gr.GetData().Areas))
+	}
+
 	// Pre-buff in HUMAN form (summons/spirit can't be cast as a werewolf), then shapeshift.
 	// Skipped for -walkto: that mode proves locomotion only and stays combat-free/human-form.
 	if *walkToPt == "" && !*moveTest {
@@ -1310,6 +1380,25 @@ func main() {
 			c = data.Position{X: sx/len(cells) + g.OffsetX, Y: sy/len(cells) + g.OffsetY}
 		}
 		return cells, c
+	}
+
+	// mapExitTo translates the CURRENT area's map-frame exit toward `hop` into live coords:
+	// delta = liveGridOrigin - mapGridOrigin. Correct in -livegrid mode (map grid offsets are
+	// untouched there); in koolo-map mode alignArea mutates the cached offsets so the delta
+	// degenerates to 0 — acceptable, this project always runs -livegrid.
+	mapExitTo := func(d game.Data, hop area.ID) (data.Position, bool) {
+		if navGrid == nil || d.AreaData.Grid == nil {
+			return data.Position{}, false
+		}
+		for _, al := range d.AdjacentLevels {
+			if al.Area == hop {
+				return data.Position{
+					X: al.Position.X + navGrid.OffsetX - d.AreaData.Grid.OffsetX,
+					Y: al.Position.Y + navGrid.OffsetY - d.AreaData.Grid.OffsetY,
+				}, true
+			}
+		}
+		return data.Position{}, false
 	}
 
 	// acquireGrid returns the navigation grid for the current area. Prefers the LIVE room
@@ -3027,12 +3116,69 @@ func main() {
 	var gotoCross [][2]data.Position // (approach, cross) candidates for the current goto border
 	gotoIdx := 0
 	gotoTryAt := time.Now()
+	var gotoBorderSeekLog time.Time
+	var gotoGridRefresh time.Time
 	var badDests []data.Position // explore destinations that turned out unreachable (walled off)
 	chickenStreak := 0           // consecutive Chicken ticks, so a one-frame HP dip doesn't spam TP
 	tpDone := false              // emergency TP already fired for the current chicken episode
 	lootBlacklist := map[data.UnitID]time.Time{}
 	lootAttempts := map[data.UnitID]int{}
 	objBlacklist := map[data.UnitID]time.Time{} // objects already used (so we don't re-open)
+
+	// curGoto is the LIVE travel target: normally the -goto flag, but death recovery retargets
+	// it at the death area so the corpse run rides the same border-crossing machinery.
+	curGoto := *gotoArea
+	// Death state survives bot restarts: Corpse.Found only reads in the corpse's own area, so a
+	// fresh process in town has NO way to know a corpse is waiting two zones away. The file is
+	// written on death, cleared on recovery or give-up.
+	deathStateFile := filepath.Join("logs", "death_state.txt")
+	if b, err := os.ReadFile(deathStateFile); err == nil {
+		if a, err2 := fmt.Sscanf(string(b), "%d", new(int)); a == 1 && err2 == nil {
+			var deathA int
+			fmt.Sscanf(string(b), "%d", &deathA)
+			if deathA != 0 {
+				curGoto = deathA
+				logger.Info("resuming corpse recovery from a previous run", "deathArea", deathA)
+			}
+		}
+	}
+	var corpseRecoverStart time.Time // zero = not currently recovering
+	var corpseGiveUp time.Time       // set when a recovery attempt timed out (retry cooldown)
+	var corpseLogAt time.Time
+	corpseSweepFails := 0
+
+	// Loot filter: what's worth walking to. Quality reads work on 3.2 (verified for player
+	// stats; item quality is the same statlist machinery). Potions count as needed only while
+	// the belt is short on that type — half the belt (2 columns) reserved per type.
+	beltShortOn := func(d game.Data, pt data.PotionType) bool {
+		n := 0
+		for _, p := range d.Inventory.Belt.Items {
+			if strings.Contains(string(p.Name), string(pt)) {
+				n++
+			}
+		}
+		return n < 2*d.Inventory.Belt.Rows()
+	}
+	lootWorthy := func(d game.Data, it data.Item) bool {
+		switch it.Quality {
+		case item.QualityUnique, item.QualitySet, item.QualityRare, item.QualityCrafted:
+			return true
+		}
+		n := strings.ToLower(string(it.Name))
+		if n == "gold" {
+			return true
+		}
+		if strings.Contains(n, "rejuvenation") {
+			return true // rejuvs always — they restore both pools and stack anywhere
+		}
+		if strings.Contains(n, "healingpotion") {
+			return beltShortOn(d, data.HealingPotion)
+		}
+		if strings.Contains(n, "manapotion") {
+			return beltShortOn(d, data.ManaPotion)
+		}
+		return false
+	}
 	nearAny := func(p data.Position, list []data.Position, r int) bool {
 		for _, q := range list {
 			if chebyshev(p, q) < r {
@@ -3067,7 +3213,7 @@ mainLoop:
 		// townsfolk id, Charsi becomes a valid target. Area.IsTown() is read live from the game and
 		// cannot be wrong about the mod. -goto is exempt: leaving town is the one town errand the
 		// loop currently knows how to run.
-		if d.PlayerUnit.Area.IsTown() && *gotoArea == 0 {
+		if d.PlayerUnit.Area.IsTown() && curGoto == 0 {
 			if time.Since(lastTownLog) > 10*time.Second {
 				logger.Info("in town — combat/explore suppressed (pass -goto <area> to travel out)",
 					"area", int(d.PlayerUnit.Area), "pos", fmt.Sprintf("(%d,%d)", me.X, me.Y))
@@ -3092,8 +3238,46 @@ mainLoop:
 				"hint", "run crashwatch.ps1 for the exit code")
 			break mainLoop
 		case StatusDead:
-			logger.Info("dead — stopping", "pos", fmt.Sprintf("(%d,%d)", me.X, me.Y))
-			break mainLoop
+			if *hardcore {
+				logger.Error("DEAD (hardcore) — stopping", "pos", fmt.Sprintf("(%d,%d)", me.X, me.Y))
+				break mainLoop
+			}
+			deathArea := int(d.PlayerUnit.Area)
+			logger.Warn("DEAD — softcore recovery begins", "area", deathArea,
+				"pos", fmt.Sprintf("(%d,%d)", me.X, me.Y))
+			time.Sleep(2500 * time.Millisecond) // death animation / screen settle
+			respawnKey := ""
+			for _, k := range []string{"esc", "enter", "esc"} {
+				hid.PressKey(hid.GetASCIICode(k))
+				logger.Info("death: respawn input sent", "key", k)
+				for w := 0; w < 30; w++ {
+					time.Sleep(200 * time.Millisecond)
+					d2 := gr.GetData()
+					m2 := d2.PlayerUnit.Mode
+					if d2.PlayerUnit.HPPercent() > 0 && m2 != mode.Death && m2 != mode.Dead &&
+						d2.PlayerUnit.Area.IsTown() {
+						respawnKey = k
+						break
+					}
+				}
+				if respawnKey != "" {
+					break
+				}
+			}
+			if respawnKey == "" {
+				d2 := gr.GetData()
+				logger.Error("death: NO respawn input worked — stopping for postmortem",
+					"mode", int(d2.PlayerUnit.Mode), "hp", d2.PlayerUnit.HPPercent(),
+					"area", int(d2.PlayerUnit.Area))
+				break mainLoop
+			}
+			logger.Info("death: respawned in town", "via", respawnKey)
+			_ = os.WriteFile(deathStateFile, []byte(fmt.Sprintf("%d", deathArea)), 0644)
+			curGoto = deathArea // ride the goto machinery back to the corpse
+			targetID, engagedID = 0, 0
+			chickenStreak = 0
+			tpDone = false
+			continue
 		case StatusChicken:
 			chickenStreak++
 			targetID = 0
@@ -3154,21 +3338,185 @@ mainLoop:
 			}
 		}
 
+		// CORPSE RECOVERY: preempts combat/loot/explore. Corpse.Found only reads in the corpse's
+		// own area, so the cross-area leg of a death run happens via curGoto (set on death) and
+		// this block takes over on arrival. Time-boxed: a corpse we can't reach in 3 minutes gets
+		// a 10-minute cooldown so the bot farms instead of humping a wall.
+		if d.Corpse.Found && !d.Corpse.StateNotInteractable() && time.Since(corpseGiveUp) > 10*time.Minute {
+			if corpseRecoverStart.IsZero() {
+				corpseRecoverStart = time.Now()
+				logger.Info("corpse: recovery started", "pos", fmt.Sprintf("(%d,%d)", d.Corpse.Position.X, d.Corpse.Position.Y))
+			}
+			if time.Since(corpseRecoverStart) > 3*time.Minute {
+				logger.Warn("corpse: giving up for now (10min cooldown)")
+				corpseGiveUp, corpseRecoverStart = time.Now(), time.Time{}
+				_ = os.Remove(deathStateFile)
+				curGoto = *gotoArea
+				continue
+			}
+			cd := chebyshev(me, d.Corpse.Position)
+			if time.Since(corpseLogAt) > 3*time.Second {
+				logger.Info("corpse: recovering", "dist", cd, "pos", fmt.Sprintf("(%d,%d)", me.X, me.Y),
+					"corpse", fmt.Sprintf("(%d,%d)", d.Corpse.Position.X, d.Corpse.Position.Y),
+					"sweepFails", corpseSweepFails)
+				corpseLogAt = time.Now()
+			}
+			switch {
+			case cd > 6:
+				sx, sy := screenPointToward(me, d.Corpse.Position.X-me.X, d.Corpse.Position.Y-me.Y)
+				walkToHold(sx, sy, min(240, max(90, cd*9)))
+			case cd <= 1:
+				// Standing on it hides the label under the character — step off a couple tiles.
+				sx, sy := screenPointToward(me, me.X-d.Corpse.Position.X, me.Y-d.Corpse.Position.Y)
+				walkToHold(sx, sy, 150)
+			default:
+				bx, by := gameToScreen(gr, me.X, me.Y, d.Corpse.Position.X, d.Corpse.Position.Y)
+				got := false
+				hoverSeen := ""
+				for dy := -60; dy <= 16 && !got; dy += 6 {
+					for _, dx := range []int{0, -8, 8, -16, 16, -26, 26} {
+						px, py := bx+dx, by+dy
+						hid.AimPhysical(px, py)
+						time.Sleep(55 * time.Millisecond)
+						d3 := gr.GetData()
+						if d3.HoverData.IsHovered && hoverSeen == "" {
+							hoverSeen = fmt.Sprintf("type=%d id=%d", d3.HoverData.UnitType, int(d3.HoverData.UnitID))
+						}
+						if !d3.Corpse.IsHovered {
+							continue
+						}
+						hid.AimPhysical(px, py)
+						time.Sleep(70 * time.Millisecond)
+						if !gr.GetData().Corpse.IsHovered {
+							continue
+						}
+						logger.Info("corpse: hovered — clicking", "at", fmt.Sprintf("(%d,%d)", px, py))
+						interactClick(px, py)
+						for w := 0; w < 20; w++ {
+							time.Sleep(150 * time.Millisecond)
+							if !gr.GetData().Corpse.Found {
+								got = true
+								break
+							}
+						}
+						break
+					}
+				}
+				if !got {
+					corpseSweepFails++
+					logger.Info("corpse: sweep found no Corpse.IsHovered", "fails", corpseSweepFails,
+						"anyHover", hoverSeen)
+					if corpseSweepFails >= 3 {
+						// Corpse.IsHovered may simply not wire up on 3.2 — blind reliable-click at
+						// the predicted point and check the outcome instead of trusting the flag.
+						sx2, sy2 := gameToScreen(gr, me.X, me.Y, d.Corpse.Position.X, d.Corpse.Position.Y)
+						logger.Info("corpse: blind interactClick fallback", "screen", fmt.Sprintf("(%d,%d)", sx2, sy2))
+						interactClick(sx2, sy2)
+						time.Sleep(800 * time.Millisecond)
+						if !gr.GetData().Corpse.Found {
+							got = true
+						}
+					}
+				}
+				if got {
+					logger.Info("corpse: RECOVERED — gear back, resuming",
+						"after", time.Since(corpseRecoverStart).Round(time.Second).String())
+					corpseRecoverStart = time.Time{}
+					corpseSweepFails = 0
+					_ = os.Remove(deathStateFile)
+					curGoto = *gotoArea
+				}
+			}
+			continue
+		}
+		if !d.Corpse.Found && !corpseRecoverStart.IsZero() {
+			// Corpse vanished without our click (picked up on approach, or state change) — done.
+			corpseRecoverStart = time.Time{}
+			curGoto = *gotoArea
+		}
+
 		// GOTO: travel to a target area via a live room-graph border, using the clearance-aware
 		// Navigator (owns its own recovery). Runs BEFORE the generic break-out/unstick so those
 		// path-agnostic behaviors don't drag us off a legitimate route.
-		if *gotoArea != 0 && navi != nil && navGrid != nil && int(d.PlayerUnit.Area) != *gotoArea {
+		if curGoto != 0 && navi != nil && navGrid != nil && int(d.PlayerUnit.Area) != curGoto {
+			// MULTI-HOP: the room graph only has DIRECT borders, so a non-adjacent target (e.g.
+			// town -> Cold Plains) yields 0 candidates forever. BFS the area graph from map data
+			// for the next hop; each crossing re-aligns and re-plans, so the chain emerges hop
+			// by hop. Falls back to the direct target when map data is absent.
+			hopTarget := area.ID(curGoto)
+			if nh := nextHopArea(d, d.PlayerUnit.Area, area.ID(curGoto)); nh != 0 {
+				hopTarget = nh
+			}
 			if len(gotoCross) == 0 { // discover crossing candidates from the live room graph
 				if rgph, err := gr.ReadCurrentRoomGraph(); err == nil {
-					for _, b := range rgph.BordersTo(area.ID(*gotoArea)) {
+					for _, b := range rgph.BordersTo(hopTarget) {
 						span := b.SpanEnd - b.SpanStart
 						for _, frac := range []float64{0.5, 0.35, 0.65} {
 							ap, cr := b.CrossingAt(b.SpanStart + int(float64(span)*frac))
 							gotoCross = append(gotoCross, [2]data.Position{ap, cr})
 						}
 					}
-					logger.Info("goto: live borders", "targetArea", *gotoArea, "candidates", len(gotoCross))
+					if len(gotoCross) > 0 || time.Since(gotoBorderSeekLog) > 5*time.Second {
+						logger.Info("goto: live borders", "targetArea", curGoto, "hop", int(hopTarget), "candidates", len(gotoCross))
+					}
 					gotoIdx, gotoTryAt = 0, time.Now()
+				}
+			}
+			if len(gotoCross) == 0 {
+				// Border rooms not loaded yet — the live room graph only spans LOADED rooms, so a
+				// far border yields nothing. Travel toward the map-data exit: plan to the WALKABLE
+				// cell nearest the exit (the exit itself is outside the partial grid — planning
+				// straight at it degenerates into an instant-arrive/replan loop with ZERO movement),
+				// and refresh the live grid as rooms stream in so the frontier advances.
+				if exit, ok := mapExitTo(d, hopTarget); ok {
+					if time.Since(gotoBorderSeekLog) > 5*time.Second {
+						logger.Info("goto: seeking exit (border rooms not loaded)",
+							"hop", int(hopTarget), "exit", fmt.Sprintf("(%d,%d)", exit.X, exit.Y),
+							"dist", chebyshev(me, exit))
+						gotoBorderSeekLog = time.Now()
+					}
+					if time.Since(gotoGridRefresh) > 4*time.Second {
+						if g, ok2 := acquireGrid(); ok2 {
+							navGrid = g
+							navi = NewNavigator(g)
+							walkables, walkCentroid = computeWalk(g)
+						}
+						gotoGridRefresh = time.Now()
+					}
+					// Frontier target: walkable cell nearest the exit.
+					bestD := 1 << 30
+					var frontier data.Position
+					for _, c := range walkables {
+						w := data.Position{X: c.X + navGrid.OffsetX, Y: c.Y + navGrid.OffsetY}
+						if dd := chebyshev(w, exit); dd < bestD {
+							bestD, frontier = dd, w
+						}
+					}
+					if bestD == 1<<30 || chebyshev(me, frontier) <= 4 {
+						// At (or without) a frontier — nudge raw toward the exit so new rooms load.
+						sx, sy := screenPointToward(me, exit.X-me.X, exit.Y-me.Y)
+						walkToHold(sx, sy, 300)
+						continue
+					}
+					if !navi.havePlan {
+						if !navi.BuildPlan(me, frontier, time.Now()) {
+							sx, sy := screenPointToward(me, exit.X-me.X, exit.Y-me.Y)
+							walkToHold(sx, sy, 250)
+							continue
+						}
+					}
+					step := navi.Step(me, time.Now())
+					if step.Arrived || step.Diverged {
+						navi.havePlan = false
+						continue
+					}
+					hold := step.HoldMs
+					if hold <= 0 {
+						hold = 200
+					}
+					sx, sy := screenPointToward(me, step.Target.X-me.X, step.Target.Y-me.Y)
+					walkToHold(sx, sy, hold)
+					continue
 				}
 			}
 			if len(gotoCross) > 0 {
@@ -3402,6 +3750,9 @@ mainLoop:
 					for _, it := range d.Inventory.ByLocation(item.LocationGround) {
 						if bl, ok := lootBlacklist[it.UnitID]; ok && time.Since(bl) < 15*time.Second {
 							continue // recently failed to pick up — skip so we don't hump the same item
+						}
+						if !*lootAll && !lootWorthy(d, it) {
+							continue // filter: uniques/sets/rares/crafted, gold, needed potions
 						}
 						dd := chebyshev(me, it.Position)
 						if dd < bestDist && dd <= *lootradius {
