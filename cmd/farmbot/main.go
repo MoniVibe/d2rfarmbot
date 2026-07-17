@@ -22,6 +22,7 @@ import (
 	"github.com/hectorgimenez/d2go/pkg/data/difficulty"
 	"github.com/hectorgimenez/d2go/pkg/data/item"
 	"github.com/hectorgimenez/d2go/pkg/data/mode"
+	"github.com/hectorgimenez/d2go/pkg/data/skill"
 	"github.com/hectorgimenez/d2go/pkg/data/stat"
 	"github.com/hectorgimenez/d2go/pkg/data/state"
 	d2gomem "github.com/hectorgimenez/d2go/pkg/memory"
@@ -115,6 +116,9 @@ func main() {
 	seconds := flag.Int("seconds", 90, "run duration in seconds")
 	werewolf := flag.String("werewolf", "f1", "shapeshift hotkey")
 	rabies := flag.String("rabies", "f2", "rabies attack hotkey")
+	melee := flag.String("melee", "", "normal-attack hotkey: pressed instead of -rabies when MP%% is below -meleebelow (pre-skills fallback for a low-level char — bind Attack to a key in-game). Empty = left-click normal attack (no binding needed).")
+	meleeBelow := flag.Int("meleebelow", 25, "MP%% threshold below which the bot melees instead of casting")
+	castRange := flag.Int("castrange", 8, "max distance (subtiles) to cast the right skill — Firestorm's flames crawl and dissipate, so casts from bite range (18) burn mana into empty ground")
 	spirit := flag.String("spirit", "f3", "spirit/aura buff hotkey")
 	wolves := flag.String("wolves", "f4", "summon wolves hotkey")
 	creeper := flag.String("creeper", "f5", "summon creeper hotkey")
@@ -126,6 +130,7 @@ func main() {
 	mapalign := flag.Bool("mapalign", false, "probe: walk to sample walkable tiles, brute-force the grid offset that fits them, exit")
 	nav := flag.Bool("nav", false, "enable map navigation: fetch map, auto-calibrate offset, A* pathfind to targets")
 	levelprobe := flag.Bool("levelprobe", false, "probe: read live DrlgLevel origin/size from memory, compare to generated grid, exit")
+	charProbe := flag.Bool("charprobe", false, "probe: read the character sheet from memory (name/class/level/skills/L+R skill), exit")
 	gotoArea := flag.Int("goto", 0, "with -nav: travel to this area ID first (e.g. 2=Blood Moor) via its exit, then farm")
 	roomprobe := flag.Int("roomprobe", 0, "probe: dump live Room2 graph + borders to this destination area ID, exit")
 	collprobe := flag.Bool("collprobe", false, "probe: live-room collision availability + compare live vs koolo-map grid at player, exit")
@@ -161,6 +166,7 @@ func main() {
 	realCursor := flag.Bool("realcursor", false, "drive the REAL system cursor (SetCursorPos) to move targets — for builds where D2R reads the hardware mouse via RawInput, not the injected GetCursorPos")
 	hwMove := flag.String("hwmove", "off", "Interception driver mouse-move mode: off (DEFAULT — non-intrusive, no real-cursor movement) | rel (closed-loop real-cursor move) | abs (absolute real-cursor move). rel/abs are intrusive diagnostics.")
 	dpiScale := flag.Float64("dpiscale", 1.5, "logical→physical pixel scale for the in-game GetPhysicalCursorPos patch (1.5 at 150% display scaling)")
+	worldScale := flag.Float64("worldscale", 0, "logical→WORLD cursor-space scale for world aim (hover/attack/move direction). 0 = follow -dpiscale (measured correct). Pass 1 for the old unscaled behavior.")
 	hwProbe := flag.Bool("hwprobe", false, "validate the Interception mouse-move path: drive the REAL cursor to known screen points, read back GetCursorPos, report match/mismatch, exit (no D2R attach)")
 	fixInput := flag.Bool("fixinput", false, "REPAIR: resume any leaked thread suspends + heal D2R's input functions (restore GetPhysicalCursorPos/GetCursorPos/etc. to pristine) after an unclean exit — no D2R restart needed, exit")
 	resumeThreads := flag.Bool("resumethreads", false, "REPAIR: resume any D2R threads left suspended by a crashed run (unblocks SendMessage/HoldKey hangs), exit")
@@ -177,6 +183,7 @@ func main() {
 	wpGoto := flag.Int("wpgoto", 0, "travel to this AREA ID via the waypoint panel (uses the calibrated clickY=96+41*row map + area->row table). the character must be near a waypoint. Needs -move e.")
 	npcProbe := flag.Int("npcprobe", 0, "TOWN DISCOVERY: lists nearby units, then walks to + interacts with the NPC whose NAME ID == this value (via interactNPC body-hover), screenshots + reports OpenMenus. Run once to read the unit list, then re-run with a town-NPC name id. Needs -move e.")
 	hoverGrid := flag.Bool("hovergrid", false, "DIAGNOSTIC: sweep the cursor across a screen grid, logging every point where anything becomes hovered (HoverData OR any monster.IsHovered). Reveals whether/where NPC hover fires. Needs -move e.")
+	aimProbe := flag.Bool("aimprobe", false, "AIM SCALE ORACLE (read+aim only, zero clicks): pick the nearest monster, aim at t*gameToScreen prediction for t=0.5..1.7, log where the game reports hover. The t where hover fires IS the world-aim scale factor (1.0 = mapping correct as-is).")
 	shotDir := flag.String("shotdir", "shots", "directory for diagnostic screenshots (created if missing; relative to the working dir).")
 	wpCal := flag.Bool("wpcal", false, "WP CALIBRATION ORACLE (opens the panel, clicks NOTHING, travels nowhere): reports which row the blue compass lights for the area she is standing in. That (area -> litRow) pair is ground truth; run it once per waypoint area to build the row table honestly. Needs -move e, the character near a CLEARED waypoint.")
 	uiClickAt := flag.String("uiclick", "", "DIAGNOSTIC: uiClick these CLIENT coords \"x,y\" on whatever UI is already open, screenshotting before/after. Tests the panel-click primitive in isolation against a known target (e.g. a panel's X button) instead of inferring it from a travel that didn't happen. Needs -move e.")
@@ -211,12 +218,19 @@ func main() {
 	cfg := config.Characters["Main"]
 	game.SetHWMoveMode(*hwMove)
 	game.SetPhysicalScale(*dpiScale)
+	// World aim space (measured by -aimprobe): defaults to the display scale; pass
+	// -worldscale 1 to restore the old unscaled behavior if this machine measures differently.
+	if *worldScale > 0 {
+		game.SetWorldScale(*worldScale)
+	} else {
+		game.SetWorldScale(*dpiScale)
+	}
 
 	// Movement REQUIRES the Force Move key. Without -move, walkToHold falls back to a left-click
 	// "move", which on this build is unreliable (D2R ignores injected left-clicks) AND spams
 	// left-clicks that desync D2R's in-process mouse state (the flaky-LMB symptom). Refuse to run
 	// the farming/goto loop without it. Read-only probes don't move, so they're exempt.
-	probeOnly := *mapcheck || *mapalign || *levelprobe || *collprobe || *roomprobe != 0 || *wpprobe || *hoverProbe || *cursorScan || *cursorAddr != "" || *pathProbe || *pathDrive || *shadowWalk != "" || *findWriter != "" || *inputTest || *clickTest || *wpAt || *fixInput || *resumeThreads || *screenshot != "" || *wpTown || *wpAim || *wpGoto != 0 || *npcProbe != 0 || *hoverGrid
+	probeOnly := *mapcheck || *mapalign || *levelprobe || *charProbe || *aimProbe || *collprobe || *roomprobe != 0 || *wpprobe || *hoverProbe || *cursorScan || *cursorAddr != "" || *pathProbe || *pathDrive || *shadowWalk != "" || *findWriter != "" || *inputTest || *clickTest || *wpAt || *fixInput || *resumeThreads || *screenshot != "" || *wpTown || *wpAim || *wpGoto != 0 || *npcProbe != 0 || *hoverGrid
 	if !probeOnly && *moveKey == "" {
 		logger.Error("-move is required: bind 'Force Move' in D2R Options>Controls and pass e.g. -move e. " +
 			"Refusing to run without it — the left-click move fallback is unreliable on this build and corrupts D2R's mouse state.")
@@ -373,7 +387,12 @@ func main() {
 	cx, cy := gr.GameAreaSizeX/2, gr.GameAreaSizeY/2
 
 	// cast a self/summon skill: select it, then right-click near the player.
+	// Empty key = the char doesn't have this skill (e.g. a level-1 char) — skip entirely,
+	// otherwise the right-click below fires the CURRENT right skill at nothing every call site.
 	castSelf := func(key string) {
+		if key == "" {
+			return
+		}
 		hid.PressKey(hid.GetASCIICode(key))
 		time.Sleep(120 * time.Millisecond)
 		hid.Click(game.RightButton, cx, cy)
@@ -1039,6 +1058,47 @@ func main() {
 		return
 	}
 
+	// -charprobe: READ-ONLY character sheet straight from the player unit — class byte @+0x17C,
+	// Level stat off the statlist, the live skill list, and the currently selected L/R skills.
+	// This is the source of truth for combat flags (the KeyBindings offsets are stale on 3.2,
+	// but WHAT the char can cast comes from here, not from hotkeys).
+	if *charProbe {
+		d := gr.GetData()
+		p := d.PlayerUnit
+		classNames := [...]string{"Amazon", "Sorceress", "Necromancer", "Paladin", "Barbarian", "Druid", "Assassin"}
+		className := fmt.Sprintf("unknown(%d)", uint(p.Class))
+		if int(p.Class) < len(classNames) {
+			className = classNames[p.Class]
+		}
+		lvl, lvlOK := p.Stats.FindStat(stat.Level, 0)
+		if !lvlOK {
+			lvl, lvlOK = p.BaseStats.FindStat(stat.Level, 0)
+		}
+		xp, xpOK := p.Stats.FindStat(stat.Experience, 0)
+		if !xpOK {
+			xp, _ = p.BaseStats.FindStat(stat.Experience, 0)
+		}
+		lvlStr := fmt.Sprintf("%d", lvl.Value)
+		if !lvlOK {
+			lvlStr = "NOT_FOUND"
+		}
+		skillName := func(id skill.ID) string {
+			if n, ok := skill.SkillNames[id]; ok {
+				return n
+			}
+			return fmt.Sprintf("skill#%d", int(id))
+		}
+		logger.Info("charprobe",
+			"name", p.Name, "class", className, "level", lvlStr, "xp", xp.Value,
+			"area", int(p.Area), "pos", fmt.Sprintf("(%d,%d)", p.Position.X, p.Position.Y),
+			"leftSkill", skillName(p.LeftSkill), "rightSkill", skillName(p.RightSkill))
+		for id, pts := range p.Skills {
+			logger.Info("charprobe: skill", "id", int(id), "name", skillName(id),
+				"level", pts.Level, "quantity", pts.Quantity, "charges", pts.Charges)
+		}
+		return
+	}
+
 	// Live-level-origin probe (advisor Rank 1 validation): read DrlgLevel Pos/Size from memory,
 	// generate the grid, and confirm size*5 == grid size and origin*5 ≈ the fitted offset.
 	if *levelprobe {
@@ -1529,6 +1589,102 @@ func main() {
 			"startDist", startDist, "finalDist", chebyshev(final, goal), "minDist", minDist,
 			"netMoved", chebyshev(me0, final), "replans", replans, "ticks", tick,
 			"elapsedS", time.Since(start).Seconds())
+		return
+	}
+
+	// -aimprobe: measure the WORLD aim mapping against the game's own hit-test. gameToScreen
+	// predicts the target's client point p; we aim at t*p for t=0.5..1.7 and read HoverData.
+	// If hover fires at t≈1.0 the mapping is right; t≈displayScale means the client offset must
+	// be SCALED for world aim (the question the desktop's panel-only proof left open). The
+	// target's position and the prediction are re-read every step (zombies shamble).
+	if *aimProbe {
+		nearestMon := func() (*data.Monster, data.Position, int) {
+			d := gr.GetData()
+			me := d.PlayerUnit.Position
+			var tgt *data.Monster
+			best := 999
+			for i := range d.Monsters {
+				m := &d.Monsters[i]
+				if dist := chebyshev(me, m.Position); dist < best {
+					best, tgt = dist, m
+				}
+			}
+			return tgt, me, best
+		}
+		// Approach phase: get CLOSE (≤12 subtiles) so the target is solidly on-screen — at 24+
+		// subtiles the prediction lands at/off the screen edge and hover can never fire.
+		// Steering is direction-only, so the suspect absolute mapping can't invalidate it.
+		if *moveKey == "" {
+			logger.Error("-aimprobe needs -move e (it walks into range first)")
+			return
+		}
+		approach := func(within int) bool {
+			for i := 0; i < 60; i++ {
+				tgt, me, best := nearestMon()
+				if tgt == nil {
+					logger.Error("aimprobe: no monsters in area")
+					return false
+				}
+				if best <= within {
+					return true
+				}
+				// Steer via a CENTERED carrot in the target's direction — the raw gameToScreen of
+				// a far target lands at the screen edge/HUD where the cursor is dead (measured:
+				// zero net movement), while near-center carrots steer perfectly (-movetest).
+				sx, sy := gameToScreen(gr, me.X, me.Y, tgt.Position.X, tgt.Position.Y)
+				dx, dy := float64(sx-cx), float64(sy-cy)
+				n := math.Hypot(dx, dy)
+				if n < 1 {
+					n = 1
+				}
+				walkToHold(cx+int(dx/n*280), cy+int(dy/n*140), 250)
+			}
+			logger.Error("aimprobe: could not close in")
+			return false
+		}
+		hits := 0
+		for pass := 0; pass < 2; pass++ {
+			if !approach(12) {
+				return
+			}
+			for t := 0.50; t <= 1.70; t += 0.05 {
+				d := gr.GetData()
+				me := d.PlayerUnit.Position
+				var tgt *data.Monster
+				best := 999
+				for i := range d.Monsters {
+					m := &d.Monsters[i]
+					if dist := chebyshev(me, m.Position); dist < best {
+						best, tgt = dist, m
+					}
+				}
+				if tgt == nil || best > 20 {
+					break // drifted out of hover range — outer pass loop re-approaches
+				}
+				sx, sy := gameToScreen(gr, me.X, me.Y, tgt.Position.X, tgt.Position.Y)
+				ax, ay := int(float64(sx)*t), int(float64(sy)*t)
+				hid.AimPhysical(ax, ay)
+				time.Sleep(60 * time.Millisecond)
+				d2 := gr.GetData()
+				monHov := false
+				for i := range d2.Monsters {
+					if d2.Monsters[i].UnitID == tgt.UnitID && d2.Monsters[i].IsHovered {
+						monHov = true
+					}
+				}
+				if d2.HoverData.IsHovered || monHov {
+					hits++
+					logger.Info("aimprobe HIT", "t", fmt.Sprintf("%.2f", t),
+						"predicted", fmt.Sprintf("(%d,%d)", sx, sy), "aimed", fmt.Sprintf("(%d,%d)", ax, ay),
+						"hoverUnit", int(d2.HoverData.UnitID), "targetUnit", int(tgt.UnitID),
+						"targetHovered", monHov, "dist", best)
+				} else {
+					logger.Info("aimprobe miss", "t", fmt.Sprintf("%.2f", t),
+						"predicted", fmt.Sprintf("(%d,%d)", sx, sy), "aimed", fmt.Sprintf("(%d,%d)", ax, ay), "dist", best)
+				}
+			}
+		}
+		logger.Info("aimprobe: DONE", "hits", hits)
 		return
 	}
 
@@ -2490,6 +2646,7 @@ func main() {
 	const meleeRange = 18 // bite reach: the werewolf lunges the last step, so bite early and
 	// with hysteresis — a bit of extra reach stops the overshoot-and-turn-around dance right at
 	// the engagement threshold (esp. vs fleeing Fallen; one Rabies bite spreads through the pack).
+	const swingRange = 4 // normal-attack reach: walk all the way in before swinging.
 
 	deadline := time.Now().Add(time.Duration(*seconds) * time.Second)
 	logger.Info("farming (rabies werewolf)", "for_seconds", *seconds,
@@ -3044,7 +3201,18 @@ mainLoop:
 
 		dist := chebyshev(me, target.Position)
 		sx, sy := gameToScreen(gr, me.X, me.Y, target.Position.X, target.Position.Y)
-		if dist <= meleeRange {
+		// Attack mode for THIS tick: cast the right skill only when mana allows AND the target
+		// is inside -castrange (Firestorm's flames crawl — long casts burn mana into nothing).
+		// Below the mana floor, melee instead: -melee hotkey if bound, else a left-click normal
+		// attack (left skill is Attack on a fresh char; interactClick makes the click land).
+		useCast := *rabies != "" && d.PlayerUnit.MPPercent() >= *meleeBelow
+		engageRange := swingRange
+		if useCast {
+			engageRange = *castRange
+		} else if *rabies == "" && *melee == "" {
+			engageRange = meleeRange // no skill and no melee key: old behavior, right-click bite
+		}
+		if dist <= engageRange {
 			// Damage watchdog — see engagedID above. Must run BEFORE the bite, because the bite
 			// resets stuckCount and would otherwise trap us here forever.
 			life := target.Stats[stat.Life]
@@ -3053,24 +3221,45 @@ mainLoop:
 				engagedID, engagedLife, engagedAt = target.UnitID, life, time.Now()
 			case life < engagedLife:
 				engagedLife, engagedAt = life, time.Now() // it's dying: reset the clock
-			case time.Since(engagedAt) > 4*time.Second:
+			case time.Since(engagedAt) > 8*time.Second:
+				// NOTE: on 3.2 the Life stat is frozen (32768) so "life never dropped" fires for
+				// every kill too — dead targets are now excluded in Enemies() by Mode instead, and
+				// this watchdog only catches genuinely unkillable/walled targets. 8s because a
+				// level-1 char legitimately needs >4s on tougher monsters.
 				logger.Warn("target takes no damage in melee — blacklisting",
 					"unitID", target.UnitID, "name", int(target.Name),
+					"mode", int(target.Mode),
 					"poisonImmune", target.IsImmune(stat.PoisonImmune),
 					"life", life, "engagedSecs", int(time.Since(engagedAt).Seconds()))
 				blacklist[target.UnitID] = time.Now()
 				targetID, engagedID = 0, 0
 				continue
 			}
-			logger.Info("bite", "dist", dist, "hp", d.PlayerUnit.HPPercent(), "mp", d.PlayerUnit.MPPercent(), "pos", fmt.Sprintf("(%d,%d)", me.X, me.Y))
-			hid.PressKey(hid.GetASCIICode(*rabies))
-			time.Sleep(50 * time.Millisecond)
-			// Right-click ONLY: Rabies casts via the right skill. The old left-click finisher
-			// is dropped — in-game left-click is unreliable on this build (D2R polls VK_LBUTTON
-			// state, which we don't drive, so injected left-clicks get ignored) and the message
-			// spam desyncs D2R's own left-button state (the flaky-LMB symptom). Rabies is a
-			// poison bite that spreads through the pack, so no left-swing finisher is needed.
-			hid.Click(game.RightButton, sx, sy)
+			// AIM ORACLE: the cursor is still parked where the PREVIOUS bite aimed, so this tick's
+			// HoverData is the game's own verdict on whether that aim actually lands on a unit.
+			// A run full of hover=false means gameToScreen is off for WORLD clicks — the exact
+			// question the desktop's panel-proven mapping left open.
+			logger.Info("bite", "dist", dist, "hp", d.PlayerUnit.HPPercent(), "mp", d.PlayerUnit.MPPercent(),
+				"pos", fmt.Sprintf("(%d,%d)", me.X, me.Y), "targetUnit", int(target.UnitID),
+				"hover", d.HoverData.IsHovered, "hoverUnit", int(d.HoverData.UnitID), "cast", useCast)
+			switch {
+			case useCast:
+				// Right-click cast: select the skill by hotkey, cast at the target. (Message-only
+				// right-clicks are reliable; left needs the VK_LBUTTON treatment below.)
+				hid.PressKey(hid.GetASCIICode(*rabies))
+				time.Sleep(50 * time.Millisecond)
+				hid.Click(game.RightButton, sx, sy)
+			case *melee != "":
+				// Bound melee hotkey (e.g. Attack on right-click) — same right-click path.
+				hid.PressKey(hid.GetASCIICode(*melee))
+				time.Sleep(50 * time.Millisecond)
+				hid.Click(game.RightButton, sx, sy)
+			default:
+				// No mana, no melee key: LEFT-click normal attack (fresh chars have Attack as the
+				// left skill). interactClick overrides GetKeyState(VK_LBUTTON) for the click
+				// window — the same treatment that makes loot/NPC/WP left-clicks land.
+				interactClick(sx, sy)
+			}
 			time.Sleep(200 * time.Millisecond)
 			lastDist, stuckCount = dist, 0
 		} else {

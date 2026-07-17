@@ -1,6 +1,7 @@
 package game
 
 import (
+	"math"
 	"math/rand"
 	"time"
 
@@ -22,8 +23,14 @@ type ModifierKey byte
 // pixels shown in the screen. Top-left corner is 0,0
 func (hid *HID) MovePointer(x, y int) {
 	hid.gr.updateWindowPositionData()
-	// Physical cursor value the game reads back as this client point (see clientToPhysical).
-	ppx, ppy := clientToPhysical(hid.gr.WindowLeftX, hid.gr.WindowTopY, x, y)
+	// WORLD aim: the game's world hit-test works in PHYSICAL render pixels (MEASURED on the
+	// laptop 2026-07-17 by -aimprobe: hover fires at client*displayScale, never at client*1),
+	// while gameToScreen computes in the LOGICAL window rect a DPI-unaware process sees. Scale
+	// the client offset by worldScale before the physical conversion. Panels are DIFFERENT —
+	// their hit-test recovers the UNSCALED offset (measured on the desktop) — so AimPhysical
+	// below stays raw; both measurements stand, they're separate game-side coordinate spaces.
+	wx, wy := worldAimClient(hid.gr, x, y)
+	ppx, ppy := clientToPhysical(hid.gr.WindowLeftX, hid.gr.WindowTopY, wx, wy)
 	x = hid.gr.WindowLeftX + x
 	y = hid.gr.WindowTopY + y
 
@@ -69,6 +76,35 @@ func SetPhysicalScale(s float64) {
 	}
 }
 
+// worldScale converts gameToScreen's LOGICAL client coords into the game's WORLD cursor space.
+// MEASURED (laptop, 2026-07-17, -aimprobe): the world hit-test lives in PHYSICAL render pixels —
+// hover fires at client*displayScale, never at client*1 — and world DIRECTION is
+// (cursor - charCenter) in that same space, so unscaled aim is biased toward the window's
+// top-left (the "east returned 0" / self-drift anomalies). Panels are the opposite (offset
+// recovered UNSCALED — desktop-measured); aimPanel has its own formula and is NOT affected.
+var worldScale = 1.0
+
+// SetWorldScale sets the logical→world-space scale for world aiming (MovePointer/AimPhysical).
+func SetWorldScale(s float64) {
+	if s > 0 {
+		worldScale = s
+	}
+}
+
+// worldAimClient scales a logical client point into world cursor space and CLAMPS it inside the
+// window. Clamping is load-bearing: a far target's carrot can scale past the physical window
+// edge (e.g. logical 1540 * 1.25 = 1925 > 1920), and the game DISCARDS an out-of-window cursor —
+// force-move then does nothing at all (measured: 20s of walkToHold with zero net movement).
+func worldAimClient(gr *MemoryReader, x, y int) (int, int) {
+	wx := float64(x) * worldScale
+	wy := float64(y) * worldScale
+	maxX := float64(gr.GameAreaSizeX)*worldScale - 8
+	maxY := float64(gr.GameAreaSizeY)*worldScale - 8
+	wx = math.Min(math.Max(wx, 8), maxX)
+	wy = math.Min(math.Max(wy, 8), maxY)
+	return int(wx), int(wy)
+}
+
 // AimPhysical points the in-game cursor at client (x,y) using ONLY the GetPhysicalCursorPos
 // patch — the real in-game cursor read on this build. Deliberately does NOT send the
 // WM_MOUSEMOVE / WM_SETCURSOR messages or patch GetCursorPos that MovePointer does: those
@@ -76,7 +112,8 @@ func SetPhysicalScale(s float64) {
 // force-move drift. Use this for movement/aim; use MovePointer for menu/click interactions.
 func (hid *HID) AimPhysical(x, y int) {
 	hid.gr.updateWindowPositionData()
-	px, py := clientToPhysical(hid.gr.WindowLeftX, hid.gr.WindowTopY, x, y)
+	wx, wy := worldAimClient(hid.gr, x, y)
+	px, py := clientToPhysical(hid.gr.WindowLeftX, hid.gr.WindowTopY, wx, wy)
 	hid.gi.OverridePhysicalCursorPos(px, py)
 	iMoveScreen(hid.gr.WindowLeftX+x, hid.gr.WindowTopY+y) // no-op unless -hwmove rel/abs
 }

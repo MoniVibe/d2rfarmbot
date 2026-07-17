@@ -2,6 +2,7 @@ package main
 
 import (
 	"fmt"
+	"os"
 	"time"
 
 	"github.com/hectorgimenez/d2go/pkg/memory"
@@ -24,6 +25,15 @@ func main() {
 	if err != nil {
 		fmt.Println("Could not find/attach D2R.exe:", err)
 		fmt.Println("Make sure D2R is running (ideally loaded INTO a game) and rerun this as admin.")
+		return
+	}
+	if len(os.Args) > 2 && os.Args[1] == "-dump" {
+		fmt.Println("Attached. Dumping decrypted module to", os.Args[2])
+		if err := memory.DumpModule(p, os.Args[2]); err != nil {
+			fmt.Println("dump error:", err)
+			return
+		}
+		fmt.Println("dump complete")
 		return
 	}
 	fmt.Println("Attached. Scanning offset patterns:")
