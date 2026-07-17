@@ -4014,6 +4014,46 @@ func main() {
 	var engagedLife int
 	var engagedAt time.Time
 	var lastTownLog time.Time
+	// packAssess is the combat oracle's arithmetic as a single authority: weighted enemy mass
+	// within judgment range vs the army + our pools. Shared by the farm posture and the
+	// travel fight-on-the-way gate.
+	packAssess := func(d game.Data, me data.Position) (threat, strength, packN int, centroid data.Position) {
+		for i := range d.Monsters {
+			m := &d.Monsters[i]
+			if m.Mode == mode.NpcDeath || m.Mode == mode.NpcDead || m.IsGoodNPC() || m.IsPet() || m.IsMerc() {
+				continue
+			}
+			if dd := chebyshev(me, m.Position); dd <= 30 {
+				w := 1
+				if m.IsElite() {
+					w += 2
+				}
+				if m.IsMonsterRaiser() {
+					w += 2
+				}
+				threat += w
+				centroid.X += m.Position.X
+				centroid.Y += m.Position.Y
+				packN++
+			}
+		}
+		if packN > 0 {
+			centroid.X /= packN
+			centroid.Y /= packN
+		}
+		petsAlive := 0
+		for i := range d.Monsters {
+			if d.Monsters[i].IsPet() {
+				petsAlive++
+			}
+		}
+		strength = petsAlive*3 + 2 // the char himself is worth a couple of zombies
+		if d.PlayerUnit.HPPercent() > 60 {
+			strength += 2
+		}
+		return
+	}
+	var travelFightLog time.Time
 	controlFile := filepath.Join("logs", "control.txt")
 	_ = os.Remove(controlFile) // stale command from a previous session must not kill this run
 	var lastControlCheck time.Time
@@ -4631,7 +4671,23 @@ mainLoop:
 		// GOTO: travel to a target area via a live room-graph border, using the clearance-aware
 		// Navigator (owns its own recovery). Runs BEFORE the generic break-out/unstick so those
 		// path-agnostic behaviors don't drag us off a legitimate route.
-		if curGoto != 0 && navi != nil && navGrid != nil && int(d.PlayerUnit.Area) != curGoto {
+		// FIGHT ON THE WAY: travel used to own the tick unconditionally, so the bot walked
+		// straight past packs it could profitably farm ("a commute, not a sweep"). When the
+		// combat oracle calls a nearby pack favorable, yield this tick to the normal combat
+		// flow below; travel resumes the tick the pack stops qualifying (dead, fled, or odds
+		// turned). Close packs only — a favorable pack 60 tiles off is not a reason to detour.
+		travelFight := false
+		if curGoto != 0 && !d.PlayerUnit.Area.IsTown() {
+			if thr, str, pn, cen := packAssess(d, me); pn > 0 && thr <= str && chebyshev(me, cen) <= 25 {
+				travelFight = true
+				if time.Since(travelFightLog) > 5*time.Second {
+					logger.Info("travel: favorable pack on the way — engaging",
+						"threat", thr, "strength", str, "packN", pn)
+					travelFightLog = time.Now()
+				}
+			}
+		}
+		if curGoto != 0 && !travelFight && navi != nil && navGrid != nil && int(d.PlayerUnit.Area) != curGoto {
 			// NET-PROGRESS WATCHDOG: the goto path skips the generic unstick (by design), so a
 			// physical wedge the grid can't see (fence pockets the live town collision marks
 			// walkable) would freeze travel forever — measured twice, minutes of bit-identical
@@ -5017,41 +5073,12 @@ mainLoop:
 		//   kite    — shoot from range, NEVER advance into the pack; step back when crowded.
 		//   regroup — too weak for this pack: pull back, raise from any corpse, refresh golem;
 		//             with nothing to raise, walk away from the pack entirely (live to farm).
-		threat := 0
-		var packCentroid data.Position
-		packN := 0
-		for i := range d.Monsters {
-			m := &d.Monsters[i]
-			if m.Mode == mode.NpcDeath || m.Mode == mode.NpcDead || m.IsGoodNPC() || m.IsPet() || m.IsMerc() {
-				continue
-			}
-			if dd := chebyshev(me, m.Position); dd <= 30 {
-				w := 1
-				if m.IsElite() {
-					w += 2
-				}
-				if m.IsMonsterRaiser() {
-					w += 2
-				}
-				threat += w
-				packCentroid.X += m.Position.X
-				packCentroid.Y += m.Position.Y
-				packN++
-			}
-		}
-		if packN > 0 {
-			packCentroid.X /= packN
-			packCentroid.Y /= packN
-		}
+		threat, strength, packN, packCentroid := packAssess(d, me)
 		petsAlive := 0
 		for i := range d.Monsters {
 			if d.Monsters[i].IsPet() {
 				petsAlive++
 			}
-		}
-		strength := petsAlive*3 + 2 // the char himself is worth a couple of zombies
-		if d.PlayerUnit.HPPercent() > 60 {
-			strength += 2
 		}
 		posture := "engage"
 		if threat > strength*3 {
