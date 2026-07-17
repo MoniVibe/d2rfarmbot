@@ -172,6 +172,7 @@ func main() {
 	meleeBelow := flag.Int("meleebelow", 25, "MP%% threshold below which the bot melees instead of casting")
 	castRange := flag.Int("castrange", 8, "max distance (subtiles) to cast the right skill — Firestorm's flames crawl and dissipate, so casts from bite range (18) burn mana into empty ground")
 	autoSkill := flag.String("autoskill", "", "'tabX,tabY,skillX,skillY': when a skill point is banked and no enemy is near, open the skill tree, click the tab then the skill, verify the point was spent. All overnight points go to one skill.")
+	autoStat := flag.String("autostat", "", "'strX,strY,dexX,dexY,vitX,vitY': auto-spend banked stat points when calm — str/dex to ~10 buffer over gear reqs, rest vitality (char-panel + button coords from -statsnap)")
 	autoProgress := flag.Bool("autoprogress", false, "farm along the act-1 route (Den of Evil -> Cold Plains -> Burial Grounds -> Stony Field -> Dark Wood -> Black Marsh), advancing when an area runs dry; position persisted across runs")
 	summonKey := flag.String("summon", "", "summon hotkey (e.g. f2 = RaiseSkeleton): when pets are below -maxpets and a monster corpse is near, select the summon and cast it at the corpse; the next bite's -rabies press restores the attack skill")
 	maxPets := flag.Int("maxpets", 3, "stop summoning at this many living pets")
@@ -196,6 +197,8 @@ func main() {
 	bindSkill := flag.String("bindskill", "", "PROBE: 'slotX,slotY,skillX,skillY,key' — click the HUD skill slot to open the selector, HOVER the skill icon, press the hotkey to bind it, screenshot, exit.")
 	pressOnly := flag.String("press", "", "PROBE: press this key once and exit (e.g. esc to close a leaked pause menu)")
 	gearProbe := flag.Bool("gearprobe", false, "PROBE: READ-ONLY gear evaluation — dump every equipped/inventory item with its full stat list, flag unidentified items, and note skill-granting gear that hotkey bindings depend on")
+	statSnap := flag.Bool("statsnap", false, "PROBE: open the character panel (c), screenshot to logs/statsnap.png, report banked StatPoints + current str/dex/vita/ene and gear str/dex requirements. Calibration for the stat allocator.")
+	statAlloc := flag.String("statalloc", "", "'strBtnX,strBtnY,dexBtnX,dexBtnY,vitBtnX,vitBtnY': spend banked stat points — str/dex to a small buffer over gear requirements, rest to vitality. Verified via BaseStats. Needs the char panel coords from -statsnap.")
 	moveLab := flag.String("movelab", "", "MEASUREMENT: drive a fixed square course under locomotion modes ('carrot', 'lookahead', 'click', or 'all'), scoring time / stall-seconds / path efficiency per leg. The winner becomes the mover's engine. Needs -move e.")
 	gotoArea := flag.Int("goto", 0, "with -nav: travel to this area ID first (e.g. 2=Blood Moor) via its exit, then farm")
 	roomprobe := flag.Int("roomprobe", 0, "probe: dump live Room2 graph + borders to this destination area ID, exit")
@@ -298,7 +301,7 @@ func main() {
 	// "move", which on this build is unreliable (D2R ignores injected left-clicks) AND spams
 	// left-clicks that desync D2R's in-process mouse state (the flaky-LMB symptom). Refuse to run
 	// the farming/goto loop without it. Read-only probes don't move, so they're exempt.
-	probeOnly := *mapcheck || *mapalign || *levelprobe || *charProbe || *aimProbe || *objProbe != 0 || *interactWith != "" || *dieTest || *uiSnap != "" || *panelTest != "" || *bindSkill != "" || *pressOnly != "" || *gearProbe || *moveLab != "" || *collprobe || *roomprobe != 0 || *wpprobe || *hoverProbe || *cursorScan || *cursorAddr != "" || *pathProbe || *pathDrive || *shadowWalk != "" || *findWriter != "" || *inputTest || *clickTest || *wpAt || *fixInput || *resumeThreads || *screenshot != "" || *wpTown || *wpAim || *wpGoto != 0 || *npcProbe != 0 || *hoverGrid
+	probeOnly := *mapcheck || *mapalign || *levelprobe || *charProbe || *aimProbe || *objProbe != 0 || *interactWith != "" || *dieTest || *uiSnap != "" || *panelTest != "" || *bindSkill != "" || *pressOnly != "" || *gearProbe || *statSnap || *statAlloc != "" || *moveLab != "" || *collprobe || *roomprobe != 0 || *wpprobe || *hoverProbe || *cursorScan || *cursorAddr != "" || *pathProbe || *pathDrive || *shadowWalk != "" || *findWriter != "" || *inputTest || *clickTest || *wpAt || *fixInput || *resumeThreads || *screenshot != "" || *wpTown || *wpAim || *wpGoto != 0 || *npcProbe != 0 || *hoverGrid
 	if !probeOnly && *moveKey == "" {
 		logger.Error("-move is required: bind 'Force Move' in D2R Options>Controls and pass e.g. -move e. " +
 			"Refusing to run without it — the left-click move fallback is unreliable on this build and corrupts D2R's mouse state.")
@@ -2241,6 +2244,100 @@ func main() {
 		return
 	}
 
+	// stat helpers: current attribute value and the max requirement across carried gear.
+	statVal := func(d game.Data, id stat.ID) int {
+		if v, ok := d.PlayerUnit.Stats.FindStat(id, 0); ok {
+			return v.Value
+		}
+		if v, ok := d.PlayerUnit.BaseStats.FindStat(id, 0); ok {
+			return v.Value
+		}
+		return 0
+	}
+	gearReq := func(d game.Data) (reqStr, reqDex int) {
+		for _, loc := range []item.LocationType{item.LocationEquipped, item.LocationInventory} {
+			for _, it := range d.Inventory.ByLocation(loc) {
+				if rs := it.Desc().RequiredStrength; rs > reqStr {
+					reqStr = rs
+				}
+				if rd := it.Desc().RequiredDexterity; rd > reqDex {
+					reqDex = rd
+				}
+			}
+		}
+		return
+	}
+
+	// -statsnap: character-panel calibration + a read of what allocation WOULD do.
+	if *statSnap {
+		d := gr.GetData()
+		sp := statVal(d, stat.StatPoints)
+		rs, rd := gearReq(d)
+		logger.Info("statsnap", "banked", sp,
+			"str", statVal(d, stat.Strength), "dex", statVal(d, stat.Dexterity),
+			"vita", statVal(d, stat.Vitality), "ene", statVal(d, stat.Energy),
+			"gearReqStr", rs, "gearReqDex", rd)
+		hid.PressKey(hid.GetASCIICode("c"))
+		time.Sleep(800 * time.Millisecond)
+		if f, err := os.Create(shotPath("statsnap.png")); err == nil {
+			_ = png.Encode(f, gr.Screenshot())
+			f.Close()
+			logger.Info("statsnap: saved", "path", shotPath("statsnap.png"))
+		}
+		time.Sleep(150 * time.Millisecond)
+		hid.PressKey(hid.GetASCIICode("c")) // toggle closed (esc opens the pause menu)
+		return
+	}
+
+	// -statalloc: spend banked points. Buffer str/dex ~10 over gear reqs, rest to vitality.
+	if *statAlloc != "" {
+		var sbx, sby, dbx, dby, vbx, vby int
+		if _, err := fmt.Sscanf(*statAlloc, "%d,%d,%d,%d,%d,%d", &sbx, &sby, &dbx, &dby, &vbx, &vby); err != nil {
+			logger.Error("statalloc: want 'strX,strY,dexX,dexY,vitX,vitY'", "got", *statAlloc)
+			return
+		}
+		d := gr.GetData()
+		sp := statVal(d, stat.StatPoints)
+		if sp <= 0 {
+			logger.Info("statalloc: no banked points")
+			return
+		}
+		rs, rd := gearReq(d)
+		const buffer = 10
+		hid.PressKey(hid.GetASCIICode("c"))
+		time.Sleep(800 * time.Millisecond)
+		spent := 0
+		for i := 0; i < sp; i++ {
+			d = gr.GetData()
+			var bx, by int
+			var which string
+			switch {
+			case statVal(d, stat.Strength) < rs+buffer:
+				bx, by, which = sbx, sby, "str"
+			case statVal(d, stat.Dexterity) < rd+buffer:
+				bx, by, which = dbx, dby, "dex"
+			default:
+				bx, by, which = vbx, vby, "vita"
+			}
+			before := statVal(d, stat.StatPoints)
+			uiClick(bx, by)
+			time.Sleep(250 * time.Millisecond)
+			if statVal(gr.GetData(), stat.StatPoints) < before {
+				spent++
+			} else {
+				logger.Warn("statalloc: click did not spend — stopping", "which", which, "at", fmt.Sprintf("(%d,%d)", bx, by))
+				break
+			}
+		}
+		d = gr.GetData()
+		logger.Info("statalloc: done", "spent", spent, "str", statVal(d, stat.Strength),
+			"dex", statVal(d, stat.Dexterity), "vita", statVal(d, stat.Vitality),
+			"banked", statVal(d, stat.StatPoints))
+		time.Sleep(150 * time.Millisecond)
+		hid.PressKey(hid.GetASCIICode("c"))
+		return
+	}
+
 	// -gearprobe: READ-ONLY gear evaluation. Unidentified items hide their magic affixes even
 	// in memory, so the honest pipeline is ID -> read -> evaluate -> equip/stash; this probe is
 	// the "read" stage plus the caveats that gate the others.
@@ -3696,6 +3793,7 @@ func main() {
 	summonFails := 0
 	var summonDisabledUntil time.Time
 	var golemAt time.Time
+	autoStatAt := time.Time{}
 	var corpseTargetPos data.Position
 	// meleeSwing: a left-click attack that actually CONNECTS. A blind interactClick at the
 	// monster's computed feet position reads as "walk here" whenever the sprite isn't exactly
@@ -4124,6 +4222,67 @@ mainLoop:
 			time.Sleep(200 * time.Millisecond)
 			logger.Info("golem: refresh cast")
 			golemAt = time.Now()
+			continue
+		}
+
+		// AUTO-STAT: same calm-gate as auto-skill. Spends ONE banked point per visit (the panel
+		// stays open only briefly — army tanks, but don't loiter), buffering str/dex over gear
+		// requirements then vitality. Verified per click via StatPoints; a click that doesn't
+		// spend aborts the visit.
+		if *autoStat != "" && !anyEnemyWithin(d, me, *dangerRange) && time.Since(autoStatAt) > 20*time.Second {
+			sp2, ok := d.PlayerUnit.Stats.FindStat(stat.StatPoints, 0)
+			if !ok {
+				sp2, _ = d.PlayerUnit.BaseStats.FindStat(stat.StatPoints, 0)
+			}
+			if sp2.Value > 0 {
+				var sbx, sby, dbx, dby, vbx, vby int
+				if _, err := fmt.Sscanf(*autoStat, "%d,%d,%d,%d,%d,%d", &sbx, &sby, &dbx, &dby, &vbx, &vby); err == nil {
+					cur := func(id stat.ID) int {
+						if v, ok := gr.GetData().PlayerUnit.Stats.FindStat(id, 0); ok {
+							return v.Value
+						}
+						v, _ := gr.GetData().PlayerUnit.BaseStats.FindStat(id, 0)
+						return v.Value
+					}
+					reqStr, reqDex := 0, 0
+					for _, loc := range []item.LocationType{item.LocationEquipped, item.LocationInventory} {
+						for _, it := range d.Inventory.ByLocation(loc) {
+							if rs := it.Desc().RequiredStrength; rs > reqStr {
+								reqStr = rs
+							}
+							if rd := it.Desc().RequiredDexterity; rd > reqDex {
+								reqDex = rd
+							}
+						}
+					}
+					hid.PressKey(hid.GetASCIICode("c"))
+					time.Sleep(700 * time.Millisecond)
+					spent := 0
+					for i := 0; i < sp2.Value && i < 40; i++ {
+						var bx, by int
+						switch {
+						case cur(stat.Strength) < reqStr+10:
+							bx, by = sbx, sby
+						case cur(stat.Dexterity) < reqDex+10:
+							bx, by = dbx, dby
+						default:
+							bx, by = vbx, vby
+						}
+						before := cur(stat.StatPoints)
+						uiClick(bx, by)
+						time.Sleep(220 * time.Millisecond)
+						if cur(stat.StatPoints) < before {
+							spent++
+						} else {
+							break
+						}
+					}
+					hid.PressKey(hid.GetASCIICode("c"))
+					logger.Info("autostat: spent", "points", spent, "str", cur(stat.Strength),
+						"dex", cur(stat.Dexterity), "vita", cur(stat.Vitality))
+				}
+			}
+			autoStatAt = time.Now()
 			continue
 		}
 
