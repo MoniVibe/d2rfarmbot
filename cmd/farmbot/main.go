@@ -3415,7 +3415,11 @@ func main() {
 	// written on death, cleared on recovery or give-up.
 	deathStateFile := filepath.Join("logs", "death_state.txt")
 	deathHuntArea := 0
+	var deathSeekStart time.Time
 	var deathHuntPos data.Position
+	if st, err := os.Stat(deathStateFile); err == nil && time.Since(st.ModTime()) > 30*time.Minute {
+		_ = os.Remove(deathStateFile) // stale — a death this old has either been recovered or expired
+	}
 	if b, err := os.ReadFile(deathStateFile); err == nil {
 		var a, x, y int
 		if n, _ := fmt.Sscanf(string(b), "%d %d %d", &a, &x, &y); n >= 1 && a != 0 {
@@ -3445,10 +3449,43 @@ func main() {
 	lastEnemySeen := time.Now()
 	summonAt := time.Time{}
 	var corpseTargetPos data.Position
+	// openBurst: corner escape that reads the room. The old fixed-rotation burst walked INTO
+	// walls as often as away from them, so the bot visibly hugged corners while "recovering".
+	// Sample the live grid in 8 world directions, score each by contiguous walkable clearance,
+	// and walk toward daylight (with a small second-best jitter so a dead-end pocket's single
+	// open ray doesn't trap us).
+	openBurst := func(me data.Position) {
+		type ray struct {
+			angle float64
+			score int
+		}
+		rays := make([]ray, 0, 8)
+		for k := 0; k < 8; k++ {
+			angle := float64(k) / 8.0 * 2 * math.Pi
+			dx, dy := math.Cos(angle), math.Sin(angle)
+			score := 0
+			for step := 1; step <= 14; step++ {
+				p := data.Position{X: me.X + int(dx*float64(step)+0.5), Y: me.Y + int(dy*float64(step)+0.5)}
+				if navGrid == nil || !navGrid.IsWalkable(p) {
+					break
+				}
+				score++
+			}
+			rays = append(rays, ray{angle, score})
+		}
+		sort.Slice(rays, func(i, j int) bool { return rays[i].score > rays[j].score })
+		for burst, r := range rays[:2] { // best two open directions
+			wdx := int(math.Cos(r.angle) * 20)
+			wdy := int(math.Sin(r.angle) * 20)
+			sx, sy := screenPointToward(me, wdx, wdy)
+			walkToHold(sx, sy, 280+120*burst)
+		}
+	}
+
 	// navWalk: ONE deliberate navigation step toward dest — Navigator plan + carrot, wrapped in
-	// the net-progress watchdog (no movement for 8s -> unstick burst + replan). Call it once per
-	// tick and `continue`; it owns wedge escape. The third reimplementation of this pattern was
-	// the sign it needed to be a function.
+	// the net-progress watchdog (no movement for 5s -> open-direction burst + replan). Call it
+	// once per tick and `continue`; it owns wedge escape. The third reimplementation of this
+	// pattern was the sign it needed to be a function.
 	navWalkLastPos := data.Position{}
 	navWalkProgressAt := time.Now()
 	navWalkDest := data.Position{}
@@ -3467,15 +3504,11 @@ func main() {
 		if dcur := chebyshev(me, dest); dcur < navWalkBestDist-1 {
 			navWalkBestDist, navWalkBestAt = dcur, time.Now()
 		}
-		if time.Since(navWalkBestAt) > 20*time.Second {
+		if time.Since(navWalkBestAt) > 12*time.Second {
 			navWalkPreferMap = !navWalkPreferMap
-			logger.Warn("navWalk: oscillating (no closest-approach progress 20s) — burst + planner flip",
+			logger.Warn("navWalk: oscillating (no closest-approach progress) — open burst + planner flip",
 				"bestDist", navWalkBestDist, "preferMap", navWalkPreferMap)
-			for i := 0; i < 5; i++ {
-				dir := (i * 3) % 8
-				angle := float64(dir) / 8.0 * 2 * math.Pi
-				walkToHold(cx+int(300*math.Cos(angle)), cy+int(140*math.Sin(angle)), 260)
-			}
+			openBurst(me)
 			if navi != nil {
 				navi.havePlan = false
 			}
@@ -3488,13 +3521,9 @@ func main() {
 		if chebyshev(me, navWalkLastPos) > 2 {
 			navWalkLastPos, navWalkProgressAt = me, time.Now()
 		}
-		if time.Since(navWalkProgressAt) > 8*time.Second {
-			logger.Warn("navWalk: no net movement for 8s — unstick burst", "pos", fmt.Sprintf("(%d,%d)", me.X, me.Y))
-			for i := 0; i < 5; i++ {
-				dir := (i * 3) % 8
-				angle := float64(dir) / 8.0 * 2 * math.Pi
-				walkToHold(cx+int(300*math.Cos(angle)), cy+int(140*math.Sin(angle)), 260)
-			}
+		if time.Since(navWalkProgressAt) > 5*time.Second {
+			logger.Warn("navWalk: no net movement — open burst", "pos", fmt.Sprintf("(%d,%d)", me.X, me.Y))
+			openBurst(me)
 			if navi != nil {
 				navi.havePlan = false
 			}
@@ -3975,11 +4004,21 @@ mainLoop:
 
 		// DEATH-SPOT SEEK: we're in the death area but the corpse isn't in a loaded room yet.
 		// Navigate to the RECORDED death position — rooms load on approach and Corpse.Found
-		// flips, handing off to the recovery block above.
+		// flips, handing off to the recovery block above. TIME-BOXED: an unreachable spot (or a
+		// stale state file from a run that got timer-killed mid-recovery) burned a whole 15-min
+		// run seeking dist~150 inside a 75-tile cave (measured). 2 minutes, then let it go.
 		if !d.Corpse.Found && deathHuntPos.X != 0 && int(d.PlayerUnit.Area) == deathHuntArea {
-			if chebyshev(me, deathHuntPos) <= 8 {
-				logger.Warn("death spot reached but no corpse — clearing death state")
+			if deathSeekStart.IsZero() {
+				deathSeekStart = time.Now()
+			}
+			if chebyshev(me, deathHuntPos) <= 8 || time.Since(deathSeekStart) > 2*time.Minute {
+				if chebyshev(me, deathHuntPos) <= 8 {
+					logger.Warn("death spot reached but no corpse — clearing death state")
+				} else {
+					logger.Warn("death-spot seek timed out — clearing death state")
+				}
 				deathHuntPos, deathHuntArea = data.Position{}, 0
+				deathSeekStart = time.Time{}
 				_ = os.Remove(deathStateFile)
 				curGoto = *gotoArea
 			} else {
@@ -4007,13 +4046,9 @@ mainLoop:
 			if chebyshev(me, gotoLastPos) > 2 {
 				gotoLastPos, gotoProgressAt = me, time.Now()
 			}
-			if time.Since(gotoProgressAt) > 8*time.Second {
-				logger.Warn("goto: no net movement for 8s — unstick burst", "pos", fmt.Sprintf("(%d,%d)", me.X, me.Y))
-				for i := 0; i < 5; i++ {
-					dir := (i * 3) % 8
-					angle := float64(dir) / 8.0 * 2 * math.Pi
-					walkToHold(cx+int(300*math.Cos(angle)), cy+int(140*math.Sin(angle)), 260)
-				}
+			if time.Since(gotoProgressAt) > 5*time.Second {
+				logger.Warn("goto: no net movement — open burst", "pos", fmt.Sprintf("(%d,%d)", me.X, me.Y))
+				openBurst(me)
 				if len(gotoCross) > 0 {
 					gotoIdx, gotoTryAt = (gotoIdx+1)%len(gotoCross), time.Now()
 				}
