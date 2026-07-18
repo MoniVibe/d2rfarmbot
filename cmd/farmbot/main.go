@@ -6033,6 +6033,73 @@ mainLoop:
 			}
 		}
 
+		// ARMING PICKUP (prio 65 — above engage, below contact): at 12x density combat
+		// NEVER idles, so the ordinary loot block (prio 30, runs only with no target)
+		// starved all night while she stepped over weapons bare-handed. A weaponless
+		// character treats any wearable on the ground as nearly the highest journey there
+		// is — the weapon IS the fix for the death loop.
+		if *loot && chickenStreak == 0 {
+			armedPick := false
+			for _, eqp := range d.Inventory.ByLocation(item.LocationEquipped) {
+				if eqp.Location.BodyLocation == item.LocLeftArm || eqp.Location.BodyLocation == item.LocRightArm {
+					armedPick = true
+					break
+				}
+			}
+			if !armedPick {
+				contact := false
+				for _, m := range d.Monsters.Enemies() {
+					if m.Stats[stat.Life] > 0 && chebyshev(me, m.Position) <= 5 {
+						contact = true
+						break
+					}
+				}
+				if !contact {
+					bestDist := 1 << 30
+					var wit data.Item
+					haveW := false
+					for _, it := range d.Inventory.ByLocation(item.LocationGround) {
+						if bl, ok := lootBlacklist[it.UnitID]; ok && time.Now().Before(bl) {
+							continue
+						}
+						if !wearableEmptySlot(d, it) {
+							continue
+						}
+						if dd := chebyshev(me, it.Position); dd < bestDist && dd <= *lootradius {
+							bestDist, wit, haveW = dd, it, true
+						}
+					}
+					if haveW && claim("armloot", 65, 1200*time.Millisecond) {
+						if bestDist > 5 {
+							logger.Info("armloot: weaponless — going for ground gear", "name", string(wit.Name),
+								"dist", bestDist)
+							navWalk(me, wit.Position)
+							continue
+						}
+						hoverPickClick(wit.Position, wit.UnitID)
+						still := false
+						for _, it2 := range gr.GetData().Inventory.ByLocation(item.LocationGround) {
+							if it2.UnitID == wit.UnitID {
+								still = true
+								break
+							}
+						}
+						if still {
+							lootAttempts[wit.UnitID]++
+							if lootAttempts[wit.UnitID] >= 5 {
+								lootBlacklist[wit.UnitID] = time.Now().Add(15 * time.Second)
+								delete(lootAttempts, wit.UnitID)
+							}
+						} else {
+							logger.Info("armloot: picked ground gear", "name", string(wit.Name))
+							delete(lootAttempts, wit.UnitID)
+						}
+						continue
+					}
+				}
+			}
+		}
+
 		// CUBE FIRST (the user's extra-space insight): before any town trip, keepers go
 		// into the 96-cell modded cube right here in the field — backpack pressure only
 		// means town when the cube can't absorb it (or junk needs selling).
