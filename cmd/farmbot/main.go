@@ -6698,9 +6698,12 @@ mainLoop:
 						beelineLastPos = me
 						bx, by := gameToScreen(gr, me.X, me.Y, tgt.X, tgt.Y)
 						if beelineFlip > 0 {
+							// Cycle 8 directions (0, ±52°, ±103°, ±155°) — an unbounded counter
+							// degenerated to random aims (observed sweep=95 at the south corner).
 							ang := math.Atan2(float64(by-cy), float64(bx-cx))
-							step := 0.9 * float64((beelineFlip+1)/2)
-							if beelineFlip%2 == 0 {
+							cyc := beelineFlip % 8
+							step := 0.9 * float64((cyc+1)/2)
+							if cyc%2 == 0 {
 								step = -step
 							}
 							bx, by = screenAngleCarrot(cx, cy, ang+step)
