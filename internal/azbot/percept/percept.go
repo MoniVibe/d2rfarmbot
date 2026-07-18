@@ -37,6 +37,14 @@ type PlayerState struct {
 	HealPots int
 	// ManaPots: mana potions in the belt (mod id 607) — the bow skill's fuel gauge.
 	ManaPots int
+	// Belt self-model totals (whole belt, not just the drinkable bottom row) — what
+	// the Restock service bids on. BeltSlots = rows*4 from the equipped belt's name.
+	BeltSlots int
+	BeltHP    int
+	BeltMana  int
+	// MinDurPct: the worst equipped item's durability percent (100 when nothing
+	// tracks durability) — what the Repair service bids on.
+	MinDurPct int
 	// WeaponKind: what the ACTIVE hands hold — "bow", "melee", or "none". The W swap
 	// flips this next capture; combat reads it as the closed loop on weapon swapping.
 	WeaponKind string
@@ -192,6 +200,26 @@ func (p *Perceptor) Capture() *Snapshot {
 			s.Me.HealPots++
 		} else if bp.ID == 607 || contains(n, "Mana") {
 			s.Me.ManaPots++
+		}
+	}
+	s.Me.BeltSlots = d.Inventory.Belt.Rows() * 4
+	for _, bp := range d.Inventory.Belt.Items {
+		n := string(bp.Name)
+		if bp.ID == 602 || contains(n, "Healing") || contains(n, "Rejuvenation") {
+			s.Me.BeltHP++
+		} else if bp.ID == 607 || contains(n, "Mana") {
+			s.Me.BeltMana++
+		}
+	}
+	s.Me.MinDurPct = 100
+	for _, eq := range d.Inventory.ByLocation(item.LocationEquipped) {
+		dur, okD := eq.FindStat(stat.Durability, 0)
+		mx, okM := eq.FindStat(stat.MaxDurability, 0)
+		if okD && okM && mx.Value > 0 {
+			pct := dur.Value * 100 / mx.Value
+			if pct < s.Me.MinDurPct {
+				s.Me.MinDurPct = pct
+			}
 		}
 	}
 	for i := range d.Objects {

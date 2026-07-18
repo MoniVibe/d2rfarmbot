@@ -57,6 +57,7 @@ type Motor struct {
 	gi  *game.MemoryInjector
 
 	Engage Engagement
+	panelScale float64
 
 	mu       sync.Mutex
 	lease    *CursorLease
@@ -106,6 +107,60 @@ func (m *Motor) Reengage() {
 		return
 	}
 	m.log.Warn("MOTOR ENGAGED — azbot has the controls")
+}
+
+// PanelScale must be set once at startup (the display's DPI scale) before UIClick is
+// used — panel clicks compute physical pixels from it.
+func (m *Motor) SetPanelScale(s float64) { m.panelScale = s }
+
+// BareClick is the NPC-talk click: a plain message click with NO key-state override.
+// The override reads as a HELD button when the game polls mid-window, and a held click
+// on an NPC is ATTACK semantics (the shift-click defect) — NPCs accept the bare click.
+func (m *Motor) BareClick(x, y int) {
+	if !m.Engage.Engaged() {
+		return
+	}
+	m.hid.Click(game.LeftButton, x, y)
+}
+
+// MenuKey drives NPC-menu navigation: menus poll GetKeyState, so the override is held
+// around a raw down/up (the force-move lesson applied to menus).
+func (m *Motor) MenuKey(vk byte) {
+	if !m.Engage.Engaged() {
+		return
+	}
+	_ = m.gi.OverrideGetKeyState(vk)
+	_ = m.gi.OverrideGetAsyncKeyState(vk)
+	m.hid.RawKeyDown(vk)
+	time.Sleep(220 * time.Millisecond)
+	m.hid.RawKeyUp(vk)
+	_ = m.gi.RestoreGetKeyState()
+	_ = m.gi.RestoreGetAsyncKeyState()
+	time.Sleep(200 * time.Millisecond)
+}
+
+// UIClick clicks a panel button/cell at client pixels — farmbot's proven recipe
+// (patched cursor exports + LBUTTON override + client-lParam click). On vendor stock
+// cells this IS an instant purchase (measured 2026-07-19).
+func (m *Motor) UIClick(sx, sy int) {
+	if !m.Engage.Engaged() {
+		return
+	}
+	m.MoveStop()
+	px := int(float64(m.hid.WindowLeftX())*m.panelScale) + sx
+	py := int(float64(m.hid.WindowTopY())*m.panelScale) + sy
+	_ = m.gi.OverridePhysicalCursorPos(px, py)
+	m.hid.MouseMoveClient(sx, sy)
+	time.Sleep(150 * time.Millisecond)
+	_ = m.gi.OverrideGetKeyState(0x01)
+	_ = m.gi.OverrideGetAsyncKeyState(0x01)
+	m.hid.LeftClickNoMoveClient(sx, sy)
+	_ = m.gi.RestoreGetKeyState()
+	_ = m.gi.RestoreGetAsyncKeyState()
+	time.Sleep(120 * time.Millisecond)
+	_ = m.gi.RestorePhysicalCursorPos()
+	_ = m.gi.RestoreGetCursorInfo()
+	_ = m.gi.RestoreGetCursorPosAddr()
 }
 
 // ModifierAmnesty releases every modifier (shift/ctrl/alt) at both the game-window and

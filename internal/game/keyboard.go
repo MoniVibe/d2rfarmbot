@@ -55,6 +55,10 @@ func (hid *HID) ModifierAmnesty() {
 	}
 }
 
+// WindowLeftX / WindowTopY expose the game window origin (logical) for panel-click math.
+func (hid *HID) WindowLeftX() int { return hid.gr.WindowLeftX }
+func (hid *HID) WindowTopY() int  { return hid.gr.WindowTopY }
+
 // GameFocused reports whether D2R currently owns the foreground — the Sentinel watches
 // transitions of this to fire ModifierAmnesty on every alt-tab back.
 func (hid *HID) GameFocused() bool {

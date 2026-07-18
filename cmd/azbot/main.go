@@ -117,6 +117,7 @@ func main() {
 	belt := flag.String("belt", "1,2,3,4", "belt column keys")
 	drinkAt := flag.Int("drinkat", 55, "sentinel drinks at or below this HP%")
 	memDir := flag.String("memdir", "logs/azmem", "memory store directory (WAL)")
+	goal := flag.String("goal", "farm", "the Director's current goal: farm (routes+explore+loot) | campaign (quest progression, M8) | gamble (Gheed errand when bankrolled). Goals shape WHICH activities bid; the arbiter still owns every moment.")
 	roadTest := flag.Bool("roadtest", false, "M2 soak: walk the measured town road out and back on Stride verbs, print the outcome histogram, exit")
 	jTest := flag.String("jtest", "", "M3 soak: journey to world x,y on the live grid via the Journey authority, print the verdict, exit")
 	fightTest := flag.Bool("fighttest", false, "M4 soak: calibrate capability, cross to Blood Moor, hover-strike nearest enemies with evidence, exit")
@@ -206,6 +207,7 @@ func main() {
 
 	// ---- motor + sentinel ----
 	m := motor.New(logger, hid, gi, hid.GetASCIICode(*moveKey))
+	m.SetPanelScale(*dpiScale)
 	var beltKeys []byte
 	for _, k := range strings.Split(*belt, ",") {
 		if k = strings.TrimSpace(k); k != "" {
@@ -217,6 +219,8 @@ func main() {
 	})
 	go sen.Run(stop)
 	logger.Info("sentinel live", "killswitch", *killKey, "drinkAt", *drinkAt)
+	mem.PutJSON("goal", memory.ScopeGame, memory.Provenance{Source: "owner"}, map[string]string{"goal": *goal})
+	logger.Info("director", "goal", *goal)
 
 	// ---- M4 fight test: calibrate capability, cross to Blood Moor, strike with evidence ----
 	if *invDump {
@@ -1200,7 +1204,7 @@ func main() {
 	acts := map[string]activity.Activity{}
 	road := []data.Position{{X: 6020, Y: 4952}, {X: 5992, Y: 4941}, {X: 5963, Y: 5001}, {X: 5962, Y: 4956}, {X: 5952, Y: 4944}}
 	mem.PutJSON("road.town.blood_moor_gate", memory.ScopeSeed, memory.Provenance{Source: "hand-piloted", Evidence: "2026-07-18, seed 466817790"}, road)
-	for _, a := range []activity.Activity{&activity.Breakout{}, &activity.Flee{}, &activity.Respawn{}, activity.NewFight(), activity.NewLoot(), &activity.Travel{Road: road}, &activity.Explore{}} {
+	for _, a := range []activity.Activity{&activity.Breakout{}, &activity.Flee{}, &activity.Respawn{}, activity.NewFight(), activity.NewLoot(), activity.NewRestock(), activity.NewRepair(), &activity.Travel{Road: road}, &activity.Explore{}} {
 		acts[a.Name()] = a
 	}
 
