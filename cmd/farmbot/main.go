@@ -177,6 +177,7 @@ func main() {
 	autoSkill := flag.String("autoskill", "1378,201,1651,279", "'tabX,tabY,skillX,skillY': when a skill point is banked and no enemy is near, open the skill tree, click the tab then the skill, verify the point was spent. All overnight points go to one skill. Default: Summoning tab, Raise Skeleton (calibrated from a live tree shot 2026-07-18 — top-right cell; every point widens the army, and the army cap follows the skill level live).")
 	autoStat := flag.String("autostat", "", "'strX,strY,dexX,dexY,vitX,vitY': auto-spend banked stat points when calm — str/dex to ~10 buffer over gear reqs, rest vitality (char-panel + button coords from -statsnap)")
 	autoProgress := flag.Bool("autoprogress", false, "farm along the act-1 route (Den of Evil -> Cold Plains -> Burial Grounds -> Stony Field -> Dark Wood -> Black Marsh), advancing when an area runs dry; position persisted across runs")
+	routeFlag := flag.String("route", "", "override the built-in -autoprogress route: comma list of areaID[:levelCap] stops (e.g. '2:6,3:12,17:18,4:99'). A stop with a levelCap also advances once the character reaches that level, so a low-level area doesn't hold a grown character all night.")
 	summonKey := flag.String("summon", "", "summon hotkey (e.g. f2 = RaiseSkeleton): when pets are below -maxpets and a monster corpse is near, select the summon and cast it at the corpse; the next bite's -rabies press restores the attack skill")
 	maxPets := flag.Int("maxpets", 3, "stop summoning at this many living pets")
 	spirit := flag.String("spirit", "f3", "spirit/aura buff hotkey")
@@ -549,14 +550,24 @@ func main() {
 			}
 			return d.KeyBindings.KeyBindingForSkill(sk)
 		}
-		for _, sk := range []skill.ID{skill.BoneSpear, skill.Teeth} {
+		// Damage-skill candidates per class — the idempotent-AI seed: use what the character
+		// actually has, not what a build guide says. (On this repack the binding block reads
+		// dead, so in practice the -melee/-rabies flag paths carry combat; this stays correct
+		// for builds where the bindings do read.)
+		dmgSkills := []skill.ID{skill.BoneSpear, skill.Teeth}
+		if d.PlayerUnit.Class == data.Amazon {
+			dmgSkills = []skill.ID{skill.Jab, skill.PowerStrike}
+		}
+		for _, sk := range dmgSkills {
 			if kb, ok := bound(sk); ok {
 				p.castKB, p.hasCast, p.castID = kb, true, sk
 				break
 			}
 		}
-		if kb, ok := bound(skill.AmplifyDamage); ok {
-			p.curseKB, p.hasCurse, p.curseID = kb, true, skill.AmplifyDamage
+		if d.PlayerUnit.Class == data.Necromancer {
+			if kb, ok := bound(skill.AmplifyDamage); ok {
+				p.curseKB, p.hasCurse, p.curseID = kb, true, skill.AmplifyDamage
+			}
 		}
 		return p
 	}
@@ -4510,6 +4521,23 @@ func main() {
 	// hours of "lost near y~5380" = the cave entrance) while actual Burial Grounds visits —
 	// including a clean Blood Raven kill — were walk-through-entrance ACCIDENTS.
 	progressRoute := []int{8, 3, 17, 4, 5, 6} // Den of Evil, Cold Plains, Burial Grounds, Stony Field, Dark Wood, Black Marsh
+	routeCaps := make([]int, len(progressRoute)) // 0 = no level cap on that stop
+	if *routeFlag != "" {
+		progressRoute = progressRoute[:0]
+		routeCaps = routeCaps[:0]
+		for _, tok := range strings.Split(*routeFlag, ",") {
+			var aid, lvlCap int
+			if n, _ := fmt.Sscanf(strings.TrimSpace(tok), "%d:%d", &aid, &lvlCap); n >= 1 && aid > 0 {
+				progressRoute = append(progressRoute, aid)
+				routeCaps = append(routeCaps, lvlCap)
+			}
+		}
+		if len(progressRoute) == 0 {
+			logger.Error("route: no valid stops parsed — falling back to the built-in table", "flag", *routeFlag)
+			progressRoute = []int{8, 3, 17, 4, 5, 6}
+			routeCaps = make([]int, len(progressRoute))
+		}
+	}
 	routeIdx := 0
 	routeStateFile := filepath.Join("logs", "route_state.txt")
 	if b, err := os.ReadFile(routeStateFile); err == nil {
@@ -4527,6 +4555,7 @@ func main() {
 	lastPosture := "engage"
 	var postureHeldAt time.Time // posture hysteresis dwell anchor
 	autoStatAt := time.Time{}
+	trapEscapeAt := time.Time{}
 	var corpseTargetPos data.Position
 	// meleeSwing: a left-click attack that actually CONNECTS. A blind interactClick at the
 	// monster's computed feet position reads as "walk here" whenever the sprite isn't exactly
@@ -4629,6 +4658,13 @@ func main() {
 	// wedges: spots where the game refused passage the grid claimed walkable — recorded by
 	// the stall watchdogs, cleared on area change. Fed to every planner (see mover.go doc).
 	var wedges []data.Position
+	// fenceWedges are POLICY obstacles, not measured refusals: mouths of areas whose only way
+	// back out is an unclickable id=0 stair (the static-click law — Den, Cave, Hole, Pit,
+	// Crypt, Mausoleum, Underground Passage). Runtime-only, rebuilt on every area re-align, so
+	// a future policy change never fights stale atlas stamps. A walk-through hole swallowed
+	// the necro for a whole night; geography does not get to eat the amazon.
+	var fenceWedges []data.Position
+	trapAreas := map[int]bool{8: true, 9: true, 10: true, 11: true, 12: true, 18: true, 19: true}
 	var gotoAim data.Position // the travel aim this tick (candidate approach or mapped exit)
 	mover := NewMover(gr, nil, nil, walkToHold, screenPointToward, openBurst)
 	if *clickMove {
@@ -4645,6 +4681,7 @@ func main() {
 		// Hostile monsters are deliberately NOT fed: they chase, so they invalidate every
 		// plan the tick it's made — the contact override hands them to combat instead.
 		obs := append([]data.Position(nil), wedges...)
+		obs = append(obs, fenceWedges...)
 		dd := gr.GetData()
 		for i := range dd.Objects {
 			o := &dd.Objects[i]
@@ -5677,7 +5714,44 @@ mainLoop:
 				progressAt = time.Now()
 				logger.Info("nav: re-aligned new area", "area", alignedArea,
 					"origin", fmt.Sprintf("(%d,%d)", g.OffsetX, g.OffsetY), "walkables", len(walkables))
+				// TRAP FENCE: from open ground, blockade every mouth that leads into an
+				// id=0-stair pocket. The planner treats these like measured refusals, so
+				// travel, loot approaches and explore all route around the hole instead of
+				// through it. (Skipped while INSIDE a trap area — never fence the way out.)
+				fenceWedges = fenceWedges[:0]
+				if !trapAreas[alignedArea] {
+					dd2 := gr.GetData()
+					for _, al := range dd2.AdjacentLevels {
+						if !trapAreas[int(al.Area)] {
+							continue
+						}
+						if p, ok2 := mapExitTo(dd2, al.Area); ok2 {
+							for _, off := range []data.Position{{X: 0, Y: 0}, {X: 2, Y: 0}, {X: -2, Y: 0},
+								{X: 0, Y: 2}, {X: 0, Y: -2}, {X: 2, Y: 2}, {X: -2, Y: -2}, {X: 2, Y: -2}, {X: -2, Y: 2}} {
+								fenceWedges = append(fenceWedges, data.Position{X: p.X + off.X, Y: p.Y + off.Y})
+							}
+							logger.Info("fence: trap mouth blockaded", "trapArea", int(al.Area),
+								"at", fmt.Sprintf("(%d,%d)", p.X, p.Y))
+						}
+					}
+				}
 			}
+		}
+
+		// TRAP ESCAPE: we are standing in an id=0-stair pocket we never chose (fence leak,
+		// death-recovery detour, user handoff). The way out injectable input CAN operate is a
+		// town portal — take it, run the errands, and let autoprogress-from-town relaunch the
+		// route on foot. (The Den refuses TP; there the walk-fallback will fail too — the
+		// fence is the real protection, this is the seatbelt.)
+		if trapAreas[int(d.PlayerUnit.Area)] && tpPhase == 0 && *tp != "" &&
+			curGoto != int(d.PlayerUnit.Area) && progressTarget != int(d.PlayerUnit.Area) &&
+			time.Since(trapEscapeAt) > 60*time.Second {
+			trapEscapeAt = time.Now()
+			logger.Warn("TRAP AREA — casting town portal out", "area", int(d.PlayerUnit.Area))
+			lastAutoTrip = time.Now()
+			tpVendorWanted = true
+			tpPhase, tpTripStart, tpParkInTown, tpErrandsDone = 1, time.Now(), true, false
+			continue
 		}
 
 		// AUTO-PROGRESS: farm along the act-1 route, advancing when the current area runs dry
@@ -5705,6 +5779,16 @@ mainLoop:
 					_ = os.WriteFile(routeStateFile, []byte(fmt.Sprintf("%d", routeIdx)), 0644)
 					logger.Info("autoprogress: area exhausted — advancing", "to", progressRoute[routeIdx])
 					lastEnemySeen = time.Now()
+				}
+				// LEVEL-CAP ADVANCE: a stop with a -route levelCap is outgrown, not exhausted —
+				// XP per kill has collapsed there; move up the route even though it still spawns.
+				if lvl, ok := d.PlayerUnit.BaseStats.FindStat(stat.Level, 0); ok {
+					for routeIdx < len(progressRoute)-1 && routeIdx < len(routeCaps) &&
+						routeCaps[routeIdx] > 0 && lvl.Value >= routeCaps[routeIdx] {
+						routeIdx++
+						_ = os.WriteFile(routeStateFile, []byte(fmt.Sprintf("%d", routeIdx)), 0644)
+						logger.Info("autoprogress: outgrew the stop — advancing", "level", lvl.Value, "to", progressRoute[routeIdx])
+					}
 				}
 				want := progressRoute[routeIdx]
 				if want != progressTarget {
@@ -5978,25 +6062,62 @@ mainLoop:
 				sp, _ = d.PlayerUnit.BaseStats.FindStat(stat.SkillPoints, 0)
 			}
 			if sp.Value > 0 {
-				var tx, ty, kx, ky int
-				if _, err := fmt.Sscanf(*autoSkill, "%d,%d,%d,%d", &tx, &ty, &kx, &ky); err == nil {
+				// Two formats: legacy 'tabX,tabY,skillX,skillY' (one skill forever), or a BUILD
+				// LIST 'tabX,tabY,skillX,skillY,skillID,max;...' — first entry whose skill (read
+				// live from the Skills map) is under its max gets the point; an entry the game
+				// refuses (level req not met) just falls through to the next IN THE SAME VISIT,
+				// so a high-req entry never dams the queue.
+				type skEntry struct{ tx, ty, kx, ky, id, max int }
+				var entries []skEntry
+				for _, tok := range strings.Split(*autoSkill, ";") {
+					var e skEntry
+					if n, _ := fmt.Sscanf(strings.TrimSpace(tok), "%d,%d,%d,%d,%d,%d",
+						&e.tx, &e.ty, &e.kx, &e.ky, &e.id, &e.max); n == 6 {
+						entries = append(entries, e)
+					} else if n, _ := fmt.Sscanf(strings.TrimSpace(tok), "%d,%d,%d,%d",
+						&e.tx, &e.ty, &e.kx, &e.ky); n == 4 {
+						e.id, e.max = 0, 1<<30 // legacy: no readback target, no cap
+						entries = append(entries, e)
+					}
+				}
+				if len(entries) > 0 {
 					logger.Info("autoskill: spending point", "banked", sp.Value)
 					moveStop()
 					hid.PressKey(hid.GetASCIICode("t"))
 					time.Sleep(800 * time.Millisecond)
-					uiClick(tx, ty)
-					time.Sleep(400 * time.Millisecond)
-					uiClick(kx, ky)
-					time.Sleep(500 * time.Millisecond)
+					spent := false
+					for _, e := range entries {
+						if e.id != 0 {
+							if pts, has := d.PlayerUnit.Skills[skill.ID(e.id)]; has && int(pts.Level) >= e.max {
+								continue // this skill is at its cap — next entry
+							}
+						}
+						uiClick(e.tx, e.ty)
+						time.Sleep(400 * time.Millisecond)
+						uiClick(e.kx, e.ky)
+						time.Sleep(500 * time.Millisecond)
+						d2 := gr.GetData()
+						sp2, ok2 := d2.PlayerUnit.Stats.FindStat(stat.SkillPoints, 0)
+						if !ok2 {
+							sp2, _ = d2.PlayerUnit.BaseStats.FindStat(stat.SkillPoints, 0)
+						}
+						if sp2.Value < sp.Value {
+							lvlNow := -1
+							if pts, has := d2.PlayerUnit.Skills[skill.ID(e.id)]; has {
+								lvlNow = int(pts.Level)
+							}
+							logger.Info("autoskill: result", "before", sp.Value, "after", sp2.Value,
+								"spent", true, "skillID", e.id, "skillLevel", lvlNow)
+							spent = true
+							break
+						}
+						logger.Info("autoskill: entry refused (level req?) — trying next", "skillID", e.id)
+					}
+					if !spent {
+						logger.Info("autoskill: no entry could spend", "banked", sp.Value)
+					}
 					hid.PressKey(hid.GetASCIICode("t")) // toggle the tree closed (esc would open the pause menu)
 					time.Sleep(300 * time.Millisecond)
-					d2 := gr.GetData()
-					sp2, ok2 := d2.PlayerUnit.Stats.FindStat(stat.SkillPoints, 0)
-					if !ok2 {
-						sp2, _ = d2.PlayerUnit.BaseStats.FindStat(stat.SkillPoints, 0)
-					}
-					logger.Info("autoskill: result", "before", sp.Value, "after", sp2.Value,
-						"spent", sp2.Value < sp.Value)
 				}
 				autoSkillAt = time.Now()
 				continue
@@ -6874,23 +6995,27 @@ mainLoop:
 				if m.IsElite() {
 					s += 150
 				}
-				// Already infected: the poison is doing its work — go start another fire.
-				if m.States.HasState(state.Poison) {
-					s -= 300
-				}
-				// Reward hosts with uninfected neighbours: that is where the spread pays.
-				for _, n := range d.Monsters.Enemies() {
-					if n.UnitID != m.UnitID && n.Stats[stat.Life] > 0 &&
-						chebyshev(m.Position, n.Position) <= 10 && !n.States.HasState(state.Poison) {
-						s += 25
+				// The poison terms only mean anything when the build APPLIES poison (-rabies);
+				// for a physical attacker they just warp targeting toward random monsters.
+				if *rabies != "" {
+					// Already infected: the poison is doing its work — go start another fire.
+					if m.States.HasState(state.Poison) {
+						s -= 300
 					}
-				}
-				// Poison-immune is deprioritised, NOT skipped: the werewolf bite still lands
-				// physical damage, so it is killable — just slow. Hard-filtering would let an
-				// immune monster body-block a corridor forever. The damage watchdog below is the
-				// real backstop, and it catches immunities we never thought to check for.
-				if m.IsImmune(stat.PoisonImmune) {
-					s -= 500
+					// Reward hosts with uninfected neighbours: that is where the spread pays.
+					for _, n := range d.Monsters.Enemies() {
+						if n.UnitID != m.UnitID && n.Stats[stat.Life] > 0 &&
+							chebyshev(m.Position, n.Position) <= 10 && !n.States.HasState(state.Poison) {
+							s += 25
+						}
+					}
+					// Poison-immune is deprioritised, NOT skipped: the werewolf bite still lands
+					// physical damage, so it is killable — just slow. Hard-filtering would let an
+					// immune monster body-block a corridor forever. The damage watchdog below is the
+					// real backstop, and it catches immunities we never thought to check for.
+					if m.IsImmune(stat.PoisonImmune) {
+						s -= 500
+					}
 				}
 				if s > bestScore {
 					bestScore, target, haveTarget = s, m, true
@@ -7213,8 +7338,10 @@ mainLoop:
 				hid.PressKey(hid.GetASCIICode(*rabies))
 				time.Sleep(50 * time.Millisecond)
 				hid.Click(game.RightButton, sx, sy)
-			case *melee != "":
-				// Bound melee hotkey (e.g. Attack on right-click) — same right-click path.
+			case *melee != "" && manaOK:
+				// Bound melee hotkey (e.g. Jab on the amazon) — same right-click path. Mana-gated:
+				// a dry pool would turn the skill click into a whiffed grunt, so fall through to
+				// the plain left-click attack below until the pool recovers.
 				hid.PressKey(hid.GetASCIICode(*melee))
 				time.Sleep(50 * time.Millisecond)
 				hid.Click(game.RightButton, sx, sy)
