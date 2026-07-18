@@ -4667,6 +4667,7 @@ func main() {
 	var corpseTargetPos data.Position
 	var corpseWalkLastPos data.Position
 	corpseWalkMoveAt := time.Now()
+	roadHoldAt := time.Time{}
 	// meleeSwing: a left-click attack that actually CONNECTS. A blind interactClick at the
 	// monster's computed feet position reads as "walk here" whenever the sprite isn't exactly
 	// there — the char shuffles in place instead of swinging (observed live). Sweep until the
@@ -6448,9 +6449,15 @@ mainLoop:
 						townRoadIdx++
 					}
 					rp := townRoadPts[townRoadIdx]
-					bx, by := gameToScreen(gr, me.X, me.Y, rp.X, rp.Y)
-					logger.Warn("corpse: town-parked — walking the road", "wp", fmt.Sprintf("(%d,%d)", rp.X, rp.Y))
-					walkToHold(bx, by, 2000)
+					// PACED: walkToHold is non-blocking state — re-firing it every 80ms tick
+					// restarts the hold before it can stride (334 stuttering restarts vs the
+					// manual pilot's clean 2.5s holds). Fire, then let it RUN.
+					if time.Since(roadHoldAt) > 1800*time.Millisecond {
+						bx, by := gameToScreen(gr, me.X, me.Y, rp.X, rp.Y)
+						logger.Warn("corpse: town-parked — walking the road", "wp", fmt.Sprintf("(%d,%d)", rp.X, rp.Y))
+						walkToHold(bx, by, 2000)
+						roadHoldAt = time.Now()
+					}
 				} else {
 					navWalk(me, corpseTargetPos)
 				}
