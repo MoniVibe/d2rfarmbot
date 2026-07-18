@@ -115,6 +115,7 @@ func main() {
 	roadTest := flag.Bool("roadtest", false, "M2 soak: walk the measured town road out and back on Stride verbs, print the outcome histogram, exit")
 	jTest := flag.String("jtest", "", "M3 soak: journey to world x,y on the live grid via the Journey authority, print the verdict, exit")
 	fightTest := flag.Bool("fighttest", false, "M4 soak: calibrate capability, cross to Blood Moor, hover-strike nearest enemies with evidence, exit")
+	portalTest := flag.Bool("portaltest", false, "manual harness: find the nearest portal in the snapshot, approach if far, click through with the EnterPortal verb, report every state change, exit")
 	logger := slog.New(slog.NewTextHandler(os.Stdout, nil))
 
 	flag.Parse()
@@ -201,6 +202,57 @@ func main() {
 	logger.Info("sentinel live", "killswitch", *killKey, "drinkAt", *drinkAt)
 
 	// ---- M4 fight test: calibrate capability, cross to Blood Moor, strike with evidence ----
+	if *portalTest {
+		led := verbs.NewLedger(64)
+		led.Sink = func(o verbs.Outcome) {
+			logger.Info("outcome", "verb", o.Verb, "result", o.Result.String(), "ev", o.Evidence)
+		}
+		deadline := time.Now().Add(60 * time.Second)
+		attempts := 0
+		for time.Now().Before(deadline) {
+			s := p.Capture()
+			if !s.Valid || !m.Engage.Engaged() {
+				time.Sleep(300 * time.Millisecond)
+				continue
+			}
+			if len(s.Portals) == 0 {
+				logger.Info("portaltest: no portal in the snapshot yet — waiting",
+					"area", int(s.Me.Area), "pos", fmt.Sprintf("(%d,%d)", s.Me.Pos.X, s.Me.Pos.Y))
+				time.Sleep(700 * time.Millisecond)
+				continue
+			}
+			best, bd := s.Portals[0], chebyshev(s.Me.Pos, s.Portals[0].Pos)
+			for _, pt := range s.Portals[1:] {
+				if d := chebyshev(s.Me.Pos, pt.Pos); d < bd {
+					best, bd = pt, d
+				}
+			}
+			logger.Info("portaltest: portal in snapshot",
+				"unit", int(best.ID), "pos", fmt.Sprintf("(%d,%d)", best.Pos.X, best.Pos.Y),
+				"dist", bd, "area", int(s.Me.Area))
+			if bd > 20 {
+				verbs.Stride{To: best.Pos, MinGain: 1}.Do(m, gr, p, led, "portaltest/approach")
+				continue
+			}
+			attempts++
+			o := verbs.EnterPortal{Target: best.ID, TargetPos: best.Pos}.Do(m, gr, p, led, "portaltest")
+			if o.Result == verbs.ResDone {
+				s2 := p.Capture()
+				logger.Info("portaltest: THROUGH the portal",
+					"attempts", attempts, "area", int(s2.Me.Area),
+					"pos", fmt.Sprintf("(%d,%d)", s2.Me.Pos.X, s2.Me.Pos.Y), "town", s2.Me.InTown)
+				close(stop)
+				return
+			}
+			logger.Warn("portaltest: attempt failed", "n", attempts,
+				"result", o.Result.String(), "ev", o.Evidence)
+			time.Sleep(400 * time.Millisecond)
+		}
+		logger.Error("portaltest: gave up (60s)", "attempts", attempts)
+		close(stop)
+		return
+	}
+
 	if *fightTest {
 		led := verbs.NewLedger(512)
 		led.Sink = func(o verbs.Outcome) {
