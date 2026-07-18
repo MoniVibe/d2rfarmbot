@@ -5385,6 +5385,7 @@ mainLoop:
 					if n := identifyErrand(); n > 0 {
 						logger.Info("towntrip: errands", "identified", n)
 					}
+					cubeStash() // keepers into the cube before the sell pass sees them
 					if tpVendorWanted {
 						tpVendorWanted = false
 						vendorErrand()
