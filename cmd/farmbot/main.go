@@ -6492,16 +6492,18 @@ mainLoop:
 									"realCursor", realCur)
 								moveStop()
 								if realCur {
-									// REAL-CURSOR rung: static hit-testing (stairs, NPCs) rides
-									// the HARDWARE cursor via RawInput — the injected exports
-									// never produce hover on statics, so synthetic clicks land
-									// as move orders. Park the real cursor on the sprite (no
-									// focus needed), then send the click message. (The old
-									// fresh-approach backoff lived here — it just amplified the
-									// user-visible back-and-forth and never transitioned.)
-									win.SetCursorPos(int32(gr.WindowLeftX+sx+off[0]), int32(gr.WindowTopY+sy+off[1]))
-									time.Sleep(150 * time.Millisecond)
-									hid.LeftClickNoMove(sx+off[0], sy+off[1])
+									// REAL-INPUT rung: the stairs want genuine RAW INPUT — the
+									// user's manual click works and nothing injectable does
+									// (offset sprite clicks, VK overrides, SetCursorPos+message
+									// all dead; the stairs are id=0 level geometry). SendInput
+									// generates real events. Gated on D2R owning the foreground
+									// so the click can NEVER land in another window (the
+									// always-on-top-terminal lesson).
+									if win.GetForegroundWindow() == gr.HWND {
+										game.SendClickRealScreen(gr.WindowLeftX+sx+off[0], gr.WindowTopY+sy+off[1])
+									} else {
+										logger.Info("goto: real-input click skipped — D2R not foreground")
+									}
 								} else {
 									interactClick(sx+off[0], sy+off[1])
 								}

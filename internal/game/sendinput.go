@@ -106,6 +106,16 @@ func SendKeyReal(vk uint16) {
 	sendInputs([]hwInput{up})
 }
 
+// SendClickRealScreen is SendClickReal against the primary display's own bounds — the
+// aquarium is a single-screen laptop, so the virtual desktop IS the screen. Takes the
+// same LOGICAL screen coords as SetCursorPos (WindowLeft + client), keeping units
+// consistent with the non-DPI-aware process.
+func SendClickRealScreen(screenX, screenY int) {
+	cx, _, _ := procGetSystemMetrics.Call(0) // SM_CXSCREEN
+	cy, _, _ := procGetSystemMetrics.Call(1) // SM_CYSCREEN
+	SendClickReal(screenX, screenY, 0, 0, int(cx), int(cy))
+}
+
 // SendClickReal moves the cursor to absolute screen (x,y) and left-clicks, at the OS
 // level. Coordinates are normalized to the 0..65535 virtual-desktop space.
 func SendClickReal(screenX, screenY, virtualLeft, virtualTop, virtualW, virtualH int) {
