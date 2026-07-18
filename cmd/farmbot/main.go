@@ -228,6 +228,8 @@ func main() {
 	potcd := flag.Int("potcd", 1500, "minimum ms between potion quaffs of the same type")
 	tp := flag.String("tp", "", "Tome of Town Portal hotkey; empty disables emergency TP on chicken")
 	idKey := flag.String("idkey", "f4", "Book of Identify hotkey (bind the ID tome's skill in-game like F1-F3). Identify = select the skill, WORLD right-click raises the ID cursor, LEFT-click each item — panel right-clicks are deaf on this build, world right-clicks are not.")
+	cubeKey := flag.String("cubekey", "h", "Horadric Cube UI keybinding (Options>Controls — D2R's direct open-cube key). Sidesteps the deaf panel right-click that opening the cube would otherwise need. Empty disables cube stashing.")
+	_ = cubeKey // cube-stash errand lands after the grid calibration shot
 	tripItems := flag.Int("tripitems", 26, "auto town trip (TP + identify + sell + restock + return) when the inventory holds this many items; 0 = only on demand via `echo tp`")
 	loot := flag.Bool("loot", false, "enable ground-item looting between fights")
 	lootradius := flag.Int("lootradius", 30, "only pick up ground items within this many units")
