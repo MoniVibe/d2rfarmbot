@@ -6066,6 +6066,13 @@ mainLoop:
 						if bl, ok := lootBlacklist[it.UnitID]; ok && time.Now().Before(bl) {
 							continue
 						}
+						// The pile shun applies to SHOPPING too: the richest drops lie exactly
+						// where everything died — walking there weaponless is the same suicide
+						// whether the goal is a fight or a Cap (run 26: deep-wedged at the camp
+						// edge chasing drops the combat shun already refused to fight over).
+						if corpseTargetPos.X != 0 && chebyshev(it.Position, corpseTargetPos) <= 25 {
+							continue
+						}
 						if !wearableEmptySlot(d, it) {
 							continue
 						}
