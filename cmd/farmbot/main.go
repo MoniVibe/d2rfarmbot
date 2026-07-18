@@ -3955,7 +3955,19 @@ func main() {
 	mover := NewMover(gr, nil, nil, walkToHold, screenPointToward, openBurst)
 	navWalk := func(me, dest data.Position) {
 		mover.live, mover.full = navi, mapNavi
-		mover.SetWedges(wedges)
+		// Obstacles for every mode: recorded refusals (the game said no) + static colliding
+		// objects (chests, stalls, the well — they block but aren't in the tile grid).
+		// Hostile monsters are deliberately NOT fed: they chase, so they invalidate every
+		// plan the tick it's made — the contact override hands them to combat instead.
+		obs := append([]data.Position(nil), wedges...)
+		dd := gr.GetData()
+		for i := range dd.Objects {
+			o := &dd.Objects[i]
+			if o.Desc().HasCollision && chebyshev(me, o.Position) < 70 {
+				obs = append(obs, o.Position)
+			}
+		}
+		mover.SetWedges(obs)
 		if mover.Step(me, dest) == MoveBlocked {
 			if fightThrough(gr.GetData(), me) {
 				logger.Info("navWalk: blocked — fighting through")
@@ -5000,84 +5012,25 @@ mainLoop:
 				}
 				ap, cr := gotoCross[gotoIdx][0], gotoCross[gotoIdx][1]
 				gotoAim = ap
-				// (Re)plan to the current approach point when needed, feeding live objects (chests,
-				// stalls, the well, NPCs) as obstacles so the route goes AROUND them — they block
-				// movement but aren't in the static tile grid.
-				if !navi.havePlan || navi.goal != ap {
-					obs := make([]data.Position, 0, 64)
-					obs = append(obs, wedges...) // recorded refusals outrank the grid
-					for _, o := range d.Objects {
-						// Only objects that physically COLLIDE. d.Objects is now populated from the
-						// unit table everywhere (it used to be empty without map data), and feeding
-						// every decorative torch/stall into SetObstacles closed the town's exit
-						// corridor — measured: town crossing went from 77s clean to burst-crawling.
-						if !o.Desc().HasCollision {
-							continue
-						}
-						if chebyshev(me, o.Position) < 70 { // near, and in the live frame (koolo-map-frame dupes are far)
-							obs = append(obs, o.Position)
-							if chebyshev(me, o.Position) < 12 {
-								logger.Info("goto: near OBJECT", "name", o.Name, "pos", fmt.Sprintf("(%d,%d)", o.Position.X, o.Position.Y))
-							}
-						}
+				// ONE AUTHORITY: the candidate approach rides the Mover like every other walk —
+				// live planner, full map-prior fallback, wedges, thin-ray carrot, stall ladder.
+				// (The old inline live-grid planner predated the Mover and had NONE of those;
+				// it was the last non-Mover locomotion path and the one that flopped all night.)
+				if chebyshev(me, ap) > 5 {
+					if shiftCheck%4 == 0 {
+						logger.Info("goto", "cand", fmt.Sprintf("%d/%d", gotoIdx, len(gotoCross)),
+							"approach", fmt.Sprintf("(%d,%d)", ap.X, ap.Y),
+							"dist", chebyshev(me, ap), "pos", fmt.Sprintf("(%d,%d)", me.X, me.Y))
 					}
-					for i := range d.Monsters {
-						m := &d.Monsters[i]
-						// FRIENDLIES ARE NOT OBSTACLES: our own skeletons trail us everywhere, so
-						// feeding them to the planner builds a moving wall around the player —
-						// every plan invalidates the tick it's made (measured at the Cold Plains
-						// gate: committedS reset to 0 after each near-UNIT burst, worse with a
-						// bigger army). Pets/mercs/good NPCs displace or are walked through.
-						if m.IsPet() || m.IsMerc() || m.IsGoodNPC() {
-							continue
-						}
-						if chebyshev(me, m.Position) < 70 {
-							obs = append(obs, m.Position)
-							if chebyshev(me, m.Position) < 12 {
-								logger.Info("goto: near UNIT", "name", m.Name, "pos", fmt.Sprintf("(%d,%d)", m.Position.X, m.Position.Y))
-							}
-						}
-					}
-					navi.SetObstacles(obs)
-					if !navi.BuildPlan(me, ap, time.Now()) {
-						gotoIdx, gotoTryAt = (gotoIdx+1)%len(gotoCross), time.Now()
-						continue
-					}
-				}
-				step := navi.Step(me, time.Now())
-				if shiftCheck%3 == 0 {
-					logger.Info("gotoDBG", "arr", step.Arrived, "div", step.Diverged, "stk", step.Stuck,
-						"tgt", fmt.Sprintf("(%d,%d)", step.Target.X, step.Target.Y), "hold", step.HoldMs,
-						"cS", int(navi.committedS), "end", int(navi.cumS[len(navi.cumS)-1]),
-						"pts", len(navi.pts), "sh", navi.stuckHits, "pos", fmt.Sprintf("(%d,%d)", me.X, me.Y))
-				}
-				switch {
-				case step.Arrived: // at the near side of the boundary — push across to transition
+					navWalk(me, ap)
+				} else {
+					// At the near side of the boundary — push across to transition.
 					dx, dy := cr.X-me.X, cr.Y-me.Y
 					if dm := chebyshev(me, cr); dm > 12 {
 						dx, dy = dx*12/dm, dy*12/dm
 					}
 					sx, sy := screenPointToward(me, dx, dy)
 					walkToHold(sx, sy, 140)
-				case step.Diverged: // off path / escape exhausted — replan, or retire this crossing
-					if navi.stuckHits >= 4 || !navi.BuildPlan(me, ap, time.Now()) {
-						logger.Info("goto: retire candidate", "cand", fmt.Sprintf("%d/%d", gotoIdx, len(gotoCross)))
-						gotoIdx, gotoTryAt = (gotoIdx+1)%len(gotoCross), time.Now()
-						navi.havePlan = false
-					}
-				default:
-					hold := step.HoldMs
-					if hold <= 0 {
-						hold = 200
-					}
-					sx, sy := screenPointToward(me, step.Target.X-me.X, step.Target.Y-me.Y)
-					if shiftCheck%4 == 0 {
-						logger.Info("goto", "cand", fmt.Sprintf("%d/%d", gotoIdx, len(gotoCross)),
-							"approach", fmt.Sprintf("(%d,%d)", ap.X, ap.Y),
-							"committedS", int(navi.committedS), "pathEnd", int(navi.cumS[len(navi.cumS)-1]),
-							"stuck", step.Stuck, "pos", fmt.Sprintf("(%d,%d)", me.X, me.Y))
-					}
-					walkToHold(sx, sy, hold)
 				}
 				time.Sleep(60 * time.Millisecond)
 				continue
