@@ -229,7 +229,6 @@ func main() {
 	tp := flag.String("tp", "", "Tome of Town Portal hotkey; empty disables emergency TP on chicken")
 	idKey := flag.String("idkey", "f4", "Book of Identify hotkey (bind the ID tome's skill in-game like F1-F3). Identify = select the skill, WORLD right-click raises the ID cursor, LEFT-click each item — panel right-clicks are deaf on this build, world right-clicks are not.")
 	cubeKey := flag.String("cubekey", "h", "Horadric Cube UI keybinding (Options>Controls — D2R's direct open-cube key). Sidesteps the deaf panel right-click that opening the cube would otherwise need. Empty disables cube stashing.")
-	_ = cubeKey // cube-stash errand lands after the grid calibration shot
 	tripItems := flag.Int("tripitems", 26, "auto town trip (TP + identify + sell + restock + return) when the inventory holds this many items; 0 = only on demand via `echo tp`")
 	loot := flag.Bool("loot", false, "enable ground-item looting between fights")
 	lootradius := flag.Int("lootradius", 30, "only pick up ground items within this many units")
@@ -3103,6 +3102,109 @@ func main() {
 		return done
 	}
 
+	// cubePixel maps a Horadric Cube grid cell to raw physical pixels — calibrated from a
+	// live open-cube shot (2026-07-18): the mod EXPANDS the cube to 12x8 (~96 cells,
+	// vanilla is 12) — more room than the backpack, and it travels with him. Grid anchored
+	// (196,237), ~48x47px cells. The 'h' UI binding opens cube AND backpack together.
+	cubePixel := func(gx, gy int) (int, int) {
+		return 196 + gx*48, 237 + gy*47
+	}
+	// cubeStash: move keeper-quality items backpack -> cube via left-click pick+place,
+	// closed-loop per item. Runs ANYWHERE — backpack pressure stops meaning a town trip.
+	cubeStash := func() int {
+		if *cubeKey == "" {
+			return 0
+		}
+		d := gr.GetData()
+		keeper := func(it data.Item) bool {
+			switch it.Quality {
+			case item.QualityMagic, item.QualityRare, item.QualitySet, item.QualityUnique, item.QualityCrafted:
+			default:
+				return false
+			}
+			n := string(it.Name)
+			if strings.Contains(n, "Charm") || strings.Contains(n, "Tome") || strings.Contains(n, "Potion") ||
+				strings.Contains(n, "INVALID") || n == "" || n == "Jawbone" || n == "Eye" || n == "Scalp" {
+				return false // charms only work FROM the backpack; the rest are the never-touch set
+			}
+			return it.Identified
+		}
+		var move []data.Item
+		for _, it := range d.Inventory.ByLocation(item.LocationInventory) {
+			if keeper(it) {
+				move = append(move, it)
+			}
+		}
+		if len(move) == 0 {
+			return 0
+		}
+		occ := map[[2]int]bool{}
+		for _, it := range d.Inventory.ByLocation(item.LocationCube) {
+			for dx := 0; dx < 2; dx++ {
+				for dy := 0; dy < 3; dy++ {
+					occ[[2]int{it.Position.X + dx, it.Position.Y + dy}] = true
+				}
+			}
+		}
+		nextFree := func() (int, int, bool) {
+			for y := 0; y < 8; y++ {
+				for x := 0; x < 12; x++ {
+					if !occ[[2]int{x, y}] {
+						return x, y, true
+					}
+				}
+			}
+			return 0, 0, false
+		}
+		moveStop()
+		hid.PressKey(hid.GetASCIICode(*cubeKey))
+		time.Sleep(700 * time.Millisecond)
+		stashed := 0
+		for i, it := range move {
+			if i >= 8 {
+				break
+			}
+			fx, fy, okc := nextFree()
+			if !okc {
+				logger.Info("cube: full")
+				break
+			}
+			ix, iy := invPixel(it.Position.X, it.Position.Y)
+			uiClick(ix, iy) // pick from backpack
+			time.Sleep(350 * time.Millisecond)
+			px, py := cubePixel(fx, fy)
+			uiClick(px, py) // place into cube
+			time.Sleep(450 * time.Millisecond)
+			gone := true
+			for _, it2 := range gr.GetData().Inventory.ByLocation(item.LocationInventory) {
+				if it2.Position == it.Position && it2.Name == it.Name {
+					gone = false
+					break
+				}
+			}
+			if gone {
+				for dx := 0; dx < 2; dx++ {
+					for dy := 0; dy < 3; dy++ {
+						occ[[2]int{fx + dx, fy + dy}] = true
+					}
+				}
+				stashed++
+				logger.Info("cube: stashed", "name", string(it.Name), "cell", fmt.Sprintf("(%d,%d)", fx, fy))
+			} else {
+				// Pick or place missed; if the item rode the cursor, clicking its origin
+				// cell puts it back. Stop the pass — coords may be drifting.
+				uiClick(ix, iy)
+				time.Sleep(300 * time.Millisecond)
+				logger.Warn("cube: stash failed — returned item, stopping pass", "name", string(it.Name))
+				break
+			}
+		}
+		hid.PressKey(hid.GetASCIICode(*cubeKey))
+		time.Sleep(300 * time.Millisecond)
+		logger.Info("cube: stash pass done", "stashed", stashed, "candidates", len(move))
+		return stashed
+	}
+
 	// findNpcMenu locates the gold-bordered NPC dialogue box (TALK/TRADE/CANCEL) in a
 	// screenshot. The box anchors in WORLD space above the NPC, so its screen position moves
 	// with the camera — measured at (960-1050,128-245) and (860-950,245-355) for the same
@@ -4350,6 +4452,7 @@ func main() {
 	tpErrandsDone := false // one errand pass per trip
 	var lastAutoTrip time.Time
 	tpWalkBack := 0 // walk-fallback: area to hike back to when the mod refused the portal
+	var lastCubeStash time.Time
 	stepHold := false          // 'hold' control command: freeze all behaviors for step-mode calibration
 	var runStepCommand func(string)
 	var runStepBatch func(string, int)
@@ -5176,6 +5279,9 @@ mainLoop:
 						tpPhase, tpTripStart, tpParkInTown, tpErrandsDone = 1, time.Now(), false, false
 						tpVendorWanted = true
 					}
+				case "cube":
+					logger.Info("control: cube stash requested")
+					cubeStash()
 				case "town":
 					// TP to town and PARK (no auto-return) — the calibration-window maker:
 					// get him to town, then 'exit' for a clean supervised probe session.
@@ -5645,6 +5751,28 @@ mainLoop:
 						}
 						continue
 					}
+				}
+			}
+		}
+
+		// CUBE FIRST (the user's extra-space insight): before any town trip, keepers go
+		// into the 96-cell modded cube right here in the field — backpack pressure only
+		// means town when the cube can't absorb it (or junk needs selling).
+		if *cubeKey != "" && tpPhase == 0 && !d.PlayerUnit.Area.IsTown() &&
+			time.Since(lastCubeStash) > 5*time.Minute &&
+			len(d.Inventory.ByLocation(item.LocationInventory)) >= *tripItems-6 {
+			enemyNear := false
+			for _, m := range d.Monsters.Enemies() {
+				if m.Stats[stat.Life] > 0 && chebyshev(me, m.Position) <= 20 {
+					enemyNear = true
+					break
+				}
+			}
+			if !enemyNear {
+				lastCubeStash = time.Now()
+				identifyErrand() // keeper() needs Identified; the tome works anywhere
+				if n := cubeStash(); n > 0 {
+					continue
 				}
 			}
 		}
