@@ -5949,7 +5949,12 @@ mainLoop:
 			if anyEnemyWithin(d, me, *radius) {
 				lastEnemySeen = time.Now()
 			}
-			if curGoto == 0 || curGoto == progressTarget {
+			if curGoto == 0 || curGoto == progressTarget || curGoto == int(d.PlayerUnit.Area) {
+				// The third clause: a journey we've ALREADY COMPLETED (standing in the curGoto
+				// area) may be reclaimed by the route. Without it, the death-state resume's
+				// curGoto=deathArea assertion — with recovery weapon-gated off — locked the
+				// route logic out for entire runs (run 9: no 'farming target' line at all, so
+				// neither the caps nor the XP-starvation gauge could ever fire).
 				// QUEST-AWARE ROUTE (user: "be aware of what's clear"): the Den has a
 				// readable completion flag — never revisit a cleared quest cave. Other
 				// stops rely on the runs-dry timer; their "done" isn't a game fact.
