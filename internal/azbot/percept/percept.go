@@ -35,6 +35,8 @@ type PlayerState struct {
 	// nothing when this is 0 — the bot knows when it cannot heal (the empty-belt
 	// death: 25s bleed from 30% while the drink reflex pressed keys into the void).
 	HealPots int
+	// ManaPots: mana potions in the belt (mod id 607) — the bow skill's fuel gauge.
+	ManaPots int
 	// WeaponKind: what the ACTIVE hands hold — "bow", "melee", or "none". The W swap
 	// flips this next capture; combat reads it as the closed loop on weapon swapping.
 	WeaponKind string
@@ -136,8 +138,8 @@ func (p *Perceptor) Capture() *Snapshot {
 	if v, ok := d.PlayerUnit.BaseStats.FindStat(stat.Level, 0); ok {
 		lvl = v.Value
 	}
-	gold := 0
-	if v, ok := d.PlayerUnit.Stats.FindStat(stat.Gold, 0); ok {
+	gold := 0 // gold lives in BaseStats on this repack (measured 2026-07-19; Stats reads 0)
+	if v, ok := d.PlayerUnit.BaseStats.FindStat(stat.Gold, 0); ok {
 		gold = v.Value
 	}
 	s.Valid = true
@@ -177,10 +179,19 @@ func (p *Perceptor) Capture() *Snapshot {
 			s.Me.WeaponKind = "melee"
 		}
 	}
+	// Belt potions count by NUMERIC ID first — the mod scrambles the name table
+	// (its HP potion reads "Herb" id 602, its mana potion id 607 = the old INVALID607
+	// mystery; both proven by vendor purchase deltas 2026-07-19). Name matching stays
+	// as the vanilla fallback.
 	for _, bp := range d.Inventory.Belt.Items {
+		if bp.Position.Y != 0 {
+			continue // only the bottom row is drinkable by the belt keys
+		}
 		n := string(bp.Name)
-		if bp.Position.Y == 0 && (contains(n, "Healing") || contains(n, "Rejuvenation")) {
+		if bp.ID == 602 || contains(n, "Healing") || contains(n, "Rejuvenation") {
 			s.Me.HealPots++
+		} else if bp.ID == 607 || contains(n, "Mana") {
+			s.Me.ManaPots++
 		}
 	}
 	for i := range d.Objects {

@@ -123,6 +123,11 @@ func main() {
 	portalTest := flag.Bool("portaltest", false, "manual harness: find the nearest portal in the snapshot, approach if far, click through with the EnterPortal verb, report every state change, exit")
 	charsiTest := flag.Bool("charsitest", false, "manual harness: walk to Charsi, open TRADE (menu byte + Down/Enter), screenshot the shop for repair-button calibration; with -repairxy also click it and report the gold delta, exit")
 	repairXY := flag.String("repairxy", "", "client x,y of the repair button (measured from logs/charsi_shop.png)")
+	akaraTest := flag.Bool("akaratest", false, "manual harness: find Akara, open TRADE, dump belt self-model + her readable stock (LocationVendor), screenshot for slot calibration; with -buy also execute the restock plan (1 row mana, rest HP) and report gold/belt deltas, exit")
+	buyPots := flag.Bool("buy", false, "akaratest: execute the potion purchases (needs gold)")
+	invDump := flag.Bool("invdump", false, "dump inventory/belt/equipped with NUMERIC item IDs (the mod scrambles names; IDs cannot lie), exit")
+	shopPick := flag.String("shoppick", "", "akaratest: uiClick a client pixel 'x,y', read the item that lands on the CURSOR (true identity from memory), then click again to put it back — the click-based slot oracle")
+	shopMap := flag.String("shopmap", "", "akaratest: hover-sweep the shop panel 'x0,y0,x1,y1,step' and log which stock item the GAME says is hovered at each point — builds the true pixel map empirically")
 	logger := slog.New(slog.NewTextHandler(os.Stdout, nil))
 
 	flag.Parse()
@@ -214,6 +219,462 @@ func main() {
 	logger.Info("sentinel live", "killswitch", *killKey, "drinkAt", *drinkAt)
 
 	// ---- M4 fight test: calibrate capability, cross to Blood Moor, strike with evidence ----
+	if *invDump {
+		d := gr.GetData()
+		for _, loc := range []item.LocationType{item.LocationInventory, item.LocationBelt, item.LocationEquipped, item.LocationCursor} {
+			for _, it := range d.Inventory.ByLocation(loc) {
+				logger.Info("invdump", "loc", string(loc), "id", it.ID, "name", string(it.Name),
+					"pos", fmt.Sprintf("(%d,%d)", it.Position.X, it.Position.Y), "quality", int(it.Quality), "identified", it.Identified)
+			}
+		}
+		for _, bi := range d.Inventory.Belt.Items {
+			logger.Info("invdump: belt", "id", bi.ID, "name", string(bi.Name), "pos", fmt.Sprintf("(%d,%d)", bi.Position.X, bi.Position.Y))
+		}
+		g := 0
+		if v, ok := d.PlayerUnit.BaseStats.FindStat(stat.Gold, 0); ok {
+			g = v.Value
+		}
+		logger.Info("invdump: gold", "gold", g, "beltName", string(d.Inventory.Belt.Name), "beltItems", len(d.Inventory.Belt.Items))
+		close(stop)
+		return
+	}
+
+	if *akaraTest {
+		led := verbs.NewLedger(64)
+		led.Sink = func(o verbs.Outcome) {
+			logger.Info("outcome", "verb", o.Verb, "result", o.Result.String(), "ev", o.Evidence)
+		}
+		s := p.Capture()
+		if !s.Valid || !s.Me.InTown {
+			logger.Error("akaratest: not in town")
+			close(stop)
+			return
+		}
+		// Gold truth hunt: the stat we read says 0 while the UI shows 900 — dump every
+		// stat and let the value name itself.
+		dstats := gr.GetData()
+		for _, st := range dstats.PlayerUnit.Stats {
+			if st.Value != 0 {
+				logger.Info("akaratest: stat", "id", int(st.ID), "layer", st.Layer, "value", st.Value)
+			}
+		}
+		for _, st := range dstats.PlayerUnit.BaseStats {
+			if st.Value != 0 {
+				logger.Info("akaratest: basestat", "id", int(st.ID), "layer", st.Layer, "value", st.Value)
+			}
+		}
+
+		// ---- BELT SELF-MODEL: the bot KNOWS its belt, it doesn't assume one. ----
+		d0 := gr.GetData()
+		belt := d0.Inventory.Belt
+		rows := belt.Rows()
+		haveHP, haveMana := 0, 0
+		for _, bi := range belt.Items {
+			n := string(bi.Name)
+			logger.Info("akaratest: belt slot", "item", n, "col", bi.Position.X, "row", bi.Position.Y)
+			if strings.Contains(n, "Healing") {
+				haveHP++
+			} else if strings.Contains(n, "Mana") {
+				haveMana++
+			}
+		}
+		// Doctrine: 1 row of mana, the rest HP — scaled to the belt she actually wears.
+		wantMana := 4
+		if rows == 1 {
+			wantMana = 1
+		}
+		wantHP := rows*4 - wantMana
+		buyHP, buyMana := wantHP-haveHP, wantMana-haveMana
+		if buyHP < 0 {
+			buyHP = 0
+		}
+		if buyMana < 0 {
+			buyMana = 0
+		}
+		gold := 0
+		if v, ok := d0.PlayerUnit.BaseStats.FindStat(stat.Gold, 0); ok {
+			gold = v.Value
+		}
+		logger.Info("akaratest: belt self-model", "belt", string(belt.Name), "rows", rows,
+			"slots", rows*4, "haveHP", haveHP, "haveMana", haveMana)
+		logger.Info("akaratest: restock plan", "wantHP", wantHP, "wantMana", wantMana,
+			"buyHP", buyHP, "buyMana", buyMana, "gold", gold)
+
+		// ---- FIND AKARA: scan, else walk the town ring until she loads. ----
+		var ak data.Monster
+		found := false
+		scan := func() {
+			for _, mo := range gr.GetData().Monsters {
+				if mo.Name == npc.Akara {
+					ak, found = mo, true
+				}
+			}
+		}
+		scan()
+		if !found {
+			ring := []data.Position{{X: 6023, Y: 4933}, {X: 6070, Y: 4960}, {X: 6100, Y: 4990}, {X: 6050, Y: 5010}, {X: 6110, Y: 4930}}
+			for _, wp := range ring {
+				for i := 0; i < 12 && !found; i++ {
+					scan()
+					if found || chebyshev(gr.GetData().PlayerUnit.Position, wp) <= 5 {
+						break
+					}
+					verbs.Stride{To: wp, MinGain: 1}.Do(m, gr, p, led, "akaratest/search")
+				}
+				if found {
+					break
+				}
+			}
+		}
+		if !found {
+			logger.Error("akaratest: Akara never loaded — townsfolk seen:")
+			for _, mo := range gr.GetData().Monsters {
+				logger.Info("akaratest: townsfolk(final)", "npc", int(mo.Name), "pos", fmt.Sprintf("(%d,%d)", mo.Position.X, mo.Position.Y))
+			}
+			close(stop)
+			return
+		}
+		logger.Info("akaratest: Akara found", "unit", int(ak.UnitID), "pos", fmt.Sprintf("(%d,%d)", ak.Position.X, ak.Position.Y))
+
+		// ---- APPROACH (band 4..7) + BARE CLICK + HOME/DOWN/ENTER — the Charsi laws. ----
+		approach := func() {
+			for i := 0; i < 30; i++ {
+				d := gr.GetData()
+				scan()
+				dist := chebyshev(d.PlayerUnit.Position, ak.Position)
+				if dist >= 4 && dist <= 7 {
+					break
+				}
+				if dist < 4 {
+					me := d.PlayerUnit.Position
+					back := data.Position{X: me.X + (me.X-ak.Position.X)*3, Y: me.Y + (me.Y-ak.Position.Y)*3}
+					verbs.Stride{To: back, Hold: 400 * time.Millisecond}.Do(m, gr, p, led, "akaratest/backoff")
+					continue
+				}
+				hold := 1600 * time.Millisecond
+				if dist < 14 {
+					hold = 500 * time.Millisecond
+				}
+				verbs.Stride{To: ak.Position, Hold: hold, MinGain: 1}.Do(m, gr, p, led, "akaratest/approach")
+			}
+			m.MoveStop()
+			time.Sleep(600 * time.Millisecond)
+		}
+		approach()
+
+		menuByte := func() bool { ub := gr.UIBytes(); return len(ub) > 0xF4 && ub[0xF4] == 1 }
+		menuKey := func(vk byte) {
+			_ = gi.OverrideGetKeyState(vk)
+			_ = gi.OverrideGetAsyncKeyState(vk)
+			hid.RawKeyDown(vk)
+			time.Sleep(220 * time.Millisecond)
+			hid.RawKeyUp(vk)
+			_ = gi.RestoreGetKeyState()
+			_ = gi.RestoreGetAsyncKeyState()
+			time.Sleep(200 * time.Millisecond)
+		}
+		shopOpen := false
+		for attempt := 0; attempt < 6 && !shopOpen; attempt++ {
+			if attempt > 0 {
+				d0 := gr.GetData()
+				verbs.Stride{To: data.Position{X: d0.PlayerUnit.Position.X + 8, Y: d0.PlayerUnit.Position.Y + 8}, Hold: 700 * time.Millisecond}.Do(m, gr, p, led, "akaratest/reset")
+				approach()
+			}
+			d := gr.GetData()
+			me := d.PlayerUnit.Position
+			scan()
+			bx := int(float32((ak.Position.X-me.X)-(ak.Position.Y-me.Y))*19.8) + gr.GameAreaSizeX/2
+			by := int(float32((ak.Position.X-me.X)+(ak.Position.Y-me.Y))*9.9) + gr.GameAreaSizeY/2
+			px, py, confirmed := bx, by, false
+		akSweep:
+			for dy := -8; dy >= -64; dy -= 8 {
+				for _, dx := range []int{0, -8, 8, -16, 16, -24, 24} {
+					cx, cy := bx+dx, by+dy
+					if cx < 20 || cy < 20 || cx > gr.GameAreaSizeX-20 || cy > gr.GameAreaSizeY-20 {
+						continue
+					}
+					m.AimPhysical(cx, cy)
+					time.Sleep(40 * time.Millisecond)
+					hd := gr.GetData().HoverData
+					if !hd.IsHovered || hd.UnitID != ak.UnitID {
+						continue
+					}
+					m.AimPhysical(cx, cy)
+					time.Sleep(60 * time.Millisecond)
+					hd = gr.GetData().HoverData
+					if hd.IsHovered && hd.UnitID == ak.UnitID {
+						px, py, confirmed = cx, cy, true
+						break akSweep
+					}
+				}
+			}
+			if menuByte() {
+				logger.Info("akaratest: menu already open — proceeding", "n", attempt)
+			} else {
+				if !confirmed {
+					logger.Info("akaratest: no hover confirmation — re-approaching", "n", attempt)
+					continue
+				}
+				hid.Click(game.LeftButton, px, py)
+				logger.Info("akaratest: body click (bare)", "n", attempt)
+				ok := false
+				for i := 0; i < 30; i++ {
+					if menuByte() {
+						ok = true
+						break
+					}
+					time.Sleep(100 * time.Millisecond)
+				}
+				if !ok {
+					logger.Info("akaratest: menu never opened — retrying")
+					continue
+				}
+			}
+			m.MoveStop()
+			menuKey(0x24) // HOME
+			menuKey(0x28) // DOWN
+			hid.PressKey(hid.GetASCIICode("enter"))
+			time.Sleep(1200 * time.Millisecond)
+			// Shop oracle: vendor stock becomes READABLE when the trade panel is up.
+			if len(gr.GetData().Inventory.ByLocation(item.LocationVendor)) > 0 {
+				shopOpen = true
+			} else {
+				hid.PressKey(hid.GetASCIICode("esc"))
+				time.Sleep(300 * time.Millisecond)
+			}
+		}
+		if !shopOpen {
+			logger.Error("akaratest: shop never opened")
+			close(stop)
+			return
+		}
+
+		// ---- STOCK READ: the vendor's inventory from memory — no pixel guessing. ----
+		type slotRef struct{ x, y int }
+		var hpSlots, manaSlots []slotRef
+		for _, it := range gr.GetData().Inventory.ByLocation(item.LocationVendor) {
+			n := string(it.Name)
+			logger.Info("akaratest: stock", "item", n, "gx", it.Position.X, "gy", it.Position.Y)
+			if strings.Contains(n, "HealingPotion") || strings.Contains(n, "MalahsPotion") {
+				hpSlots = append(hpSlots, slotRef{it.Position.X, it.Position.Y})
+			} else if strings.Contains(n, "ManaPotion") {
+				manaSlots = append(manaSlots, slotRef{it.Position.X, it.Position.Y})
+			}
+		}
+		logger.Info("akaratest: potion slots", "hp", len(hpSlots), "mana", len(manaSlots))
+		if f, err := os.Create("logs/akara_shop.png"); err == nil {
+			_ = png.Encode(f, gr.Screenshot())
+			f.Close()
+			logger.Info("akaratest: shop screenshot saved", "path", "logs/akara_shop.png")
+		}
+
+		// ---- SHOPPICK: the click-based slot oracle. Pick → read LocationCursor →
+		// put back. The cursor item's memory identity cannot lie, and no gold moves
+		// until a drop into OUR inventory. ----
+		if *shopPick != "" {
+			var sx, sy int
+			if _, err := fmt.Sscanf(*shopPick, "%d,%d", &sx, &sy); err != nil {
+				logger.Error("akaratest: bad -shoppick")
+				close(stop)
+				return
+			}
+			uiClick := func(cx, cy int) {
+				m.MoveStop()
+				ppx := int(float64(gr.WindowLeftX)*(*dpiScale)) + cx
+				ppy := int(float64(gr.WindowTopY)*(*dpiScale)) + cy
+				_ = gi.OverridePhysicalCursorPos(ppx, ppy)
+				hid.MouseMoveClient(cx, cy)
+				time.Sleep(150 * time.Millisecond)
+				_ = gi.OverrideGetKeyState(0x01)
+				_ = gi.OverrideGetAsyncKeyState(0x01)
+				hid.LeftClickNoMoveClient(cx, cy)
+				_ = gi.RestoreGetKeyState()
+				_ = gi.RestoreGetAsyncKeyState()
+				time.Sleep(120 * time.Millisecond)
+				_ = gi.RestorePhysicalCursorPos()
+				_ = gi.RestoreGetCursorInfo()
+				_ = gi.RestoreGetCursorPosAddr()
+			}
+			cursorItems := func() []string {
+				var out []string
+				for _, it := range gr.GetData().Inventory.ByLocation(item.LocationCursor) {
+					out = append(out, string(it.Name))
+				}
+				return out
+			}
+			goldOf := func() int {
+				if v, ok := gr.GetData().PlayerUnit.BaseStats.FindStat(stat.Gold, 0); ok {
+					return v.Value
+				}
+				return 0
+			}
+			invCount := func() int { return len(gr.GetData().Inventory.ByLocation(item.LocationInventory)) }
+			g0, n0 := goldOf(), invCount()
+			logger.Info("akaratest: shoppick", "px", sx, "py", sy, "gold", g0, "invItems", n0, "cursorBefore", fmt.Sprintf("%q", cursorItems()))
+			uiClick(sx, sy)
+			time.Sleep(400 * time.Millisecond)
+			held := cursorItems()
+			logger.Info("akaratest: shoppick result", "cursorAfter", fmt.Sprintf("%q", held),
+				"goldDelta", goldOf()-g0, "invDelta", invCount()-n0)
+			for _, it := range gr.GetData().Inventory.ByLocation(item.LocationInventory) {
+				logger.Info("akaratest: inv now", "id", it.ID, "name", string(it.Name), "pos", fmt.Sprintf("(%d,%d)", it.Position.X, it.Position.Y))
+			}
+			if len(held) > 0 {
+				uiClick(sx, sy) // put it back — no transaction
+				time.Sleep(300 * time.Millisecond)
+				logger.Info("akaratest: shoppick returned", "cursorNow", fmt.Sprintf("%v", cursorItems()))
+			}
+			hid.PressKey(hid.GetASCIICode("esc"))
+			time.Sleep(300 * time.Millisecond)
+			close(stop)
+			return
+		}
+
+		// ---- SHOPMAP: hover-confirm the PANEL, the same honest law as the world.
+		// The mod scrambles the name table and my derived grid formula pointed at a
+		// rune; the game itself knows what is under the cursor — ask IT per pixel. ----
+		if *shopMap != "" {
+			var x0, y0, x1, y1, step int
+			if _, err := fmt.Sscanf(*shopMap, "%d,%d,%d,%d,%d", &x0, &y0, &x1, &y1, &step); err != nil {
+				logger.Error("akaratest: bad -shopmap", "err", err)
+				close(stop)
+				return
+			}
+			// REAL cursor, the HoverStrike way — the patched-export dance is for click
+			// registration; hover tracking follows the actual pointer.
+			aimPanel := func(sx, sy int) {
+				m.AimPhysical(sx, sy)
+			}
+			// Panel hover appears to gate on window FOCUS (world hover does not) —
+			// foreground the game for the sweep.
+			win.SetForegroundWindow(hwnd)
+			time.Sleep(400 * time.Millisecond)
+			seen := map[string]bool{}
+			for sy := y0; sy <= y1; sy += step {
+				for sx := x0; sx <= x1; sx += step {
+					aimPanel(sx, sy)
+					time.Sleep(60 * time.Millisecond)
+					for _, it := range gr.GetData().Inventory.ByLocation(item.LocationVendor) {
+						if it.IsHovered {
+							key := fmt.Sprintf("%s@%d,%d", string(it.Name), it.Position.X, it.Position.Y)
+							if !seen[key] {
+								seen[key] = true
+								logger.Info("akaratest: shopmap hit", "px", sx, "py", sy,
+									"item", string(it.Name), "gx", it.Position.X, "gy", it.Position.Y)
+							}
+						}
+					}
+				}
+			}
+			_ = gi.RestorePhysicalCursorPos()
+			_ = gi.RestoreGetCursorInfo()
+			_ = gi.RestoreGetCursorPosAddr()
+			logger.Info("akaratest: shopmap done", "distinct", len(seen))
+			hid.PressKey(hid.GetASCIICode("esc"))
+			time.Sleep(300 * time.Millisecond)
+			close(stop)
+			return
+		}
+
+		// ---- BUY: one uiClick on a vendor cell IS an instant purchase (discovered by
+		// the accidental 2x tome buy: gold -300 each, auto-placed). Potions auto-place
+		// into the BELT. Cells measured optically from akara_shop.png and verified by
+		// the 30g Herb (id 602 = the mod's HP potion) landing in belt (0,0). ----
+		if *buyPots {
+			const hpID = 602 // "Herb" — the mod's HP potion, proven by purchase
+			hpCell := [2]int{612, 478}   // red bottle, Misc tab
+			manaCell := [2]int{612, 525} // blue bottle, Misc tab
+			uiClick := func(cx, cy int) {
+				m.MoveStop()
+				ppx := int(float64(gr.WindowLeftX)*(*dpiScale)) + cx
+				ppy := int(float64(gr.WindowTopY)*(*dpiScale)) + cy
+				_ = gi.OverridePhysicalCursorPos(ppx, ppy)
+				hid.MouseMoveClient(cx, cy)
+				time.Sleep(150 * time.Millisecond)
+				_ = gi.OverrideGetKeyState(0x01)
+				_ = gi.OverrideGetAsyncKeyState(0x01)
+				hid.LeftClickNoMoveClient(cx, cy)
+				_ = gi.RestoreGetKeyState()
+				_ = gi.RestoreGetAsyncKeyState()
+				time.Sleep(120 * time.Millisecond)
+				_ = gi.RestorePhysicalCursorPos()
+				_ = gi.RestoreGetCursorInfo()
+				_ = gi.RestoreGetCursorPosAddr()
+			}
+			goldOf := func() int {
+				if v, ok := gr.GetData().PlayerUnit.BaseStats.FindStat(stat.Gold, 0); ok {
+					return v.Value
+				}
+				return 0
+			}
+			beltIDs := func() []int {
+				var out []int
+				for _, bi := range gr.GetData().Inventory.Belt.Items {
+					out = append(out, bi.ID)
+				}
+				return out
+			}
+			countID := func(ids []int, want int) int {
+				n := 0
+				for _, id := range ids {
+					if id == want {
+						n++
+					}
+				}
+				return n
+			}
+			buyCell := func(cell [2]int, label string) (newID int, ok bool) {
+				g0 := goldOf()
+				b0 := beltIDs()
+				uiClick(cell[0], cell[1])
+				time.Sleep(500 * time.Millisecond)
+				g1 := goldOf()
+				b1 := beltIDs()
+				// The new belt id, if any (first id in b1 exceeding b0's count of it).
+				for _, id := range b1 {
+					if countID(b1, id) > countID(b0, id) {
+						newID = id
+						break
+					}
+				}
+				logger.Info("akaratest: buy", "what", label, "cell", fmt.Sprintf("(%d,%d)", cell[0], cell[1]),
+					"goldDelta", g1-g0, "beltBefore", len(b0), "beltAfter", len(b1), "newID", newID)
+				return newID, g1 < g0
+			}
+
+			ids := beltIDs()
+			hpHave := countID(ids, hpID)
+			logger.Info("akaratest: belt by id", "total", len(ids), "hp(602)", hpHave)
+			// Learn the mana potion's true id with ONE blue purchase.
+			manaID, ok := buyCell(manaCell, "mana-probe")
+			if !ok {
+				logger.Error("akaratest: mana probe did not purchase — stopping")
+			} else {
+				if manaID != 0 && manaID != hpID {
+					logger.Info("akaratest: MANA POTION ID LEARNED", "id", manaID)
+					mem.PutJSON("mod_item_ids", memory.ScopeForever,
+						memory.Provenance{Source: "measured", Evidence: "vendor purchase deltas 2026-07-19"},
+						map[string]int{"hp_potion": hpID, "mana_potion": manaID, "tp_tome": 533, "id_tome": 534})
+				}
+				// Fill the rest of the doctrine: 1 row mana (have 1 now), rest HP.
+				for i := hpHave; i < wantHP; i++ {
+					if _, ok := buyCell(hpCell, "hp"); !ok {
+						logger.Warn("akaratest: hp buy failed — stopping")
+						break
+					}
+				}
+			}
+			final := beltIDs()
+			logger.Info("akaratest: restock RESULT", "beltTotal", len(final),
+				"hp", countID(final, hpID), "mana", countID(final, manaID), "gold", goldOf())
+		}
+		hid.PressKey(hid.GetASCIICode("esc"))
+		time.Sleep(300 * time.Millisecond)
+		logger.Info("akaratest: done — esc out")
+		close(stop)
+		return
+	}
+
 	if *charsiTest {
 		led := verbs.NewLedger(64)
 		led.Sink = func(o verbs.Outcome) {
@@ -476,13 +937,13 @@ func main() {
 			if _, err := fmt.Sscanf(*repairXY, "%d,%d", &rx, &ry); err == nil {
 				durDump("before")
 				g0 := 0
-				if v, ok := gr.GetData().PlayerUnit.Stats.FindStat(stat.Gold, 0); ok {
+				if v, ok := gr.GetData().PlayerUnit.BaseStats.FindStat(stat.Gold, 0); ok {
 					g0 = v.Value
 				}
 				uiClick(rx, ry)
 				time.Sleep(600 * time.Millisecond)
 				g1 := g0
-				if v, ok := gr.GetData().PlayerUnit.Stats.FindStat(stat.Gold, 0); ok {
+				if v, ok := gr.GetData().PlayerUnit.BaseStats.FindStat(stat.Gold, 0); ok {
 					g1 = v.Value
 				}
 				logger.Info("charsitest: repair click", "xy", *repairXY,
