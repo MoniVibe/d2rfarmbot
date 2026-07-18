@@ -5304,7 +5304,11 @@ mainLoop:
 					time.Sleep(600 * time.Millisecond)
 				}
 			case 4: // WALK-FALLBACK inbound: the goto machinery does the walking on this
-				// tick (this phase does NOT consume it) — only watch for arrival.
+				// tick (this phase does NOT consume it) — only watch for arrival. PIN the
+				// destination every tick: goto failure paths reset curGoto to 0 and the
+				// autoprogress block then re-asserts the farm route — which is exactly how
+				// the first walk-to-town died two minutes in (targetArea flipped 1 -> 4).
+				curGoto = 1
 				if d.PlayerUnit.Area.IsTown() {
 					logger.Info("towntrip: reached town ON FOOT", "tookS", int(time.Since(tpTripStart).Seconds()))
 					curGoto = 0
@@ -5317,6 +5321,7 @@ mainLoop:
 					tpPhase, tpWalkBack = 0, 0
 				}
 			case 5: // WALK-FALLBACK outbound: same deal, feet belong to the goto machinery.
+				curGoto = tpWalkBack // pinned against goto-failure resets, same as phase 4
 				if int(d.PlayerUnit.Area) == tpWalkBack {
 					logger.Info("towntrip: ROUND TRIP COMPLETE (on foot)",
 						"totalS", int(time.Since(tpTripStart).Seconds()))
@@ -5533,7 +5538,7 @@ mainLoop:
 		// Route position persists across runs so a restart doesn't re-clear the Den. Never
 		// fights the death recovery's retarget: it only asserts when curGoto is idle or already
 		// the progression target.
-		if *autoProgress && *gotoArea == 0 {
+		if *autoProgress && *gotoArea == 0 && tpPhase == 0 {
 			if anyEnemyWithin(d, me, *radius) {
 				lastEnemySeen = time.Now()
 			}
@@ -6270,6 +6275,23 @@ mainLoop:
 								went = &d.Entrances[i]
 								break
 							}
+						}
+						// NO ENTRANCE UNIT (the Den's stairs listed zero live entrances while
+						// he churned 14-19 tiles away for whole runs): steer STRAIGHT at the
+						// mapped point with force-move — the nav plan can't be trusted here,
+						// the atlas around stairs was refusal-poisoned, and walk-through
+						// transitions fire on contact with the tile, not on a plan.
+						if went == nil && chebyshev(me, exit) <= 30 {
+							if time.Since(gotoBorderSeekLog) > 3*time.Second {
+								logger.Info("goto: no entrance unit near mapped exit — steering at the MAP point",
+									"exit", fmt.Sprintf("(%d,%d)", exit.X, exit.Y),
+									"entrances", len(d.Entrances), "dist", chebyshev(me, exit))
+								gotoBorderSeekLog = time.Now()
+							}
+							sx, sy := screenPointToward(me, exit.X-me.X, exit.Y-me.Y)
+							walkToHold(sx, sy, 260)
+							time.Sleep(80 * time.Millisecond)
+							continue
 						}
 						if went != nil {
 							ed := chebyshev(me, went.Position)
