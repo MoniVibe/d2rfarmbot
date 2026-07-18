@@ -178,6 +178,7 @@ func main() {
 	autoStat := flag.String("autostat", "", "'strX,strY,dexX,dexY,vitX,vitY': auto-spend banked stat points when calm — str/dex to ~10 buffer over gear reqs, rest vitality (char-panel + button coords from -statsnap)")
 	autoProgress := flag.Bool("autoprogress", false, "farm along the act-1 route (Den of Evil -> Cold Plains -> Burial Grounds -> Stony Field -> Dark Wood -> Black Marsh), advancing when an area runs dry; position persisted across runs")
 	routeFlag := flag.String("route", "", "override the built-in -autoprogress route: comma list of areaID[:levelCap] stops (e.g. '2:6,3:12,17:18,4:99'). A stop with a levelCap also advances once the character reaches that level, so a low-level area doesn't hold a grown character all night.")
+	throwKey := flag.String("throw", "", "Throw hotkey (e.g. f2 on the amazon): outside a favorable engage, mid-range targets (5-22) eat a thrown weapon instead of a slow walk-in. Closed-loop: fires only when the selection actually flips to Throw and the stack holds >40 quantity (at 0 the stack vanishes). Empty disables.")
 	autoEquip := flag.Bool("autoequip", true, "equip usable backpack items into EMPTY armor/jewelry slots (torso/head/gloves/boots/belt/rings/amulet — never weapons) when calm. Closed loop: verified by the equipped list, cursor-stuck recovery puts the item back and disables the pass for the run.")
 	equipSlots := flag.String("equipslots", "tors:1565,225;head:1565,110;glov:1345,338;feet:1723,338;belt:1540,349;neck:1619,155;rrin:1432,357;lrin:1621,357", "paperdoll click pixels per gear body-slot code, 'tors:x,y;head:x,y;...' (calibrated from a live inventory screenshot 2026-07-18, Mamazon paperdoll, raw physical px). Empty disables -autoequip.")
 	summonKey := flag.String("summon", "", "summon hotkey (e.g. f2 = RaiseSkeleton): when pets are below -maxpets and a monster corpse is near, select the summon and cast it at the corpse; the next bite's -rabies press restores the attack skill")
@@ -4558,6 +4559,7 @@ func main() {
 	var postureHeldAt time.Time // posture hysteresis dwell anchor
 	autoStatAt := time.Time{}
 	trapEscapeAt := time.Time{}
+	lastThrowAt := time.Time{}
 	autoEquipAt := time.Time{}
 	autoEquipDisabled := false
 	var gearTabs *gear.Tables
@@ -7559,9 +7561,19 @@ mainLoop:
 				// Bound melee hotkey (e.g. Jab on the amazon) — same right-click path. Mana-gated:
 				// a dry pool would turn the skill click into a whiffed grunt, so fall through to
 				// the plain left-click attack below until the pool recovers.
+				// CLOSED LOOP ON THE SELECTION: with no javelin in hand the F1 press fails
+				// SILENTLY and the right skill stays whatever it was — observed as "punches the
+				// air", and once the leftover selection was the TP TOME (a blind right-click
+				// would have cast a portal at a zombie). Only click when a damage skill actually
+				// took; anything else gets the hover-confirmed plain attack.
 				hid.PressKey(hid.GetASCIICode(*melee))
-				time.Sleep(50 * time.Millisecond)
-				hid.Click(game.RightButton, sx, sy)
+				time.Sleep(60 * time.Millisecond)
+				switch gr.GetData().PlayerUnit.RightSkill {
+				case skill.Jab, skill.PowerStrike, skill.Throw:
+					hid.Click(game.RightButton, sx, sy)
+				default:
+					meleeSwing(target.UnitID, target.Position)
+				}
 			default:
 				// No mana, no melee key: LEFT-click normal attack (fresh chars have Attack as the
 				// left skill), hover-confirmed so it registers as an ATTACK, not a walk.
@@ -7614,6 +7626,40 @@ mainLoop:
 				targetID = 0
 				continue
 			}
+			// THROW (the user's law: "deliberate and decisive... use regular melee or throw"):
+			// a 350-javelin stack IS a ranged weapon — a mid-range target eats a javelin
+			// instead of watching the amazon trudge toward it. Closed loop twice over: the
+			// selection must actually flip to Throw (weaponless or empty stack leaves it red
+			// and unselected), and the quantity floor keeps enough javelins to stab with —
+			// at zero the whole stack VANISHES and she is back to fists.
+			// Only outside ENGAGE: a favorable fight closes to Jab range (free); the throw
+			// pays for the situations where she used to sway at a distance doing nothing.
+			// ~350 javelins at 700ms cadence would otherwise drain inside an hour.
+			if *throwKey != "" && posture != "engage" && dist <= 22 && time.Since(lastThrowAt) > 700*time.Millisecond {
+				canThrow := false
+				for _, eq := range d.Inventory.ByLocation(item.LocationEquipped) {
+					if eq.Location.BodyLocation != item.LocLeftArm && eq.Location.BodyLocation != item.LocRightArm {
+						continue
+					}
+					if q, okq := eq.Stats.FindStat(stat.Quantity, 0); okq && q.Value > 40 {
+						canThrow = true
+						break
+					}
+				}
+				if canThrow {
+					moveStop()
+					hid.PressKey(hid.GetASCIICode(*throwKey))
+					time.Sleep(60 * time.Millisecond)
+					if gr.GetData().PlayerUnit.RightSkill == skill.Throw {
+						hid.Click(game.RightButton, sx, sy)
+						logger.Info("throw", "dist", dist, "targetUnit", int(target.UnitID))
+						lastThrowAt = time.Now()
+						stuckCount = 0
+						time.Sleep(250 * time.Millisecond)
+						continue
+					}
+				}
+			}
 			// CLOSE-RANGE FINAL APPROACH: within short reach walk STRAIGHT with distance-scaled
 			// pulses (a long hold overshoots past the monster — the original back-and-forth).
 			if dist <= 30 {
@@ -7630,13 +7676,19 @@ mainLoop:
 				continue
 			}
 			if posture == "kite" {
-				// Kiting: do NOT close on a pack that outweighs the army. Step back when crowded,
-				// otherwise hold and let the bite fire at whatever drifts into range.
+				// Kiting: do NOT close on a pack that outweighs the army. Step back when crowded.
+				// Beyond that: only a RANGED profile gets to hold ground (its bite fires from
+				// here). A melee/javelin char "holding at range" is doing nothing at all — the
+				// user watched her sway back and forth; decisive means close to throwing or
+				// stabbing range and let the throw/bite blocks do their work.
 				if packN > 0 && chebyshev(me, packCentroid) < *attackRange-5 {
 					retreat := data.Position{X: me.X + (me.X-packCentroid.X)/2, Y: me.Y + (me.Y-packCentroid.Y)/2}
 					navWalk(me, retreat)
-				} else {
+				} else if prof.ranged {
 					time.Sleep(150 * time.Millisecond)
+				} else {
+					navWalk(me, target.Position)
+					time.Sleep(40 * time.Millisecond)
 				}
 				continue
 			}

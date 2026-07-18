@@ -26,7 +26,7 @@ for i in $(seq 1 36); do
   timeout 960 ./farmbot.exe -seconds 900 -move e -runwalk r -nav -livegrid -chicken 30 \
     -radius 90 -diff normal -dpiscale 1.25 \
     -werewolf "" -rabies "" -spirit "" -wolves "" -creeper "" \
-    -summon "" -golem "" -melee f1 -meleebelow 10 -attackrange 4 \
+    -summon "" -golem "" -melee f1 -throw f2 -meleebelow 10 -attackrange 4 \
     -loot -objects -autoprogress -route "2:6,3:12,17:18,4:99" \
     -tp f3 -idkey f4 -cubekey "" -tripitems 22 \
     -autostat "347,305,347,428,347,552" \
@@ -34,7 +34,7 @@ for i in $(seq 1 36); do
     > logs/overnight_$i.log 2>&1
   echo "[$i] exit=$? end $(date +%H:%M:%S)"
   ./farmbot.exe -charprobe 2>&1 | grep -oE 'level=[0-9]+ xp=[0-9]+ area=[0-9]+' | head -1
-  echo "[$i] bites=$(grep -cE 'msg=bite' logs/overnight_$i.log) deaths=$(grep -cE 'DEAD' logs/overnight_$i.log) recovered=$(grep -cE 'corpse: RECOVERED' logs/overnight_$i.log) loot=$(grep -cE 'loot: picked' logs/overnight_$i.log) drinks=$(grep -cE 'msg=drink' logs/overnight_$i.log) skillups=$(grep -cE 'autoskill: result' logs/overnight_$i.log) statups=$(grep -cE 'autostat: spent' logs/overnight_$i.log) fences=$(grep -cE 'fence: trap mouth' logs/overnight_$i.log) traps=$(grep -cE 'TRAP AREA' logs/overnight_$i.log) trips=$(grep -cE 'towntrip: AUTO|towntrip: cast' logs/overnight_$i.log) sold=$(grep -cE 'vendor: SOLD' logs/overnight_$i.log)"
+  echo "[$i] bites=$(grep -cE 'msg=bite' logs/overnight_$i.log) throws=$(grep -cE 'msg=throw' logs/overnight_$i.log) deaths=$(grep -cE 'DEAD' logs/overnight_$i.log) recovered=$(grep -cE 'corpse: RECOVERED' logs/overnight_$i.log) loot=$(grep -cE 'loot: picked' logs/overnight_$i.log) drinks=$(grep -cE 'msg=drink' logs/overnight_$i.log) skillups=$(grep -cE 'autoskill: result' logs/overnight_$i.log) statups=$(grep -cE 'autostat: spent' logs/overnight_$i.log) fences=$(grep -cE 'fence: trap mouth' logs/overnight_$i.log) traps=$(grep -cE 'TRAP AREA' logs/overnight_$i.log) trips=$(grep -cE 'towntrip: AUTO|towntrip: cast' logs/overnight_$i.log) sold=$(grep -cE 'vendor: SOLD' logs/overnight_$i.log)"
   sleep 5
 done
 echo "overnight soak finished $(date +%H:%M:%S)"
