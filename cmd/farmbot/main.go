@@ -178,8 +178,8 @@ func main() {
 	autoStat := flag.String("autostat", "", "'strX,strY,dexX,dexY,vitX,vitY': auto-spend banked stat points when calm — str/dex to ~10 buffer over gear reqs, rest vitality (char-panel + button coords from -statsnap)")
 	autoProgress := flag.Bool("autoprogress", false, "farm along the act-1 route (Den of Evil -> Cold Plains -> Burial Grounds -> Stony Field -> Dark Wood -> Black Marsh), advancing when an area runs dry; position persisted across runs")
 	routeFlag := flag.String("route", "", "override the built-in -autoprogress route: comma list of areaID[:levelCap] stops (e.g. '2:6,3:12,17:18,4:99'). A stop with a levelCap also advances once the character reaches that level, so a low-level area doesn't hold a grown character all night.")
-	autoEquip := flag.Bool("autoequip", false, "equip usable backpack items into EMPTY armor/jewelry slots (torso/head/gloves/boots/belt/rings/amulet — never weapons) when calm. Closed loop: verified by the equipped list, cursor-stuck recovery puts the item back and disables the pass for the run.")
-	equipSlots := flag.String("equipslots", "", "paperdoll click pixels per gear body-slot code, 'tors:x,y;head:x,y;...' (calibrate from an inventory screenshot). Empty disables -autoequip.")
+	autoEquip := flag.Bool("autoequip", true, "equip usable backpack items into EMPTY armor/jewelry slots (torso/head/gloves/boots/belt/rings/amulet — never weapons) when calm. Closed loop: verified by the equipped list, cursor-stuck recovery puts the item back and disables the pass for the run.")
+	equipSlots := flag.String("equipslots", "tors:1565,225;head:1565,110;glov:1345,338;feet:1723,338;belt:1540,349;neck:1619,155;rrin:1432,357;lrin:1621,357", "paperdoll click pixels per gear body-slot code, 'tors:x,y;head:x,y;...' (calibrated from a live inventory screenshot 2026-07-18, Mamazon paperdoll, raw physical px). Empty disables -autoequip.")
 	summonKey := flag.String("summon", "", "summon hotkey (e.g. f2 = RaiseSkeleton): when pets are below -maxpets and a monster corpse is near, select the summon and cast it at the corpse; the next bite's -rabies press restores the attack skill")
 	maxPets := flag.Int("maxpets", 3, "stop summoning at this many living pets")
 	spirit := flag.String("spirit", "f3", "spirit/aura buff hotkey")
@@ -4562,6 +4562,63 @@ func main() {
 	autoEquipDisabled := false
 	var gearTabs *gear.Tables
 	gearTabsTried := false
+	ensureGearTabs := func() *gear.Tables {
+		if !gearTabsTried {
+			gearTabsTried = true
+			if t, err := gear.LoadTables(gear.DefaultExcelDir); err == nil {
+				gearTabs = t
+			} else {
+				logger.Warn("gear: mod tables failed to load", "err", err)
+			}
+		}
+		return gearTabs
+	}
+	// wearableEmptySlot: would this item go straight onto the body right now? Armor/jewelry
+	// slots only (weapon judgment stays human), requirements from the MOD's tables, slot must
+	// be bare. Shared by the loot filter (gear hunger) and the auto-equip pass.
+	gearSlotBody := map[string]item.LocationType{
+		"tors": item.LocTorso, "head": item.LocHead, "glov": item.LocGloves,
+		"feet": item.LocFeet, "belt": item.LocBelt, "neck": item.LocNeck, "rrin": item.LocRightRing,
+	}
+	wearableEmptySlot := func(d game.Data, it data.Item) bool {
+		t := ensureGearTabs()
+		if t == nil {
+			return false
+		}
+		code := it.Desc().Code
+		slot := t.BodySlot(code)
+		body, ok := gearSlotBody[slot]
+		if !ok {
+			return false
+		}
+		statVal := func(id stat.ID) int {
+			if s, ok2 := d.PlayerUnit.Stats.FindStat(id, 0); ok2 {
+				return s.Value
+			}
+			if s, ok2 := d.PlayerUnit.BaseStats.FindStat(id, 0); ok2 {
+				return s.Value
+			}
+			return 0
+		}
+		if def, has := t.Items[code]; has {
+			if def.ReqStr > statVal(stat.Strength) || def.ReqDex > statVal(stat.Dexterity) ||
+				def.LevelReq > statVal(stat.Level) {
+				return false
+			}
+		}
+		bare := func(loc item.LocationType) bool {
+			for _, e := range d.Inventory.ByLocation(item.LocationEquipped) {
+				if e.Location.BodyLocation == loc {
+					return false
+				}
+			}
+			return true
+		}
+		if body == item.LocRightRing {
+			return bare(item.LocRightRing) || bare(item.LocLeftRing)
+		}
+		return bare(body)
+	}
 	var corpseTargetPos data.Position
 	// meleeSwing: a left-click attack that actually CONNECTS. A blind interactClick at the
 	// monster's computed feet position reads as "walk here" whenever the sprite isn't exactly
@@ -5180,6 +5237,13 @@ func main() {
 		if strings.Contains(n, "herb") {
 			// The mod's HP consumable — grab while the belt has room.
 			return len(d.Inventory.Belt.Items) < 4*d.Inventory.Belt.Rows()
+		}
+		// GEAR HUNGER: plain armor that would fill a BARE body slot is loot. The rare-only
+		// filter kept a naked level-2 amazon stepping over Quilted Armor all night — for her,
+		// any armor at all is the biggest upgrade on the ground.
+		if (it.Quality == item.QualityNormal || it.Quality == item.QualityMagic) &&
+			wearableEmptySlot(d, it) {
+			return true
 		}
 		return false
 	}
@@ -6157,15 +6221,7 @@ mainLoop:
 		if *autoEquip && *equipSlots != "" && !autoEquipDisabled && tpPhase == 0 &&
 			!anyEnemyWithin(d, me, *dangerRange) && time.Since(autoEquipAt) > 45*time.Second {
 			autoEquipAt = time.Now()
-			if !gearTabsTried {
-				gearTabsTried = true
-				if t, err := gear.LoadTables(gear.DefaultExcelDir); err == nil {
-					gearTabs = t
-				} else {
-					logger.Warn("autoequip: mod tables failed to load — disabled", "err", err)
-				}
-			}
-			if gearTabs != nil {
+			if ensureGearTabs() != nil {
 				slotPix := map[string][2]int{}
 				for _, tok := range strings.Split(*equipSlots, ";") {
 					var sx, sy int
@@ -6173,19 +6229,6 @@ mainLoop:
 					if n, _ := fmt.Sscanf(strings.TrimSpace(tok), "%4s:%d,%d", &nm, &sx, &sy); n == 3 {
 						slotPix[nm] = [2]int{sx, sy}
 					}
-				}
-				slotBody := map[string]item.LocationType{
-					"tors": item.LocTorso, "head": item.LocHead, "glov": item.LocGloves,
-					"feet": item.LocFeet, "belt": item.LocBelt, "neck": item.LocNeck, "rrin": item.LocRightRing,
-				}
-				curStat := func(dd game.Data, id stat.ID) int {
-					if s, ok := dd.PlayerUnit.Stats.FindStat(id, 0); ok {
-						return s.Value
-					}
-					if s, ok := dd.PlayerUnit.BaseStats.FindStat(id, 0); ok {
-						return s.Value
-					}
-					return 0
 				}
 				equippedAt := func(dd game.Data, loc item.LocationType) bool {
 					for _, e := range dd.Inventory.ByLocation(item.LocationEquipped) {
@@ -6209,29 +6252,16 @@ mainLoop:
 					if !it.Identified { // unidentified magic+ can't be worn
 						continue
 					}
-					code := it.Desc().Code
-					slot := gearTabs.BodySlot(code)
-					body, wearable := slotBody[slot]
-					if !wearable {
-						continue // weapons/shields ("rarm"/"larm") and non-gear fall out here
+					if !wearableEmptySlot(d, it) {
+						continue // weapons, non-gear, unmet reqs, occupied slots all fall out here
 					}
+					slot := gearTabs.BodySlot(it.Desc().Code)
+					body := gearSlotBody[slot]
 					if slot == "rrin" && equippedAt(d, item.LocRightRing) {
-						if equippedAt(d, item.LocLeftRing) {
-							continue
-						}
 						slot, body = "lrin", item.LocLeftRing
 					}
 					if _, havePix := slotPix[slot]; !havePix {
 						continue
-					}
-					if equippedAt(d, body) {
-						continue // occupied-slot upgrades are a scoring problem for another night
-					}
-					if def, ok := gearTabs.Items[code]; ok {
-						if def.ReqStr > curStat(d, stat.Strength) || def.ReqDex > curStat(d, stat.Dexterity) ||
-							def.LevelReq > curStat(d, stat.Level) {
-							continue
-						}
 					}
 					plan = &equipPlan{it: it, slot: slot, body: body}
 					break
