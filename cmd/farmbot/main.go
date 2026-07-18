@@ -4345,6 +4345,7 @@ func main() {
 	tpParkInTown := false // 'town' control command: stop at phase 3, skip the return
 	tpErrandsDone := false // one errand pass per trip
 	var lastAutoTrip time.Time
+	tpWalkBack := 0 // walk-fallback: area to hike back to when the mod refused the portal
 	stepHold := false          // 'hold' control command: freeze all behaviors for step-mode calibration
 	var runStepCommand func(string)
 	var runStepBatch func(string, int)
@@ -5239,8 +5240,14 @@ mainLoop:
 					castSelf(*tp)
 					tpPhaseAt, tpRecast = time.Now(), true
 				} else if time.Since(tpPhaseAt) > 10*time.Second {
-					logger.Warn("towntrip: portal entry failed — aborting")
-					tpPhase = 0
+					// "I can't." — the mod REFUSES town portals in some areas (screenshot-
+					// verified in the Den: red tome icon + the refusal chat line; vanilla
+					// allows it there). Not a casting failure — an area rule. Fall back to
+					// FEET: the goto machinery hikes to town, errands run, then hike back.
+					logger.Warn("towntrip: no portal appeared (area TP-restricted?) — WALKING to town")
+					tpWalkBack = tpOrigArea
+					curGoto = 1 // Rogue Encampment; the hop router charts the exits
+					tpPhaseAt, tpPhase = time.Now(), 4
 				}
 			case 3: // in town: run the errands, then return through our portal.
 				if tpOrigArea == 0 && tpErrandsDone {
@@ -5262,6 +5269,13 @@ mainLoop:
 						tpVendorWanted = false
 						vendorErrand()
 					}
+				}
+				if tpWalkBack != 0 {
+					// Walked trip: there is no portal to return through — hike back out.
+					logger.Info("towntrip: errands done — walking back out", "area", tpWalkBack)
+					curGoto = tpWalkBack
+					tpPhaseAt, tpPhase = time.Now(), 5
+					continue
 				}
 				if int(d.PlayerUnit.Area) == tpOrigArea {
 					logger.Info("towntrip: ROUND TRIP COMPLETE",
@@ -5289,8 +5303,36 @@ mainLoop:
 					}
 					time.Sleep(600 * time.Millisecond)
 				}
+			case 4: // WALK-FALLBACK inbound: the goto machinery does the walking on this
+				// tick (this phase does NOT consume it) — only watch for arrival.
+				if d.PlayerUnit.Area.IsTown() {
+					logger.Info("towntrip: reached town ON FOOT", "tookS", int(time.Since(tpTripStart).Seconds()))
+					curGoto = 0
+					tpPhaseAt, tpPhase = time.Now(), 3
+					continue
+				}
+				if time.Since(tpTripStart) > 5*time.Minute {
+					logger.Warn("towntrip: walk to town timed out — abandoning trip")
+					curGoto = *gotoArea
+					tpPhase, tpWalkBack = 0, 0
+				}
+			case 5: // WALK-FALLBACK outbound: same deal, feet belong to the goto machinery.
+				if int(d.PlayerUnit.Area) == tpWalkBack {
+					logger.Info("towntrip: ROUND TRIP COMPLETE (on foot)",
+						"totalS", int(time.Since(tpTripStart).Seconds()))
+					curGoto = *gotoArea
+					tpPhase, tpWalkBack = 0, 0
+					continue
+				}
+				if time.Since(tpTripStart) > 12*time.Minute {
+					logger.Warn("towntrip: walk back timed out — releasing to autoprogress")
+					curGoto = *gotoArea
+					tpPhase, tpWalkBack = 0, 0
+				}
 			}
-			continue
+			if tpPhase != 4 && tpPhase != 5 {
+				continue
+			}
 		}
 
 		// TOWN GUARD. Nothing stopped the farm loop from hunting and exploring in town: it would
