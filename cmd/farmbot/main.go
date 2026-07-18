@@ -6399,7 +6399,20 @@ mainLoop:
 		if d.Corpse.Found && !d.Corpse.StateNotInteractable() {
 			corpseTargetPos = d.Corpse.Position
 		}
-		if corpseTargetPos.X != 0 && !oppFight && time.Since(corpseGiveUp) > 10*time.Minute {
+		// WEAPON GATE (deaths 1-4 all at the pile camp): a bare-handed run at a corpse guarded
+		// by a 12x camp is a scheduled death — the weapon needed to win it is ON the corpse.
+		// Break the circle: no recovery attempts while weaponless (unless the corpse is in
+		// grab range) — fist-farm stragglers, loot any stick via gear hunger, THEN collect.
+		recoveryArmed := false
+		for _, eqw := range d.Inventory.ByLocation(item.LocationEquipped) {
+			if eqw.Location.BodyLocation == item.LocLeftArm || eqw.Location.BodyLocation == item.LocRightArm {
+				recoveryArmed = true
+				break
+			}
+		}
+		if corpseTargetPos.X != 0 && !oppFight &&
+			(recoveryArmed || chebyshev(me, corpseTargetPos) <= 15) &&
+			time.Since(corpseGiveUp) > 10*time.Minute {
 			if corpseRecoverStart.IsZero() {
 				corpseRecoverStart = time.Now()
 				logger.Info("corpse: recovery started", "pos", fmt.Sprintf("(%d,%d)", corpseTargetPos.X, corpseTargetPos.Y))
