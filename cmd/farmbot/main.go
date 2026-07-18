@@ -6755,11 +6755,13 @@ mainLoop:
 						beelineLastPos = me
 						bx, by := walkCarrot(gr, me, tgt.X, tgt.Y)
 						if beelineFlip > 0 {
-							// Cycle 8 directions (0, ±52°, ±103°, ±155°) — an unbounded counter
-							// degenerated to random aims (observed sweep=95 at the south corner).
+							// Cycle 14 directions at 26° steps. The 52° version straddled the fence
+							// corner's ~26°-wide escape cone every pass (run 8: 164 holds pinned at
+							// (5962,5005); the hand-piloted escape angle -52° fell exactly between
+							// the sweep's -27° base and -79° first try). Finer teeth catch every slot.
 							ang := math.Atan2(float64(by-cy), float64(bx-cx))
-							cyc := beelineFlip % 8
-							step := 0.9 * float64((cyc+1)/2)
+							cyc := beelineFlip % 14
+							step := 0.45 * float64((cyc+1)/2)
 							if cyc%2 == 0 {
 								step = -step
 							}
