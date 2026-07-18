@@ -6236,11 +6236,18 @@ mainLoop:
 					// (the old `continue` here silently discarded one travel tick every 5s).
 					gotoLastPos, gotoProgressAt = me, time.Now()
 				} else { // jitter, not travel
-					if fightThrough(d, me) {
+					if exitSeekExit.X != 0 && chebyshev(me, exitSeekExit) <= 20 {
+						// ENTRANCE RITUAL ZONE: jitter here is INTENTIONAL — the contact
+						// phase pushes a wall on purpose and the hover-spiral needs a still
+						// character. The burst/wedge reflexes were sabotaging both all
+						// morning (bounces reset the ritual's phase timer every cycle —
+						// "old code overriding us", as the user diagnosed). Stand down.
+						gotoLastPos, gotoProgressAt = me, time.Now()
+					} else if fightThrough(d, me) {
 						logger.Info("goto: blocked — fighting through")
 						gotoLastPos, gotoProgressAt = me, time.Now()
 						continue
-					}
+					} else {
 					// PET JAM: with a 6-pet army in a cave corridor the wall is usually OUR OWN
 					// skeletons (screenshot-verified: boxed into a rock pocket in the Den, 40
 					// false wedges stamped at one spot). Minions yield to their owner when he
@@ -6302,6 +6309,7 @@ mainLoop:
 					gotoLastPos = gr.GetData().PlayerUnit.Position
 					gotoProgressAt = time.Now()
 					continue
+					}
 				}
 			}
 			// MULTI-HOP: the room graph only has DIRECT borders, so a non-adjacent target (e.g.
@@ -6486,7 +6494,8 @@ mainLoop:
 							// lacked this hover contract — and monster bites prove HoverData
 							// reads fine on 3.2. Phases: 5s of contact push (walk-throughs
 							// transition free), then a hover-spiral burst, repeat.
-							if chebyshev(me, steerTgt) > 12 {
+							if chebyshev(me, steerTgt) > 20 {
+								// generous: a bounce must not zero the ritual timer
 								mapPointContactAt = time.Time{}
 								exitClickTry = 0
 							} else if mapPointContactAt.IsZero() {
