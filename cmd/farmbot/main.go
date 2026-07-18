@@ -230,6 +230,7 @@ func main() {
 	tp := flag.String("tp", "", "Tome of Town Portal hotkey; empty disables emergency TP on chicken")
 	idKey := flag.String("idkey", "f4", "Book of Identify hotkey (bind the ID tome's skill in-game like F1-F3). Identify = select the skill, WORLD right-click raises the ID cursor, LEFT-click each item — panel right-clicks are deaf on this build, world right-clicks are not.")
 	cubeKey := flag.String("cubekey", "h", "Horadric Cube UI keybinding (Options>Controls — D2R's direct open-cube key). Sidesteps the deaf panel right-click that opening the cube would otherwise need. Empty disables cube stashing.")
+	clickMove := flag.Bool("clickmove", true, "far travel via the game's OWN pathfinder (ground clicks at the carrot) instead of continuous force-move steering — the fish cure. Force-move stays for close-in work and fallbacks.")
 	tripItems := flag.Int("tripitems", 26, "auto town trip (TP + identify + sell + restock + return) when the inventory holds this many items; 0 = only on demand via `echo tp`")
 	loot := flag.Bool("loot", false, "enable ground-item looting between fights")
 	lootradius := flag.Int("lootradius", 30, "only pick up ground items within this many units")
@@ -4630,6 +4631,13 @@ func main() {
 	var wedges []data.Position
 	var gotoAim data.Position // the travel aim this tick (candidate approach or mapped exit)
 	mover := NewMover(gr, nil, nil, walkToHold, screenPointToward, openBurst)
+	if *clickMove {
+		// THE FISH CURE: far travel rides the game's own pathfinder via ground clicks
+		// (retested 2026-07-18 after the DPI fix: exact arrivals, zero thrash — the old
+		// 1/4-arrivals refutation was measured before the aim was fixed). Force-move
+		// remains for the last tiles, combat micro-steps, and every fallback path.
+		mover.SetClickMove(interactClick)
+	}
 	navWalk := func(me, dest data.Position) {
 		mover.live, mover.full = navi, mapNavi
 		// Obstacles for every mode: recorded refusals (the game said no) + static colliding

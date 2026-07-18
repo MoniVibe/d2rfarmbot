@@ -51,6 +51,32 @@ type Mover struct {
 	walkToHold func(sx, sy, holdMs int)
 	toScreen   func(me data.Position, dx, dy int) (int, int)
 	openBurst  func(me data.Position)
+
+	// CLICK GAIT (2026-07-18): the game's OWN pathfinder, via a plain ground click.
+	// The 1/4-arrivals refutation that exiled click-to-move predates the DPI aim fix —
+	// retested on 3.2: two for two, exact arrivals, zero thrash. When the carrot is far,
+	// clicking it lets D2R walk (smooth, truth-aware collision, pets yield); force-move
+	// stays for the last tiles and for callers that need continuous steering.
+	clickMove    func(sx, sy int)
+	lastClickAt  time.Time
+	lastClickTgt data.Position
+}
+
+// SetClickMove installs the click actuator; nil disables the click gait.
+func (m *Mover) SetClickMove(f func(sx, sy int)) { m.clickMove = f }
+
+// clickStep fires the click gait at tgt if it qualifies (far carrot, rate-limited,
+// re-clicks early when the carrot moved). Reports whether the tick is handled.
+func (m *Mover) clickStep(me, tgt data.Position) bool {
+	if m.clickMove == nil || chebyshev(me, tgt) < 10 {
+		return false
+	}
+	if time.Since(m.lastClickAt) > 1600*time.Millisecond || chebyshev(tgt, m.lastClickTgt) > 8 {
+		sx, sy := m.toScreen(me, tgt.X-me.X, tgt.Y-me.Y)
+		m.clickMove(sx, sy)
+		m.lastClickAt, m.lastClickTgt = time.Now(), tgt
+	}
+	return true
 }
 
 func NewMover(gr *game.MemoryReader, live, full *Navigator,
@@ -193,6 +219,9 @@ func (m *Mover) Step(me data.Position, dest data.Position) MoveStatus {
 	// Direct line? Skip planning entirely — the measured 0.98-efficiency straight walk.
 	// (Unless the line crosses a recorded refusal — the grid lies there.)
 	if losClear(grid, me, dest) && !m.lineHitsWedge(me, dest) {
+		if m.clickStep(me, dest) {
+			return MoveMoving
+		}
 		sx, sy := m.toScreen(me, dest.X-me.X, dest.Y-me.Y)
 		m.walkToHold(sx, sy, 300)
 		return MoveMoving
@@ -249,6 +278,9 @@ func (m *Mover) Step(me data.Position, dest data.Position) MoveStatus {
 				break
 			}
 		}
+	}
+	if m.clickStep(me, tgt) {
+		return MoveMoving
 	}
 	hold := step.HoldMs
 	if hold <= 0 {
