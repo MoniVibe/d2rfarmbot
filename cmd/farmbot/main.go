@@ -7456,8 +7456,11 @@ mainLoop:
 				}
 				// Weaponless: the corpse-pile camp is a proven meat grinder (deaths 1-6, same
 				// 25-tile patch). Fists pick fights in CLEAN fields only; the pile waits for a
-				// weapon.
-				if !armedSel && corpseTargetPos.X != 0 && chebyshev(m.Position, corpseTargetPos) <= 25 {
+				// weapon. CONTACT EXEMPTION (run 18: 2 deaths, 0 bites — she refused targets
+				// while they chased and mauled her): anything already at arm's reach gets
+				// fought regardless; the shun stops the CHASE, never the defense.
+				if !armedSel && corpseTargetPos.X != 0 && chebyshev(m.Position, corpseTargetPos) <= 25 &&
+					chebyshev(me, m.Position) > 6 {
 					continue
 				}
 				dd := chebyshev(me, m.Position)
