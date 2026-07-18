@@ -103,9 +103,12 @@ func (s *Sentinel) Run(stop <-chan struct{}) {
 		wasDead = dead
 
 		// Belt drinking: key lane only; rotates columns so an emptied slot doesn't
-		// starve the reflex. Verification (did HP actually rise) is the Executive's
-		// business — the reflex just fires, bounded by cooldown.
-		if !dead && hp > 0 && hp <= s.cfg.DrinkAtHP && time.Since(lastDrink) > s.cfg.DrinkCD &&
+		// starve the reflex. Gated on the self-model KNOWING it has potions — pressing
+		// keys into an empty belt was the 25s-bleed death's accomplice; when HealPots==0
+		// the Executive's EscapeTP handles survival instead.
+		last := s.p.Last()
+		hasPots := last != nil && last.Me.HealPots > 0
+		if !dead && hp > 0 && hp <= s.cfg.DrinkAtHP && hasPots && time.Since(lastDrink) > s.cfg.DrinkCD &&
 			len(s.cfg.BeltKeys) > 0 && s.m.Engage.Engaged() {
 			key := s.cfg.BeltKeys[beltIdx%len(s.cfg.BeltKeys)]
 			beltIdx++

@@ -24,6 +24,7 @@ import (
 	"github.com/hectorgimenez/koolo/internal/azbot/percept"
 	"github.com/hectorgimenez/koolo/internal/azbot/sentinel"
 	"github.com/hectorgimenez/koolo/internal/azbot/verbs"
+	"github.com/hectorgimenez/koolo/internal/azbot/watchdog"
 	"github.com/hectorgimenez/koolo/internal/config"
 	"github.com/hectorgimenez/koolo/internal/game"
 	"github.com/lxn/win"
@@ -386,7 +387,7 @@ func main() {
 	acts := map[string]activity.Activity{}
 	road := []data.Position{{X: 6020, Y: 4952}, {X: 5992, Y: 4941}, {X: 5963, Y: 5001}, {X: 5962, Y: 4956}, {X: 5952, Y: 4944}}
 	mem.PutJSON("road.town.blood_moor_gate", memory.ScopeSeed, memory.Provenance{Source: "hand-piloted", Evidence: "2026-07-18, seed 466817790"}, road)
-	for _, a := range []activity.Activity{&activity.Flee{}, &activity.Respawn{}, activity.NewFight(), activity.NewLoot(), &activity.Travel{Road: road}, &activity.Explore{}} {
+	for _, a := range []activity.Activity{&activity.EscapeTP{}, &activity.Flee{}, &activity.Respawn{}, activity.NewFight(), activity.NewLoot(), &activity.Travel{Road: road}, &activity.Explore{}} {
 		acts[a.Name()] = a
 	}
 
@@ -394,6 +395,9 @@ func main() {
 	gridArea := -1
 	wasArmed := false
 	wasDead := false
+	wd := watchdog.New()
+	cooldowns := map[string]time.Time{}
+	wdCheckAt := time.Time{}
 	deadline := time.Now().Add(time.Duration(*seconds) * time.Second)
 	statusAt := time.Time{}
 	for time.Now().Before(deadline) {
@@ -422,10 +426,46 @@ func main() {
 		var demands []arbiter.Demand
 		for _, a := range acts {
 			if d := a.Demand(s); d != nil {
+				// The watchdog's prescriptions: a cooled activity may not win again
+				// until its moment passes — survival and recovery are never cooled.
+				if until, cooled := cooldowns[d.Who]; cooled && time.Now().Before(until) &&
+					d.Class > arbiter.ClassRecover {
+					continue
+				}
 				demands = append(demands, *d)
 			}
 		}
 		grant, changed := arb.Decide(demands)
+
+		// SELF-OBSERVATION (the owner's ask: "tell what the bot is up to, moments where
+		// it's stuck, looping, thrashing — and unstuck itself"): the bot consumes its own
+		// position and grant streams, names the pathology out loud, cools the culprit,
+		// and breaks the physical state with one fresh-bearing stride.
+		holderName := ""
+		if grant != nil {
+			holderName = grant.Demand.Who
+		}
+		wd.Observe(s.Me.Pos, holderName)
+		if time.Since(wdCheckAt) > 5*time.Second {
+			wdCheckAt = time.Now()
+			if v := wd.Check(holderName); v.Pathology != watchdog.Healthy {
+				logger.Warn("PATHOLOGY", "kind", v.Pathology.String(), "detail", v.Detail,
+					"cooling", v.CoolWho, "for", time.Until(v.CoolUntil).Round(time.Second))
+				mem.PutJSON("pathology.last", memory.ScopeGame,
+					memory.Provenance{Source: "measured", Evidence: v.Detail},
+					map[string]any{"kind": v.Pathology.String(), "at": time.Now().UnixMilli()})
+				if v.CoolWho != "" {
+					cooldowns[v.CoolWho] = v.CoolUntil
+				}
+				arb.Release()
+				// One decisive displacement in a fresh bearing breaks the physical loop.
+				esc := data.Position{X: s.Me.Pos.X - 20, Y: s.Me.Pos.Y - 20}
+				if v.Pathology == watchdog.Stuck {
+					verbs.Stride{To: esc, Hold: 2 * time.Second, MinGain: 3}.Do(m, gr, p, led, "watchdog")
+				}
+				continue
+			}
+		}
 		if grant == nil {
 			if time.Since(statusAt) > 5*time.Second {
 				logger.Info("status: idle", "pos", fmt.Sprintf("(%d,%d)", s.Me.Pos.X, s.Me.Pos.Y),

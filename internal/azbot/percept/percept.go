@@ -31,6 +31,10 @@ type PlayerState struct {
 	// Armed: something occupies a weapon-hand slot. Part of the self-model's
 	// "who am I right now" — a lost weapon flips this the same cycle.
 	Armed bool
+	// HealPots: healing/rejuv potions actually IN the belt. The Sentinel drinks
+	// nothing when this is 0 — the bot knows when it cannot heal (the empty-belt
+	// death: 25s bleed from 30% while the drink reflex pressed keys into the void).
+	HealPots int
 }
 
 // EnemyRef is a live hostile: identity, position, and Mode (the honest liveness read —
@@ -61,6 +65,7 @@ type Snapshot struct {
 	MenuOpen bool
 	Enemies  []EnemyRef
 	Items    []ItemRef
+	Portals  []data.Position // town portals (and red portals) in the world
 }
 
 // AttachReport is the M0 epistemics gate verdict: behavioral probes over the channels
@@ -153,8 +158,28 @@ func (p *Perceptor) Capture() *Snapshot {
 			break
 		}
 	}
+	for _, bp := range d.Inventory.Belt.Items {
+		n := string(bp.Name)
+		if bp.Position.Y == 0 && (contains(n, "Healing") || contains(n, "Rejuvenation")) {
+			s.Me.HealPots++
+		}
+	}
+	for i := range d.Objects {
+		if d.Objects[i].IsPortal() || d.Objects[i].IsRedPortal() {
+			s.Portals = append(s.Portals, d.Objects[i].Position)
+		}
+	}
 	p.last.Store(s)
 	return s
+}
+
+func contains(s, sub string) bool {
+	for i := 0; i+len(sub) <= len(s); i++ {
+		if s[i:i+len(sub)] == sub {
+			return true
+		}
+	}
+	return false
 }
 
 // SurvivalRead is the Sentinel's minimal bounded read: mode + pools + area, nothing else.

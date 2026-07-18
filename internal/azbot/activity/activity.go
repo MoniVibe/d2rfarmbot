@@ -109,6 +109,68 @@ func (f *Flee) Step(ctx *Ctx) Verdict {
 	return Running
 }
 
+// ---------------------------------------------------------------- EscapeTP (ClassSurvive)
+
+// EscapeTP is the real chicken: when HP is critical (or low with no potions and enemies
+// near), on-foot fleeing cannot escape a 12x surround — a town portal teleports out of
+// ALL danger at once. The empty-belt 25s-bleed death is exactly what this prevents.
+// It outranks Flee (higher urgency in the same Survive class).
+type EscapeTP struct {
+	castAt time.Time
+}
+
+func (e *EscapeTP) Name() string { return "escape_tp" }
+
+func (e *EscapeTP) Demand(s *percept.Snapshot) *arbiter.Demand {
+	if !s.Valid || s.Me.InTown || s.Me.HPPct <= 0 {
+		return nil
+	}
+	near := 0
+	for _, en := range s.Enemies {
+		if chebyshev(s.Me.Pos, en.Pos) <= 18 {
+			near++
+		}
+	}
+	critical := s.Me.HPPct < 22
+	trapped := s.Me.HPPct < 42 && s.Me.HealPots == 0 && near >= 3
+	if critical || trapped {
+		return &arbiter.Demand{Who: e.Name(), Class: arbiter.ClassSurvive,
+			Urgency: 2.0 - float64(s.Me.HPPct)/100, // always beats Flee (max ~1.0)
+			Commit:  arbiter.Commitment{MinHold: 3 * time.Second}}
+	}
+	return nil
+}
+
+func (e *EscapeTP) Step(ctx *Ctx) Verdict {
+	s := ctx.Snap
+	if !s.Valid {
+		return Running
+	}
+	if s.Me.InTown {
+		return Done // escaped — town heals; the danger is gone
+	}
+	// Portal already down? Walk onto it (transition to town on contact).
+	if len(s.Portals) > 0 {
+		best, bd := s.Portals[0], chebyshev(s.Me.Pos, s.Portals[0])
+		for _, pt := range s.Portals[1:] {
+			if d := chebyshev(s.Me.Pos, pt); d < bd {
+				best, bd = pt, d
+			}
+		}
+		verbs.Stride{To: best, Hold: 1500 * time.Millisecond, MinGain: 1}.Do(ctx.M, ctx.GR, ctx.P, ctx.Led, e.Name())
+		return Running
+	}
+	// No portal yet: cast one (need the proven TownTP key).
+	if ctx.Cap == nil || ctx.Cap.TownTP == nil {
+		return Abandoned // cannot TP — nothing to do but let Flee try
+	}
+	if time.Since(e.castAt) > 2500*time.Millisecond {
+		verbs.CastSelf{Key: ctx.Cap.TownTP.Key}.Do(ctx.M, ctx.GR, ctx.P, ctx.Led, e.Name())
+		e.castAt = time.Now()
+	}
+	return Running
+}
+
 // ---------------------------------------------------------------- Fight (ClassFight)
 
 type Fight struct {
@@ -124,7 +186,13 @@ func NewFight() *Fight { return &Fight{blacklist: map[data.UnitID]time.Time{}} }
 func (f *Fight) Name() string { return "fight" }
 
 func (f *Fight) Demand(s *percept.Snapshot) *arbiter.Demand {
-	if !s.Valid || s.Me.InTown || s.Me.HPPct < 40 {
+	// Stop committing to a fight while wounded — hand the tick to Flee/EscapeTP early,
+	// not at 5% (the bleed-out). With no potions the bar is higher: retreat sooner.
+	floor := 35
+	if s.Me.HealPots == 0 {
+		floor = 50
+	}
+	if !s.Valid || s.Me.InTown || s.Me.HPPct < floor {
 		return nil
 	}
 	best := 46
@@ -176,6 +244,41 @@ func (f *Fight) Step(ctx *Ctx) Verdict {
 	}
 
 	d := chebyshev(s.Me.Pos, f.targetPos)
+	crowd := 0
+	for _, e := range s.Enemies {
+		if chebyshev(s.Me.Pos, e.Pos) <= 12 {
+			crowd++
+		}
+	}
+	canThrow := ctx.Cap != nil && ctx.Cap.Throw != nil
+
+	// HIT-AND-RUN (the amazon's real playstyle; the fists-at-melee death was the opposite):
+	// with a throw weapon and a crowd, KEEP DISTANCE and throw. Only wade into melee when
+	// it's a lone straggler or throwing isn't available.
+	if canThrow && crowd >= 2 {
+		if d < 9 { // too close — back off one stride from the nearest, then throw
+			nx, ny := s.Me.Pos.X, s.Me.Pos.Y
+			near, nd := s.Me.Pos, 1<<30
+			for _, e := range s.Enemies {
+				if dd := chebyshev(s.Me.Pos, e.Pos); dd < nd {
+					near, nd = e.Pos, dd
+				}
+			}
+			away := data.Position{X: nx + (nx - near.X), Y: ny + (ny - near.Y)}
+			verbs.Stride{To: away, Hold: 900 * time.Millisecond, MinGain: 2}.Do(ctx.M, ctx.GR, ctx.P, ctx.Led, f.Name())
+			return Running
+		}
+		if d > 22 { // out of throw range — close a little
+			verbs.Stride{To: f.targetPos, Hold: 900 * time.Millisecond}.Do(ctx.M, ctx.GR, ctx.P, ctx.Led, f.Name())
+			return Running
+		}
+		o := verbs.HoverStrike{Target: f.target, TargetPos: f.targetPos, SelectKey: ctx.Cap.Throw.Key}.
+			Do(ctx.M, ctx.GR, ctx.P, ctx.Led, f.Name())
+		f.assess(o)
+		return Running
+	}
+
+	// Melee path: close, then strike (throw at a lone target if available, else fists).
 	if d > 4 {
 		if f.j == nil || chebyshev(f.j.Goal, f.targetPos) > 6 {
 			f.j = journey.New(ctx.GR, ctx.Grid, f.targetPos, f.Name())
@@ -188,22 +291,27 @@ func (f *Fight) Step(ctx *Ctx) Verdict {
 		return Running
 	}
 	var key byte
-	if ctx.Cap != nil && ctx.Cap.Melee != nil {
+	if canThrow {
+		key = ctx.Cap.Throw.Key
+	} else if ctx.Cap != nil && ctx.Cap.Melee != nil {
 		key = ctx.Cap.Melee.Key
 	}
 	o := verbs.HoverStrike{Target: f.target, TargetPos: f.targetPos, SelectKey: key}.
 		Do(ctx.M, ctx.GR, ctx.P, ctx.Led, f.Name())
-	switch o.Result {
-	case verbs.ResDone:
-		f.noEvid = 0
-	default:
-		f.noEvid++
-		if f.noEvid >= 4 {
-			f.blacklist[f.target] = time.Now().Add(30 * time.Second)
-			f.target, f.j, f.noEvid = 0, nil, 0
-		}
-	}
+	f.assess(o)
 	return Running
+}
+
+func (f *Fight) assess(o verbs.Outcome) {
+	if o.Result == verbs.ResDone {
+		f.noEvid = 0
+		return
+	}
+	f.noEvid++
+	if f.noEvid >= 4 {
+		f.blacklist[f.target] = time.Now().Add(30 * time.Second)
+		f.target, f.j, f.noEvid = 0, nil, 0
+	}
 }
 
 // ---------------------------------------------------------------- Loot (ClassLoot)
