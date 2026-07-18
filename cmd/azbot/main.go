@@ -6,6 +6,8 @@ package main
 import (
 	"flag"
 	"fmt"
+	"image"
+	"image/png"
 	"log/slog"
 	"os"
 	"os/signal"
@@ -15,6 +17,9 @@ import (
 	"unsafe"
 
 	"github.com/hectorgimenez/d2go/pkg/data"
+	"github.com/hectorgimenez/d2go/pkg/data/item"
+	"github.com/hectorgimenez/d2go/pkg/data/npc"
+	"github.com/hectorgimenez/d2go/pkg/data/stat"
 	"github.com/hectorgimenez/koolo/internal/azbot/activity"
 	"github.com/hectorgimenez/koolo/internal/azbot/arbiter"
 	"github.com/hectorgimenez/koolo/internal/azbot/combat"
@@ -116,6 +121,8 @@ func main() {
 	jTest := flag.String("jtest", "", "M3 soak: journey to world x,y on the live grid via the Journey authority, print the verdict, exit")
 	fightTest := flag.Bool("fighttest", false, "M4 soak: calibrate capability, cross to Blood Moor, hover-strike nearest enemies with evidence, exit")
 	portalTest := flag.Bool("portaltest", false, "manual harness: find the nearest portal in the snapshot, approach if far, click through with the EnterPortal verb, report every state change, exit")
+	charsiTest := flag.Bool("charsitest", false, "manual harness: walk to Charsi, open TRADE (menu byte + Down/Enter), screenshot the shop for repair-button calibration; with -repairxy also click it and report the gold delta, exit")
+	repairXY := flag.String("repairxy", "", "client x,y of the repair button (measured from logs/charsi_shop.png)")
 	logger := slog.New(slog.NewTextHandler(os.Stdout, nil))
 
 	flag.Parse()
@@ -202,6 +209,293 @@ func main() {
 	logger.Info("sentinel live", "killswitch", *killKey, "drinkAt", *drinkAt)
 
 	// ---- M4 fight test: calibrate capability, cross to Blood Moor, strike with evidence ----
+	if *charsiTest {
+		led := verbs.NewLedger(64)
+		led.Sink = func(o verbs.Outcome) {
+			logger.Info("outcome", "verb", o.Verb, "result", o.Result.String(), "ev", o.Evidence)
+		}
+		s := p.Capture()
+		if !s.Valid || !s.Me.InTown {
+			logger.Error("charsitest: not in town — this drill starts in the Encampment", "valid", s.Valid)
+			close(stop)
+			return
+		}
+		// Scout the townsfolk (the unit list calls them monsters) and find Charsi.
+		var ch data.Monster
+		found := false
+		for _, mo := range gr.GetData().Monsters {
+			logger.Info("charsitest: townsfolk", "npc", int(mo.Name), "unit", int(mo.UnitID),
+				"pos", fmt.Sprintf("(%d,%d)", mo.Position.X, mo.Position.Y))
+			if mo.Name == npc.Charsi {
+				ch, found = mo, true
+			}
+		}
+		if !found {
+			// Out of load range: walk the proven town road toward the west-gate forge,
+			// scanning every leg until she loads in.
+			logger.Info("charsitest: Charsi not loaded — walking the road toward the forge")
+			road := []data.Position{{X: 6020, Y: 4952}, {X: 5992, Y: 4941}, {X: 5963, Y: 5001}, {X: 5962, Y: 4956}, {X: 5952, Y: 4944}}
+			for _, wp := range road {
+				for i := 0; i < 12 && !found; i++ {
+					d := gr.GetData()
+					for _, mo := range d.Monsters {
+						if mo.Name == npc.Charsi {
+							ch, found = mo, true
+						}
+					}
+					if found || chebyshev(d.PlayerUnit.Position, wp) <= 5 {
+						break
+					}
+					verbs.Stride{To: wp, MinGain: 1}.Do(m, gr, p, led, "charsitest/search")
+				}
+				if found {
+					break
+				}
+			}
+			if !found {
+				logger.Error("charsitest: walked the whole road and Charsi never loaded — dump townsfolk and rethink the anchor")
+				for _, mo := range gr.GetData().Monsters {
+					logger.Info("charsitest: townsfolk(final)", "npc", int(mo.Name), "pos", fmt.Sprintf("(%d,%d)", mo.Position.X, mo.Position.Y))
+				}
+				close(stop)
+				return
+			}
+			logger.Info("charsitest: Charsi loaded in", "unit", int(ch.UnitID), "pos", fmt.Sprintf("(%d,%d)", ch.Position.X, ch.Position.Y))
+		}
+		// Approach with honest strides; she wanders, so re-read her every leg. Arrival
+		// is a BAND (4..7): a full-hold stride at close range overshoots and oscillates
+		// (the rep-2 thrash: 20 strides bouncing across her), so near her the hold
+		// shrinks, and standing ON her is also wrong — sprites overlap and hover lies.
+		approach := func() {
+			for i := 0; i < 30; i++ {
+				d := gr.GetData()
+				for _, mo := range d.Monsters {
+					if mo.Name == npc.Charsi {
+						ch = mo
+					}
+				}
+				dist := chebyshev(d.PlayerUnit.Position, ch.Position)
+				if dist >= 4 && dist <= 7 {
+					break
+				}
+				if dist < 4 { // too close — back off a step so her sprite is clickable
+					me := d.PlayerUnit.Position
+					back := data.Position{X: me.X + (me.X-ch.Position.X)*3, Y: me.Y + (me.Y-ch.Position.Y)*3}
+					verbs.Stride{To: back, Hold: 400 * time.Millisecond}.Do(m, gr, p, led, "charsitest/backoff")
+					continue
+				}
+				hold := 1600 * time.Millisecond
+				if dist < 14 {
+					hold = 500 * time.Millisecond // short legs near her: land in the band, don't fly past it
+				}
+				verbs.Stride{To: ch.Position, Hold: hold, MinGain: 1}.Do(m, gr, p, led, "charsitest/approach")
+			}
+			m.MoveStop()
+			time.Sleep(600 * time.Millisecond) // let both of us settle out of walk animations
+		}
+		approach()
+
+		// uiClick: farmbot's PROVEN panel-click recipe (panels read the cursor via the
+		// patched exports at raw physical pixels; clicks register only while GetKeyState
+		// polls LBUTTON down). Local here until the M7 services port gives it a home.
+		uiClick := func(sx, sy int) {
+			m.MoveStop()
+			px := int(float64(gr.WindowLeftX)*(*dpiScale)) + sx
+			py := int(float64(gr.WindowTopY)*(*dpiScale)) + sy
+			_ = gi.OverridePhysicalCursorPos(px, py)
+			hid.MouseMoveClient(sx, sy)
+			time.Sleep(150 * time.Millisecond)
+			_ = gi.OverrideGetKeyState(0x01)
+			_ = gi.OverrideGetAsyncKeyState(0x01)
+			hid.LeftClickNoMoveClient(sx, sy)
+			_ = gi.RestoreGetKeyState()
+			_ = gi.RestoreGetAsyncKeyState()
+			time.Sleep(120 * time.Millisecond)
+			_ = gi.RestorePhysicalCursorPos()
+			_ = gi.RestoreGetCursorInfo()
+			_ = gi.RestoreGetCursorPosAddr()
+		}
+		// leftChange: the shop-open oracle — count changed pixels in the UPPER-left
+		// (the chat panel bottom-left must not count). >12000 = a big panel appeared.
+		leftChange := func(before, after image.Image) int {
+			b := after.Bounds()
+			n := 0
+			for y := 40; y < b.Dy()*55/100; y += 3 {
+				for x := 20; x < b.Dx()*45/100; x += 3 {
+					r1, g1, b1, _ := before.At(x, y).RGBA()
+					r2, g2, b2, _ := after.At(x, y).RGBA()
+					dr, dg, db := int(r1>>8)-int(r2>>8), int(g1>>8)-int(g2>>8), int(b1>>8)-int(b2>>8)
+					if dr < 0 {
+						dr = -dr
+					}
+					if dg < 0 {
+						dg = -dg
+					}
+					if db < 0 {
+						db = -db
+					}
+					if dr+dg+db > 60 {
+						n++
+					}
+				}
+			}
+			return n
+		}
+
+		shopOpen := false
+		for attempt := 0; attempt < 6 && !shopOpen; attempt++ {
+			if attempt > 0 {
+				// The Akara lesson: stale-vantage clicks keep missing — step off and re-approach fresh.
+				d0 := gr.GetData()
+				verbs.Stride{To: data.Position{X: d0.PlayerUnit.Position.X + 8, Y: d0.PlayerUnit.Position.Y + 8}, Hold: 700 * time.Millisecond}.Do(m, gr, p, led, "charsitest/reset")
+				approach()
+			}
+			d := gr.GetData()
+			me := d.PlayerUnit.Position
+			for _, mo := range d.Monsters {
+				if mo.Name == npc.Charsi {
+					ch = mo
+				}
+			}
+			bx := int(float32((ch.Position.X-me.X)-(ch.Position.Y-me.Y))*19.8) + gr.GameAreaSizeX/2
+			by := int(float32((ch.Position.X-me.X)+(ch.Position.Y-me.Y))*9.9) + gr.GameAreaSizeY/2
+			// Hover-confirm her unit — NO confirmation, NO click (the HoverStrike law
+			// applies to townsfolk too; rep-2's blind fallback clicks all missed).
+			px, py, confirmed := bx, by, false
+		npcSweep:
+			for dy := -8; dy >= -64; dy -= 8 {
+				for _, dx := range []int{0, -8, 8, -16, 16, -24, 24} {
+					cx, cy := bx+dx, by+dy
+					if cx < 20 || cy < 20 || cx > gr.GameAreaSizeX-20 || cy > gr.GameAreaSizeY-20 {
+						continue
+					}
+					m.AimPhysical(cx, cy)
+					time.Sleep(40 * time.Millisecond)
+					hd := gr.GetData().HoverData
+					if !hd.IsHovered || hd.UnitID != ch.UnitID {
+						continue
+					}
+					// Double-confirm (the EnterPortal lesson: one read can reflect the
+					// previous probe's cursor).
+					m.AimPhysical(cx, cy)
+					time.Sleep(60 * time.Millisecond)
+					hd = gr.GetData().HoverData
+					if hd.IsHovered && hd.UnitID == ch.UnitID {
+						px, py, confirmed = cx, cy, true
+						break npcSweep
+					}
+				}
+			}
+			menuByte := func() bool { ub := gr.UIBytes(); return len(ub) > 0xF4 && ub[0xF4] == 1 }
+			base := gr.Screenshot()
+			if menuByte() {
+				// A previous click's menu arrived after its poll window (the click starts
+				// a WALK-to-talk — from the 4..7 band that walk outlives a short poll).
+				// The menu is open right now: use it, don't fight it.
+				logger.Info("charsitest: menu already open from a late click — proceeding", "n", attempt)
+			} else {
+				if !confirmed {
+					logger.Info("charsitest: no hover confirmation on Charsi — re-approaching, not clicking blind", "n", attempt)
+					continue
+				}
+				// BARE message click — koolo's proven NPC talk. The LBUTTON override that
+				// objects need reads as a HELD button if the game polls mid-window, and a
+				// held click on an NPC is ATTACK semantics (the shift-click the owner saw),
+				// not talk. NPCs accept the bare click; objects are the ones that don't.
+				hid.Click(game.LeftButton, px, py)
+				logger.Info("charsitest: body click (bare)", "n", attempt, "hoverConfirmed", confirmed)
+				menuOpen := false
+				for i := 0; i < 30; i++ { // 3s: the walk-to-talk from 7 tiles takes ~1.5s alone
+					if menuByte() {
+						menuOpen = true
+						break
+					}
+					time.Sleep(100 * time.Millisecond)
+				}
+				if !menuOpen {
+					logger.Info("charsitest: menu byte never flipped — retrying with a fresh approach")
+					continue
+				}
+			}
+			m.MoveStop()
+			// Menus poll GetKeyState: hold the override around each raw key. HOME first
+			// (koolo's recipe) — it normalizes the highlight to the top row, so Down+Enter
+			// lands TRADE regardless of where the highlight started.
+			menuKey := func(vk byte) {
+				_ = gi.OverrideGetKeyState(vk)
+				_ = gi.OverrideGetAsyncKeyState(vk)
+				hid.RawKeyDown(vk)
+				time.Sleep(220 * time.Millisecond)
+				hid.RawKeyUp(vk)
+				_ = gi.RestoreGetKeyState()
+				_ = gi.RestoreGetAsyncKeyState()
+				time.Sleep(200 * time.Millisecond)
+			}
+			menuKey(0x24) // HOME
+			menuKey(0x28) // DOWN
+			hid.PressKey(hid.GetASCIICode("enter"))
+			time.Sleep(1000 * time.Millisecond)
+			chg := leftChange(base, gr.Screenshot())
+			logger.Info("charsitest: after Down+Enter", "leftChange", chg)
+			if chg > 12000 {
+				shopOpen = true
+				break
+			}
+			hid.PressKey(hid.GetASCIICode("esc"))
+			time.Sleep(300 * time.Millisecond)
+		}
+		if !shopOpen {
+			logger.Error("charsitest: shop never opened")
+			close(stop)
+			return
+		}
+		if f, err := os.Create("logs/charsi_shop.png"); err == nil {
+			_ = png.Encode(f, gr.Screenshot())
+			f.Close()
+			logger.Info("charsitest: shop OPEN — calibration screenshot saved", "path", "logs/charsi_shop.png")
+		}
+		// Durability dump: the honest repair oracle (prior finding: durability reads
+		// work on this repack; the bow degrades). Max-durability gear = nothing to prove.
+		durDump := func(tag string) {
+			for _, it := range gr.GetData().Inventory.ByLocation(item.LocationEquipped) {
+				dur, hasDur := it.FindStat(stat.Durability, 0)
+				mx, hasMax := it.FindStat(stat.MaxDurability, 0)
+				if hasDur || hasMax {
+					logger.Info("charsitest: durability "+tag, "item", string(it.Name),
+						"dur", dur.Value, "max", mx.Value)
+				}
+			}
+		}
+		if *repairXY != "" {
+			var rx, ry int
+			if _, err := fmt.Sscanf(*repairXY, "%d,%d", &rx, &ry); err == nil {
+				durDump("before")
+				g0 := 0
+				if v, ok := gr.GetData().PlayerUnit.Stats.FindStat(stat.Gold, 0); ok {
+					g0 = v.Value
+				}
+				uiClick(rx, ry)
+				time.Sleep(600 * time.Millisecond)
+				g1 := g0
+				if v, ok := gr.GetData().PlayerUnit.Stats.FindStat(stat.Gold, 0); ok {
+					g1 = v.Value
+				}
+				logger.Info("charsitest: repair click", "xy", *repairXY,
+					"goldBefore", g0, "goldAfter", g1, "delta", g0-g1)
+				durDump("after")
+				if f, err := os.Create("logs/charsi_repair.png"); err == nil {
+					_ = png.Encode(f, gr.Screenshot())
+					f.Close()
+				}
+			}
+		}
+		hid.PressKey(hid.GetASCIICode("esc"))
+		time.Sleep(300 * time.Millisecond)
+		logger.Info("charsitest: done — esc out")
+		close(stop)
+		return
+	}
+
 	if *portalTest {
 		led := verbs.NewLedger(64)
 		led.Sink = func(o verbs.Outcome) {
