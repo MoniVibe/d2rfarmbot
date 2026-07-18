@@ -4987,7 +4987,8 @@ func main() {
 	var engagedID data.UnitID
 	var engagedLife int
 	var engagedAt time.Time
-	var lastCurseAt time.Time // curse cooldown — one Amp cast covers a pack for ~8s
+	var lastCurseAt time.Time   // curse cooldown — one Amp cast covers a pack for ~8s
+	var lastUnstickAt time.Time // unstick pacing — see the freeze-breaker block
 	var lastTownLog time.Time
 	// packAssess is the combat oracle's arithmetic as a single authority: weighted enemy mass
 	// within judgment range vs the army + our pools. Shared by the farm posture and the
@@ -6344,6 +6345,16 @@ mainLoop:
 			freezeThresh = 6000 * time.Millisecond
 		}
 		if stuckDur > freezeThresh {
+			// PACING: this block was written when walkTo BLOCKED for the hold — one heading
+			// per ~320ms. Continuous locomotion made walkTo non-blocking, so the compass spun
+			// at CPU speed (13,807 unstick lines in one Den pocket, ~3ms apart — the user
+			// watched him "run in circles by the stairs"). Fire at the design cadence; the
+			// held force-move keeps walking between firings.
+			if time.Since(lastUnstickAt) < 350*time.Millisecond {
+				time.Sleep(40 * time.Millisecond)
+				continue
+			}
+			lastUnstickAt = time.Now()
 			// Drop (once) and remember the destination we failed to reach, so exploration steers
 			// away from this walled-off region next time.
 			if exploreDest.X != 0 {
