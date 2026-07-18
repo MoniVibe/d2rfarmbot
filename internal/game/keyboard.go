@@ -31,6 +31,16 @@ func (hid *HID) HoldKey(key byte, hold time.Duration) {
 	win.PostMessage(hid.gr.HWND, win.WM_KEYUP, uintptr(key), hid.calculatelParam(key, false))
 }
 
+// RawKeyDown / RawKeyUp: the non-blocking halves of HoldKey, for callers that manage the
+// held state themselves (continuous force-move locomotion). Raw-byte cousins of the
+// KeyBinding-based KeyDown/KeyUp below.
+func (hid *HID) RawKeyDown(key byte) {
+	win.PostMessage(hid.gr.HWND, win.WM_KEYDOWN, uintptr(key), hid.calculatelParam(key, true))
+}
+func (hid *HID) RawKeyUp(key byte) {
+	win.PostMessage(hid.gr.HWND, win.WM_KEYUP, uintptr(key), hid.calculatelParam(key, false))
+}
+
 func (hid *HID) KeySequence(keysToPress ...byte) {
 	for _, key := range keysToPress {
 		hid.PressKey(key)

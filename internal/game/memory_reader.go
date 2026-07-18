@@ -57,7 +57,16 @@ func (gd *MemoryReader) MapSeed() uint {
 
 func (gd *MemoryReader) FetchMapData() error {
 	d := gd.GameReader.GetData()
+	prevSeed := gd.mapSeed
 	gd.mapSeed, _ = gd.getMapSeed(d.PlayerUnit.Address)
+	// SEED CACHE: the koolo-map.exe subprocess regenerates the ENTIRE world (~3-5s measured)
+	// and its output depends only on (seed, difficulty). The seed never changes within a game,
+	// but this used to re-spawn the subprocess on EVERY area crossing — 22 times in one soak
+	// run, freezing the character ~4s at each border. Refetch only when the seed actually
+	// changed (new game) or we have nothing cached (startup / prior failure).
+	if gd.mapSeed == prevSeed && gd.mapSeed != 0 && len(gd.cachedMapData) > 0 {
+		return nil // GetData() serves areas from cachedMapData — nothing stale to refresh
+	}
 	t := time.Now()
 	gd.logger.Debug("Fetching map data...", slog.Uint64("seed", uint64(gd.mapSeed)), slog.String("difficulty", string(config.Characters[gd.supervisorName].Game.Difficulty)))
 

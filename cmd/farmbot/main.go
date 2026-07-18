@@ -13,6 +13,7 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+	"sync"
 	"syscall"
 	"time"
 	"unsafe"
@@ -459,19 +460,6 @@ func main() {
 
 	cx, cy := gr.GameAreaSizeX/2, gr.GameAreaSizeY/2
 
-	// cast a self/summon skill: select it, then right-click near the player.
-	// Empty key = the char doesn't have this skill (e.g. a level-1 char) — skip entirely,
-	// otherwise the right-click below fires the CURRENT right skill at nothing every call site.
-	castSelf := func(key string) {
-		if key == "" {
-			return
-		}
-		hid.PressKey(hid.GetASCIICode(key))
-		time.Sleep(120 * time.Millisecond)
-		hid.Click(game.RightButton, cx, cy)
-		time.Sleep(300 * time.Millisecond)
-	}
-
 	// walkTo issues a Force Move to an on-screen point. D2R polls the move key as HELD each
 	// frame via GetKeyState, so we override its key-state for the whole step AND send the key
 	// message events, then restore. (Without moveKey we fall back to a left-click move.)
@@ -479,6 +467,48 @@ func main() {
 	if *moveKey != "" {
 		mk = hid.GetASCIICode(*moveKey)
 	}
+	// (moveStop machinery lives just below; declared before castSelf so every input wrapper
+	// can release the held move key first.)
+	var moveMu sync.Mutex
+	moveHeld := false
+	var moveTimer *time.Timer
+	moveStop := func() {
+		moveMu.Lock()
+		defer moveMu.Unlock()
+		if !moveHeld {
+			return
+		}
+		if moveTimer != nil {
+			moveTimer.Stop()
+			moveTimer = nil
+		}
+		hid.RawKeyUp(mk)
+		_ = gi.RestoreGetKeyState()
+		_ = gi.RestoreGetAsyncKeyState()
+		moveHeld = false
+	}
+
+	// cast a self/summon skill: select it, then right-click near the player.
+	// Empty key = the char doesn't have this skill (e.g. a level-1 char) — skip entirely,
+	// otherwise the right-click below fires the CURRENT right skill at nothing every call site.
+	castSelf := func(key string) {
+		if key == "" {
+			return
+		}
+		moveStop() // held force-move would turn the cast right-click into a walk
+		hid.PressKey(hid.GetASCIICode(key))
+		time.Sleep(120 * time.Millisecond)
+		hid.Click(game.RightButton, cx, cy)
+		time.Sleep(300 * time.Millisecond)
+	}
+	// CONTINUOUS LOCOMOTION: the force-move key is a STATE, not a pulse. The old walkToHold
+	// blocked the loop for the whole hold then RELEASED the key — so the character stood
+	// still during every read/plan/log between steps (~40% duty cycle, 0% during rebuilds:
+	// the user-reported walk/pause/walk rhythm). Now KEYDOWN persists across ticks; each
+	// walk call just re-aims (force-move follows the cursor while held) and pushes the
+	// release deadline out; a timer releases if the loop stops asking. Every non-walk input
+	// (click, cast, hover sweep, panel) calls moveStop() first — with the key held, ANY
+	// cursor aim would walk the character toward it.
 	walkToHold := func(sx, sy, holdMs int) {
 		// Aim via the GetPhysicalCursorPos patch ONLY (the real in-game cursor read on this
 		// build). MovePointer's extra WM_MOUSEMOVE/GetCursorPos would feed a competing cursor
@@ -490,16 +520,29 @@ func main() {
 			// to the same screen point — our process's SetCursorPos isn't affected by D2R's patch.
 			win.SetCursorPos(int32(gr.WindowLeftX+sx), int32(gr.WindowTopY+sy))
 		}
-		time.Sleep(20 * time.Millisecond)
-		if *moveKey != "" {
-			_ = gi.OverrideGetKeyState(mk)
-			_ = gi.OverrideGetAsyncKeyState(mk)
-			hid.HoldKey(mk, time.Duration(holdMs)*time.Millisecond)
-			_ = gi.RestoreGetKeyState()
-			_ = gi.RestoreGetAsyncKeyState()
-		} else {
+		if *moveKey == "" {
+			time.Sleep(20 * time.Millisecond)
 			hid.Click(game.LeftButton, sx, sy)
+			return
 		}
+		moveMu.Lock()
+		// Override pokes are atomic 1-byte compare writes — idempotent and cheap to repeat
+		// (they also self-heal if some other path Restored the stub since our keydown).
+		_ = gi.OverrideGetKeyState(mk)
+		_ = gi.OverrideGetAsyncKeyState(mk)
+		if !moveHeld {
+			hid.RawKeyDown(mk)
+			moveHeld = true
+		}
+		if moveTimer != nil {
+			moveTimer.Stop()
+		}
+		// Grace on top of the requested hold: the loop normally re-aims well before this
+		// fires; the timer is the dead-man's brake for when it stops asking (combat took
+		// the tick, run ended, panel opened elsewhere).
+		release := moveStop
+		moveTimer = time.AfterFunc(time.Duration(holdMs+150)*time.Millisecond, release)
+		moveMu.Unlock()
 	}
 	walkTo := func(sx, sy int) { walkToHold(sx, sy, 320) }
 
@@ -516,6 +559,7 @@ func main() {
 		if runwalkKey == 0 || time.Since(lastGaitToggle) < 250*time.Millisecond {
 			return
 		}
+		moveStop() // gait toggle is a keypress — release the held move first
 		m := gr.GetData().PlayerUnit.Mode
 		mismatch := (m == mode.Running && !wantRun) || (m == mode.Walking && wantRun)
 		if mismatch {
@@ -538,6 +582,7 @@ func main() {
 	// aim the physical cursor, override the left button to "held" for the click window, send
 	// the WM button messages, then restore. VK_LBUTTON = 0x01.
 	interactClick := func(sx, sy int) {
+		moveStop() // a held move key turns this aim+click into a walk
 		hid.AimPhysical(sx, sy)
 		time.Sleep(30 * time.Millisecond)
 		_ = gi.OverrideGetKeyState(0x01)
@@ -584,6 +629,7 @@ func main() {
 		_ = gi.RestoreGetCursorPosAddr()
 	}
 	uiClick := func(sx, sy int) {
+		moveStop() // panels + held force-move don't mix
 		aimPanel(sx, sy)
 		// Async hover (PostMessage). A SYNCHRONOUS SendMessage hover was tried here on the theory
 		// that rows need a processed hover — that theory was WRONG: rows ignored clicks because the
@@ -644,6 +690,7 @@ func main() {
 		return hd.IsHovered && hd.UnitID == unitID
 	}
 	hoverPickClick := func(world data.Position, unitID data.UnitID) bool {
+		moveStop() // the sweep aims the cursor — held move would walk toward every probe
 		for attempt := 0; attempt < 3; attempt++ {
 			me := gr.GetData().PlayerUnit.Position
 			bx, by := gameToScreen(gr, me.X, me.Y, world.X, world.Y)
@@ -2315,6 +2362,7 @@ func main() {
 			"str", statVal(d, stat.Strength), "dex", statVal(d, stat.Dexterity),
 			"vita", statVal(d, stat.Vitality), "ene", statVal(d, stat.Energy),
 			"gearReqStr", rs, "gearReqDex", rd)
+		moveStop()
 		hid.PressKey(hid.GetASCIICode("c"))
 		time.Sleep(800 * time.Millisecond)
 		if f, err := os.Create(shotPath("statsnap.png")); err == nil {
@@ -3837,6 +3885,7 @@ func main() {
 	var corpseGiveUp time.Time       // set when a recovery attempt timed out (retry cooldown)
 	var corpseLogAt time.Time
 	corpseSweepFails := 0
+	corpseSweepIdx := 0 // resumable-sweep cursor: which probe point the label hunt continues from
 	corpseGoneStreak := 0
 	autoSkillAt := time.Time{}
 	progressTarget := 0
@@ -3863,6 +3912,7 @@ func main() {
 	// there — the char shuffles in place instead of swinging (observed live). Sweep until the
 	// game itself reports the target hovered, then click THAT point; blind-click as last resort.
 	meleeSwing := func(targetID data.UnitID, world data.Position) bool {
+		moveStop() // attack aim must not double as a walk order
 		me := gr.GetData().PlayerUnit.Position
 		bx, by := gameToScreen(gr, me.X, me.Y, world.X, world.Y)
 		for _, dy := range []int{-12, 0, -24, -36, 8} {
@@ -4258,6 +4308,7 @@ mainLoop:
 			time.Sleep(2500 * time.Millisecond) // death animation / screen settle
 			respawnKey := ""
 			for _, k := range []string{"esc", "enter", "esc"} {
+				moveStop()
 				hid.PressKey(hid.GetASCIICode(k))
 				logger.Info("death: respawn input sent", "key", k)
 				for w := 0; w < 30; w++ {
@@ -4347,6 +4398,7 @@ mainLoop:
 				if inWerewolf() {
 					castSelf(*werewolf) // toggle out of werewolf form so the TP tome can be selected
 				}
+				moveStop()
 				hid.PressKey(hid.GetASCIICode(*tp))
 				time.Sleep(250 * time.Millisecond)
 				hid.Click(game.RightButton, cx, cy)
@@ -4446,6 +4498,7 @@ mainLoop:
 				}
 				if best < 1<<30 {
 					sx, sy := gameToScreen(gr, me.X, me.Y, corpsePos.X, corpsePos.Y)
+					moveStop()
 					hid.PressKey(hid.GetASCIICode(*summonKey))
 					time.Sleep(80 * time.Millisecond)
 					hid.Click(game.RightButton, sx, sy)
@@ -4464,6 +4517,7 @@ mainLoop:
 		// bite's -rabies press (if any) restores the attack skill.
 		if *golemKey != "" && time.Since(golemAt) > time.Duration(*golemEvery)*time.Second &&
 			d.PlayerUnit.MPPercent() >= *meleeBelow {
+			moveStop()
 			hid.PressKey(hid.GetASCIICode(*golemKey))
 			time.Sleep(80 * time.Millisecond)
 			hid.Click(game.RightButton, cx, cy+40)
@@ -4503,10 +4557,14 @@ mainLoop:
 							}
 						}
 					}
+					moveStop()
 					hid.PressKey(hid.GetASCIICode("c"))
 					time.Sleep(700 * time.Millisecond)
 					spent := 0
-					for i := 0; i < sp2.Value && i < 40; i++ {
+					// Cap the session: a big banked backlog used to hold the loop (and the
+					// character) hostage for 20s+ of panel clicking; 5 points per visit keeps
+					// each pause human-sized and the 20s cadence drains any backlog quickly.
+					for i := 0; i < sp2.Value && i < 5; i++ {
 						var bx, by int
 						switch {
 						case cur(stat.Strength) < reqStr+10:
@@ -4546,6 +4604,7 @@ mainLoop:
 				var tx, ty, kx, ky int
 				if _, err := fmt.Sscanf(*autoSkill, "%d,%d,%d,%d", &tx, &ty, &kx, &ky); err == nil {
 					logger.Info("autoskill: spending point", "banked", sp.Value)
+					moveStop()
 					hid.PressKey(hid.GetASCIICode("t"))
 					time.Sleep(800 * time.Millisecond)
 					uiClick(tx, ty)
@@ -4663,39 +4722,52 @@ mainLoop:
 				walkToHold(sx, sy, 150)
 			default:
 				corpseGoneStreak = 0
+				moveStop() // the probes below aim the cursor — held move would walk into the sweep
 				bx, by := gameToScreen(gr, me.X, me.Y, d.Corpse.Position.X, d.Corpse.Position.Y)
 				got := false
 				hoverSeen := ""
-				for dy := -60; dy <= 16 && !got; dy += 6 {
-					for _, dx := range []int{0, -8, 8, -16, 16, -26, 26} {
-						px, py := bx+dx, by+dy
-						hid.AimPhysical(px, py)
-						time.Sleep(55 * time.Millisecond)
-						d3 := gr.GetData()
-						if d3.HoverData.IsHovered && hoverSeen == "" {
-							hoverSeen = fmt.Sprintf("type=%d id=%d", d3.HoverData.UnitType, int(d3.HoverData.UnitID))
-						}
-						if !d3.Corpse.IsHovered {
-							continue
-						}
-						hid.AimPhysical(px, py)
-						time.Sleep(70 * time.Millisecond)
-						if !gr.GetData().Corpse.IsHovered {
-							continue
-						}
-						logger.Info("corpse: hovered — clicking", "at", fmt.Sprintf("(%d,%d)", px, py))
-						interactClick(px, py)
-						for w := 0; w < 20; w++ {
-							time.Sleep(150 * time.Millisecond)
-							if !gr.GetData().Corpse.Found {
-								got = true
-								break
-							}
-						}
-						break
+				// RESUMABLE SWEEP: the full 13x7 label hunt is ~5s of blocking sleeps — one whole
+				// tick with no survival checks at the exact spot we just died (measured). Probe at
+				// most 14 points per tick and carry the cursor index across ticks; survival, the
+				// control channel, and posture all run between slices.
+				probes := 0
+				sweepDone := false
+				for ; corpseSweepIdx < 13*7 && probes < 14; corpseSweepIdx++ {
+					dy := -60 + (corpseSweepIdx/7)*6
+					dx := []int{0, -8, 8, -16, 16, -26, 26}[corpseSweepIdx%7]
+					px, py := bx+dx, by+dy
+					hid.AimPhysical(px, py)
+					time.Sleep(55 * time.Millisecond)
+					probes++
+					d3 := gr.GetData()
+					if d3.HoverData.IsHovered && hoverSeen == "" {
+						hoverSeen = fmt.Sprintf("type=%d id=%d", d3.HoverData.UnitType, int(d3.HoverData.UnitID))
 					}
+					if !d3.Corpse.IsHovered {
+						continue
+					}
+					hid.AimPhysical(px, py)
+					time.Sleep(70 * time.Millisecond)
+					if !gr.GetData().Corpse.IsHovered {
+						continue
+					}
+					logger.Info("corpse: hovered — clicking", "at", fmt.Sprintf("(%d,%d)", px, py))
+					interactClick(px, py)
+					for w := 0; w < 8; w++ { // 1.2s pickup confirm; the block re-enters next tick anyway
+						time.Sleep(150 * time.Millisecond)
+						if !gr.GetData().Corpse.Found {
+							got = true
+							break
+						}
+					}
+					corpseSweepIdx = 0
+					break
 				}
-				if !got {
+				if corpseSweepIdx >= 13*7 {
+					corpseSweepIdx = 0
+					sweepDone = true
+				}
+				if !got && sweepDone {
 					corpseSweepFails++
 					logger.Info("corpse: sweep found no Corpse.IsHovered", "fails", corpseSweepFails,
 						"anyHover", hoverSeen)
@@ -4773,7 +4845,11 @@ mainLoop:
 			// frame-to-frame move, so a physical wedge with ±3-tile jitter never tripped it
 			// (measured: minutes at the Cold Plains gate, committedS pinned at 0, sh flat).
 			if time.Since(gotoProgressAt) > 5*time.Second {
-				if chebyshev(me, gotoLastPos) <= 4 { // jitter, not travel
+				if chebyshev(me, gotoLastPos) > 4 {
+					// Healthy window — reset the anchor and FALL THROUGH to travel this tick
+					// (the old `continue` here silently discarded one travel tick every 5s).
+					gotoLastPos, gotoProgressAt = me, time.Now()
+				} else { // jitter, not travel
 					if fightThrough(d, me) {
 						logger.Info("goto: blocked — fighting through")
 						gotoLastPos, gotoProgressAt = me, time.Now()
@@ -4805,10 +4881,10 @@ mainLoop:
 						gotoIdx, gotoTryAt = (gotoIdx+1)%len(gotoCross), time.Now()
 					}
 					navi.havePlan = false
+					gotoLastPos = gr.GetData().PlayerUnit.Position
+					gotoProgressAt = time.Now()
+					continue
 				}
-				gotoLastPos = gr.GetData().PlayerUnit.Position
-				gotoProgressAt = time.Now()
-				continue
 			}
 			// MULTI-HOP: the room graph only has DIRECT borders, so a non-adjacent target (e.g.
 			// town -> Cold Plains) yields 0 candidates forever. BFS the area graph from map data
@@ -4932,17 +5008,18 @@ mainLoop:
 							}
 							if time.Since(entranceContactStart) > 6*time.Second {
 								logger.Info("goto: entrance contact stalled — trying a click", "name", int(went.Name))
-								if !hoverPickClick(went.Position, went.ID) {
-									sx, sy := gameToScreen(gr, me.X, me.Y, went.Position.X, went.Position.Y)
-									interactClick(sx, sy)
-								}
+								// Straight to interactClick: entrances mostly never register hover, so the
+								// full hoverPickClick sweep blocked ~20s per attempt (measured) with zero
+								// survival checks — and fruitless sweeps landed on interactClick anyway.
+								sx, sy := gameToScreen(gr, me.X, me.Y, went.Position.X, went.Position.Y)
+								interactClick(sx, sy)
 								entranceContactStart = time.Now()
 							} else {
 								// On the tile: nudge straight through it and let the transition fire.
 								sx, sy := screenPointToward(me, went.Position.X-me.X, went.Position.Y-me.Y)
 								walkToHold(sx, sy, 160)
 							}
-							time.Sleep(300 * time.Millisecond)
+							time.Sleep(60 * time.Millisecond)
 							continue
 						}
 					}
@@ -5290,8 +5367,8 @@ mainLoop:
 							continue
 						}
 						// Hover-sweep to the item's label (game-confirmed) and click it.
+						// (No extra settle: hoverPickClick already polls the ground for the pickup.)
 						hoverPickClick(lootTarget.Position, lootTarget.UnitID)
-						time.Sleep(150 * time.Millisecond)
 						stillThere := false
 						for _, it := range gr.GetData().Inventory.ByLocation(item.LocationGround) {
 							if it.UnitID == lootTarget.UnitID {
