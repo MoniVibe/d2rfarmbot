@@ -3771,6 +3771,7 @@ func main() {
 	var exploreDest data.Position
 	var exploreSince time.Time
 	var gotoCross [][2]data.Position // (approach, cross) candidates for the current goto border
+	gotoFailedAt := map[int]time.Time{} // candidate index -> last time it stalled out
 	gotoIdx := 0
 	gotoTryAt := time.Now()
 	var gotoBorderSeekLog time.Time
@@ -4800,6 +4801,7 @@ mainLoop:
 					logger.Warn("goto: no net movement — open burst", "pos", fmt.Sprintf("(%d,%d)", me.X, me.Y))
 					openBurst(me)
 					if len(gotoCross) > 0 {
+						gotoFailedAt[gotoIdx] = time.Now()
 						gotoIdx, gotoTryAt = (gotoIdx+1)%len(gotoCross), time.Now()
 					}
 					navi.havePlan = false
@@ -4829,6 +4831,7 @@ mainLoop:
 						logger.Info("goto: live borders", "targetArea", curGoto, "hop", int(hopTarget), "candidates", len(gotoCross))
 					}
 					gotoIdx, gotoTryAt = 0, time.Now()
+					gotoFailedAt = map[int]time.Time{} // fresh candidate set, fresh slate
 				}
 			}
 			if len(gotoCross) == 0 {
@@ -5010,8 +5013,37 @@ mainLoop:
 				if gotoIdx >= len(gotoCross) {
 					gotoIdx = 0
 				}
+				// NEAREST-FIRST, not round-robin: rotation used to march us 38 tiles west while
+				// we stood 2 tiles from a different candidate's crossing (measured at Flavie's
+				// gate). Failed candidates sit out 60s; standing beside ANY crossing takes it now.
+				pickCand := func() int {
+					best, bd := -1, 1<<30
+					for i := range gotoCross {
+						if t, okf := gotoFailedAt[i]; okf && time.Since(t) < 60*time.Second {
+							continue
+						}
+						if dd := chebyshev(me, gotoCross[i][0]); dd < bd {
+							bd, best = dd, i
+						}
+					}
+					if best < 0 { // everything recently failed — take the nearest anyway
+						for i := range gotoCross {
+							if dd := chebyshev(me, gotoCross[i][0]); dd < bd {
+								bd, best = dd, i
+							}
+						}
+					}
+					return best
+				}
+				for i := range gotoCross {
+					if chebyshev(me, gotoCross[i][0]) <= 5 {
+						gotoIdx = i // beside a crossing — use it regardless of whose turn it was
+						break
+					}
+				}
 				if time.Since(gotoTryAt) > 25*time.Second { // hard safety: candidate stuck too long
-					gotoIdx, gotoTryAt = (gotoIdx+1)%len(gotoCross), time.Now()
+					gotoFailedAt[gotoIdx] = time.Now()
+					gotoIdx, gotoTryAt = pickCand(), time.Now()
 					navi.havePlan = false
 				}
 				ap, cr := gotoCross[gotoIdx][0], gotoCross[gotoIdx][1]
