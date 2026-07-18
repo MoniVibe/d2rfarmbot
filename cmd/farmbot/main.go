@@ -5404,8 +5404,21 @@ func main() {
 		// (level-1 run 1: 330 xp in 5.5 min, all flapping). So a young character reads as
 		// strength 14 flat — fight first, drink at 60%, chicken at 30%; the survival tick, not
 		// the posture oracle, is the coward of last resort.
-		if lvl < 12 {
+		// ...but only WITH A WEAPON IN HAND. A fisted amazon charged the pile camp on the
+		// floor's courage and died five times (1-2 damage per punch does not clear a 12x
+		// horde). Weaponless = coward: strength collapses to fists' honest worth, kite and
+		// straggler-picking take over until gear hunger arms her.
+		armedNow := false
+		for _, eqa := range d.Inventory.ByLocation(item.LocationEquipped) {
+			if eqa.Location.BodyLocation == item.LocLeftArm || eqa.Location.BodyLocation == item.LocRightArm {
+				armedNow = true
+				break
+			}
+		}
+		if lvl < 12 && armedNow {
 			strength = petsAlive*3 + 14
+		} else if !armedNow {
+			strength = petsAlive*3 + 1
 		}
 		if d.PlayerUnit.HPPercent() > 60 {
 			strength += 2
