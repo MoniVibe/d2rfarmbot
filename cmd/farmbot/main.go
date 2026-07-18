@@ -4681,6 +4681,9 @@ func main() {
 	corpseWalkMoveAt := time.Now()
 	roadHoldAt := time.Time{}
 	tpBeatAt := time.Time{}
+	areaXpArea := 0
+	areaXpStart := 0
+	areaXpAt := time.Time{}
 	var armlootID data.UnitID
 	armlootBest := 1 << 30
 	armlootAt := time.Now()
@@ -5971,6 +5974,24 @@ mainLoop:
 						routeIdx++
 						_ = os.WriteFile(routeStateFile, []byte(fmt.Sprintf("%d", routeIdx)), 0644)
 						logger.Info("autoprogress: outgrew the stop — advancing", "level", lvl.Value, "to", progressRoute[routeIdx])
+					}
+				}
+				// XP-STARVATION ADVANCE (run 6 of master18: +14 xp in fifteen minutes while
+				// the gate zone stayed technically full of monsters): an area yielding under
+				// 100 xp across 5 minutes is outgrown no matter what still spawns. The
+				// runs-dry timer never fires at 12x density; the XP ledger is the honest gauge.
+				if xpNow, okx := d.PlayerUnit.BaseStats.FindStat(stat.Experience, 0); okx {
+					if int(d.PlayerUnit.Area) != areaXpArea || areaXpAt.IsZero() {
+						areaXpArea, areaXpStart, areaXpAt = int(d.PlayerUnit.Area), xpNow.Value, time.Now()
+					} else if int(d.PlayerUnit.Area) == progressTarget && progressTarget != 0 &&
+						time.Since(areaXpAt) > 5*time.Minute && routeIdx < len(progressRoute)-1 {
+						if xpNow.Value-areaXpStart < 100 {
+							routeIdx++
+							_ = os.WriteFile(routeStateFile, []byte(fmt.Sprintf("%d", routeIdx)), 0644)
+							logger.Warn("autoprogress: XP-STARVED — advancing", "gained", xpNow.Value-areaXpStart,
+								"to", progressRoute[routeIdx])
+						}
+						areaXpStart, areaXpAt = xpNow.Value, time.Now()
 					}
 				}
 				want := progressRoute[routeIdx]
