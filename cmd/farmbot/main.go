@@ -178,6 +178,8 @@ func main() {
 	autoStat := flag.String("autostat", "", "'strX,strY,dexX,dexY,vitX,vitY': auto-spend banked stat points when calm — str/dex to ~10 buffer over gear reqs, rest vitality (char-panel + button coords from -statsnap)")
 	autoProgress := flag.Bool("autoprogress", false, "farm along the act-1 route (Den of Evil -> Cold Plains -> Burial Grounds -> Stony Field -> Dark Wood -> Black Marsh), advancing when an area runs dry; position persisted across runs")
 	routeFlag := flag.String("route", "", "override the built-in -autoprogress route: comma list of areaID[:levelCap] stops (e.g. '2:6,3:12,17:18,4:99'). A stop with a levelCap also advances once the character reaches that level, so a low-level area doesn't hold a grown character all night.")
+	autoEquip := flag.Bool("autoequip", false, "equip usable backpack items into EMPTY armor/jewelry slots (torso/head/gloves/boots/belt/rings/amulet — never weapons) when calm. Closed loop: verified by the equipped list, cursor-stuck recovery puts the item back and disables the pass for the run.")
+	equipSlots := flag.String("equipslots", "", "paperdoll click pixels per gear body-slot code, 'tors:x,y;head:x,y;...' (calibrate from an inventory screenshot). Empty disables -autoequip.")
 	summonKey := flag.String("summon", "", "summon hotkey (e.g. f2 = RaiseSkeleton): when pets are below -maxpets and a monster corpse is near, select the summon and cast it at the corpse; the next bite's -rabies press restores the attack skill")
 	maxPets := flag.Int("maxpets", 3, "stop summoning at this many living pets")
 	spirit := flag.String("spirit", "f3", "spirit/aura buff hotkey")
@@ -4556,6 +4558,10 @@ func main() {
 	var postureHeldAt time.Time // posture hysteresis dwell anchor
 	autoStatAt := time.Time{}
 	trapEscapeAt := time.Time{}
+	autoEquipAt := time.Time{}
+	autoEquipDisabled := false
+	var gearTabs *gear.Tables
+	gearTabsTried := false
 	var corpseTargetPos data.Position
 	// meleeSwing: a left-click attack that actually CONNECTS. A blind interactClick at the
 	// monster's computed feet position reads as "walk here" whenever the sprite isn't exactly
@@ -5258,7 +5264,25 @@ func main() {
 				petsAlive++
 			}
 		}
-		strength = petsAlive*3 + 2 // the char himself is worth a couple of zombies
+		// Personal power scales with LEVEL, not just the army: a petless melee char read as
+		// "worth a couple of zombies" forever, so a solo amazon regrouped at every 12x-density
+		// pack she was actually killing fine (run 1: threat 12-19 vs strength 4, posture
+		// flapping kite/regroup between swings). A level-1 char SHOULD kite a 19-pack; a
+		// level-10 one should wade in — level captures that without any class special-casing.
+		lvl := 0
+		if s, ok := d.PlayerUnit.BaseStats.FindStat(stat.Level, 0); ok {
+			lvl = s.Value
+		}
+		strength = petsAlive*3 + 2 + lvl
+		// BRAVERY FLOOR (the user's law: "it should kill; it will occasionally die... it will
+		// allow you to gain more levels"): below level 12 death carries no XP penalty in D2
+		// (none at all until 10), while a timid posture model measurably starves the XP flow
+		// (level-1 run 1: 330 xp in 5.5 min, all flapping). So a young character reads as
+		// strength 14 flat — fight first, drink at 60%, chicken at 30%; the survival tick, not
+		// the posture oracle, is the coward of last resort.
+		if lvl < 12 {
+			strength = petsAlive*3 + 14
+		}
 		if d.PlayerUnit.HPPercent() > 60 {
 			strength += 2
 		}
@@ -6123,6 +6147,129 @@ mainLoop:
 				continue
 			}
 			autoSkillAt = time.Now()
+		}
+
+		// AUTO-EQUIP: a naked character bleeding XP to armor lying in the backpack is a bot
+		// failure, not a build choice. EMPTY armor/jewelry slots only (weapons never — scoring
+		// a weapon swap is a judgment call; filling a bare torso is not), requirements checked
+		// against the MOD's own item tables, every move verified by the equipped list, and a
+		// stuck cursor puts the item back and turns the feature off for the run.
+		if *autoEquip && *equipSlots != "" && !autoEquipDisabled && tpPhase == 0 &&
+			!anyEnemyWithin(d, me, *dangerRange) && time.Since(autoEquipAt) > 45*time.Second {
+			autoEquipAt = time.Now()
+			if !gearTabsTried {
+				gearTabsTried = true
+				if t, err := gear.LoadTables(gear.DefaultExcelDir); err == nil {
+					gearTabs = t
+				} else {
+					logger.Warn("autoequip: mod tables failed to load — disabled", "err", err)
+				}
+			}
+			if gearTabs != nil {
+				slotPix := map[string][2]int{}
+				for _, tok := range strings.Split(*equipSlots, ";") {
+					var sx, sy int
+					var nm string
+					if n, _ := fmt.Sscanf(strings.TrimSpace(tok), "%4s:%d,%d", &nm, &sx, &sy); n == 3 {
+						slotPix[nm] = [2]int{sx, sy}
+					}
+				}
+				slotBody := map[string]item.LocationType{
+					"tors": item.LocTorso, "head": item.LocHead, "glov": item.LocGloves,
+					"feet": item.LocFeet, "belt": item.LocBelt, "neck": item.LocNeck, "rrin": item.LocRightRing,
+				}
+				curStat := func(dd game.Data, id stat.ID) int {
+					if s, ok := dd.PlayerUnit.Stats.FindStat(id, 0); ok {
+						return s.Value
+					}
+					if s, ok := dd.PlayerUnit.BaseStats.FindStat(id, 0); ok {
+						return s.Value
+					}
+					return 0
+				}
+				equippedAt := func(dd game.Data, loc item.LocationType) bool {
+					for _, e := range dd.Inventory.ByLocation(item.LocationEquipped) {
+						if e.Location.BodyLocation == loc {
+							return true
+						}
+					}
+					return false
+				}
+				type equipPlan struct {
+					it   data.Item
+					slot string
+					body item.LocationType
+				}
+				var plan *equipPlan
+				for _, it := range d.Inventory.ByLocation(item.LocationInventory) {
+					n := string(it.Name)
+					if n == "" || strings.Contains(n, "Tome") || strings.Contains(n, "INVALID") {
+						continue
+					}
+					if !it.Identified { // unidentified magic+ can't be worn
+						continue
+					}
+					code := it.Desc().Code
+					slot := gearTabs.BodySlot(code)
+					body, wearable := slotBody[slot]
+					if !wearable {
+						continue // weapons/shields ("rarm"/"larm") and non-gear fall out here
+					}
+					if slot == "rrin" && equippedAt(d, item.LocRightRing) {
+						if equippedAt(d, item.LocLeftRing) {
+							continue
+						}
+						slot, body = "lrin", item.LocLeftRing
+					}
+					if _, havePix := slotPix[slot]; !havePix {
+						continue
+					}
+					if equippedAt(d, body) {
+						continue // occupied-slot upgrades are a scoring problem for another night
+					}
+					if def, ok := gearTabs.Items[code]; ok {
+						if def.ReqStr > curStat(d, stat.Strength) || def.ReqDex > curStat(d, stat.Dexterity) ||
+							def.LevelReq > curStat(d, stat.Level) {
+							continue
+						}
+					}
+					plan = &equipPlan{it: it, slot: slot, body: body}
+					break
+				}
+				if plan != nil {
+					logger.Info("autoequip: filling empty slot", "item", string(plan.it.Name),
+						"slot", plan.slot, "from", fmt.Sprintf("(%d,%d)", plan.it.Position.X, plan.it.Position.Y))
+					moveStop()
+					hid.PressKey(hid.GetASCIICode("i"))
+					time.Sleep(700 * time.Millisecond)
+					ox, oy := invPixel(plan.it.Position.X, plan.it.Position.Y)
+					uiClick(ox, oy) // pick to cursor
+					time.Sleep(450 * time.Millisecond)
+					px := slotPix[plan.slot]
+					uiClick(px[0], px[1]) // drop onto the paperdoll slot
+					time.Sleep(550 * time.Millisecond)
+					d2 := gr.GetData()
+					worn := equippedAt(d2, plan.body)
+					onCursor := len(d2.Inventory.ByLocation(item.LocationCursor)) > 0
+					if onCursor {
+						// Put it back where it came from and stop trying this run — a cursor
+						// holding an item silently eats every later click (the axe lesson).
+						uiClick(ox, oy)
+						time.Sleep(450 * time.Millisecond)
+						if len(gr.GetData().Inventory.ByLocation(item.LocationCursor)) > 0 {
+							uiClick(ox, oy)
+							time.Sleep(450 * time.Millisecond)
+						}
+						autoEquipDisabled = true
+						logger.Warn("autoequip: cursor stuck — item returned, feature off for this run")
+					}
+					hid.PressKey(hid.GetASCIICode("i"))
+					time.Sleep(300 * time.Millisecond)
+					logger.Info("autoequip: result", "item", string(plan.it.Name), "slot", plan.slot,
+						"equipped", worn, "cursorStuck", onCursor)
+					continue
+				}
+			}
 		}
 
 		// OPPORTUNITY GATE: a favorable nearby pack claims the tick for the combat flow even
