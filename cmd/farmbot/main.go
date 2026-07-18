@@ -4280,6 +4280,7 @@ func main() {
 	lootBlacklist := map[data.UnitID]time.Time{}
 	lootAttempts := map[data.UnitID]int{}
 	objBlacklist := map[data.UnitID]time.Time{} // objects already used (so we don't re-open)
+	wpTouched := map[data.UnitID]bool{}         // waypoints activated (or attempted) this run
 
 	// curGoto is the LIVE travel target: normally the -goto flag, but death recovery retargets
 	// it at the death area so the corpse run rides the same border-crossing machinery.
@@ -5900,6 +5901,39 @@ mainLoop:
 					}
 				}
 				if !enemyNearby {
+					// WAYPOINT: activate on sight — the network is free fast-travel infrastructure
+					// and the bot used to walk right past unactivated pads (user-reported at Stony).
+					// WPs hover-click fine (unlike NPCs, -wpat proven); the panel that opens on
+					// activation is closed with ESC — safe here because a panel IS open (the trap
+					// is esc with nothing open), and only if the click was hover-confirmed.
+					wpBusy := false
+					for _, o := range d.Objects {
+						if !o.IsWaypoint() || wpTouched[o.ID] {
+							continue
+						}
+						if dd := chebyshev(me, o.Position); dd <= *objradius {
+							wpBusy = true
+							if dd > 5 {
+								navWalk(me, o.Position)
+								time.Sleep(40 * time.Millisecond)
+							} else {
+								wpTouched[o.ID] = true
+								if hoverPickClick(o.Position, o.ID) {
+									time.Sleep(900 * time.Millisecond)
+									moveStop()
+									hid.PressKey(hid.GetASCIICode("esc")) // close the WP panel
+									logger.Info("waypoint: ACTIVATED", "area", int(d.PlayerUnit.Area),
+										"pos", fmt.Sprintf("(%d,%d)", o.Position.X, o.Position.Y))
+								} else {
+									logger.Warn("waypoint: hover-click failed — skipping", "id", int(o.ID))
+								}
+							}
+							break
+						}
+					}
+					if wpBusy {
+						continue
+					}
 					var objTarget data.Object
 					bestDist, haveObj := 1<<30, false
 					for _, o := range d.Objects {
