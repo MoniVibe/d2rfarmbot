@@ -4316,6 +4316,7 @@ func main() {
 	var gotoGridRefresh time.Time
 	var gotoLastPos data.Position
 	var entranceContactStart time.Time
+	var mapPointContactAt time.Time // map-point steering: time standing AT an exit that won't fire
 	var exitParkStart time.Time
 	exitRingIdx := 0
 	// Exit-seek GOAL-progress watchdog: the 5s/2-tile freeze watchdog misses treadmills — the
@@ -4918,6 +4919,16 @@ func main() {
 				hid.LeftClickNoMoveClient(a, b)
 				_ = gi.RestoreGetKeyState2()
 				_ = gi.RestoreGetAsyncKeyState2()
+			}
+		case "objects":
+			dd := gr.GetData()
+			mee := dd.PlayerUnit.Position
+			for _, o := range dd.Objects {
+				if chebyshev(mee, o.Position) <= 40 {
+					stepResult.WriteString(fmt.Sprintf("obj name=%d id=%d sel=%v portal=%v pos=(%d,%d) dist=%d\n",
+						int(o.Name), int(o.ID), o.Selectable, o.IsPortal(),
+						o.Position.X, o.Position.Y, chebyshev(mee, o.Position)))
+				}
 			}
 		case "uibytes":
 			nm := strings.TrimSpace(arg)
@@ -6287,6 +6298,37 @@ mainLoop:
 									"exit", fmt.Sprintf("(%d,%d)", exit.X, exit.Y),
 									"entrances", len(d.Entrances), "dist", chebyshev(me, exit))
 								gotoBorderSeekLog = time.Now()
+							}
+							if chebyshev(me, exit) > 12 {
+								mapPointContactAt = time.Time{}
+							} else if mapPointContactAt.IsZero() {
+								mapPointContactAt = time.Now()
+							} else if time.Since(mapPointContactAt) > 8*time.Second {
+								// Standing AT the point and nothing transitions (run 28: dist=6
+								// held for 90s) — the stairs may be a click OBJECT, not a
+								// walk-through. Click anything selectable near the mapped exit.
+								clicked := false
+								for _, o := range d.Objects {
+									if o.Selectable && chebyshev(o.Position, exit) <= 20 {
+										sx, sy := gameToScreen(gr, me.X, me.Y, o.Position.X, o.Position.Y)
+										logger.Info("goto: clicking selectable object near exit",
+											"obj", int(o.Name), "objPos", fmt.Sprintf("(%d,%d)", o.Position.X, o.Position.Y))
+										moveStop()
+										interactClick(sx, sy)
+										time.Sleep(900 * time.Millisecond)
+										clicked = true
+										break
+									}
+								}
+								if !clicked {
+									// Last resort: click the mapped point itself.
+									sx, sy := gameToScreen(gr, me.X, me.Y, exit.X, exit.Y)
+									logger.Info("goto: no selectable object either — blind-clicking the map point")
+									moveStop()
+									interactClick(sx, sy)
+									time.Sleep(900 * time.Millisecond)
+								}
+								mapPointContactAt = time.Now()
 							}
 							sx, sy := screenPointToward(me, exit.X-me.X, exit.Y-me.Y)
 							walkToHold(sx, sy, 260)
