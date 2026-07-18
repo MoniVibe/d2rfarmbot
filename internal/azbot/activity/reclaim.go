@@ -19,6 +19,8 @@ type Reclaim struct {
 	j       *journey.Journey
 	clickAt time.Time
 	tries   int
+	rounds  int // failed hover-sweep rounds at the body
+	coolAt  time.Time
 }
 
 func NewReclaim() *Reclaim { return &Reclaim{} }
@@ -34,6 +36,9 @@ func (rc *Reclaim) Demand(s *percept.Snapshot) *arbiter.Demand {
 	// bidding on an unreachable corpse would deadlock her at the gate.
 	if s.Me.InTown && chebyshev(s.Me.Pos, s.Me.CorpsePos) > 150 {
 		return nil
+	}
+	if time.Now().Before(rc.coolAt) {
+		return nil // recent give-up: come back at it from a fresh angle in a moment
 	}
 	return &arbiter.Demand{Who: rc.Name(), Class: arbiter.ClassRecover,
 		Urgency: 0.9, // under Respawn's 1.0 — being alive precedes having gear
@@ -51,6 +56,13 @@ func (rc *Reclaim) Step(ctx *Ctx) Verdict {
 	}
 	me := s.Me.Pos
 	d := chebyshev(me, s.Me.CorpsePos)
+	if d < 1 {
+		// Standing ON the body: her own sprite owns the cursor — a corpse under her
+		// feet never hovers (measured: pinned 0x0 sweeping forever). Step off first.
+		verbs.Stride{To: data.Position{X: me.X + 3, Y: me.Y + 3}, Hold: 600 * time.Millisecond, MinGain: 1}.
+			Do(ctx.M, ctx.GR, ctx.P, ctx.Led, rc.Name())
+		return Running
+	}
 	if d > 4 {
 		if ctx.Grid != nil {
 			if rc.j == nil || chebyshev(rc.j.Goal, s.Me.CorpsePos) > 5 {
@@ -58,13 +70,11 @@ func (rc *Reclaim) Step(ctx *Ctx) Verdict {
 			}
 			st := rc.j.Step(ctx.M, ctx.P, ctx.Led)
 			if st.State == journey.NoPath || st.State == journey.Stalled {
-				verbs.Stride{To: s.Me.CorpsePos, Hold: 1200 * time.Millisecond, MinGain: 1}.
-					Do(ctx.M, ctx.GR, ctx.P, ctx.Led, rc.Name())
+				slideStride(ctx, s.Me.CorpsePos, 1200*time.Millisecond, 1, rc.Name())
 				rc.j = nil
 			}
 		} else {
-			verbs.Stride{To: s.Me.CorpsePos, Hold: 1200 * time.Millisecond, MinGain: 1}.
-				Do(ctx.M, ctx.GR, ctx.P, ctx.Led, rc.Name())
+			slideStride(ctx, s.Me.CorpsePos, 1200*time.Millisecond, 1, rc.Name())
 		}
 		return Running
 	}
@@ -94,10 +104,25 @@ func (rc *Reclaim) Step(ctx *Ctx) Verdict {
 	}
 	rc.tries++
 	if rc.tries >= 8 {
-		// The hover never confirmed from this angle — step off and re-approach.
-		verbs.Stride{To: data.Position{X: me.X + 6, Y: me.Y + 6}, Hold: 800 * time.Millisecond}.
-			Do(ctx.M, ctx.GR, ctx.P, ctx.Led, rc.Name())
 		rc.tries = 0
+		rc.rounds++
+		switch {
+		case rc.rounds == 2 || rc.rounds == 3:
+			// Hover refuses to confirm — corpses are BIG targets: click the projection
+			// blind. Worst case it's a walk click; best case the gear comes home.
+			ctx.M.BareClick(bx, by)
+			rc.clickAt = time.Now()
+		case rc.rounds >= 4:
+			// This angle is spent: give the grant back honestly, cool briefly, and
+			// come at it fresh — an eternal sweep at one spot is the ponder disease.
+			rc.rounds = 0
+			rc.coolAt = time.Now().Add(20 * time.Second)
+			return Abandoned
+		default:
+			// Round 1: step off and re-approach from a new angle.
+			verbs.Stride{To: data.Position{X: me.X + 6, Y: me.Y - 6}, Hold: 800 * time.Millisecond}.
+				Do(ctx.M, ctx.GR, ctx.P, ctx.Led, rc.Name())
+		}
 	}
 	return Running
 }

@@ -52,6 +52,29 @@ type Activity interface {
 	Step(ctx *Ctx) Verdict
 }
 
+// slideStride is a stride that refuses to rub walls: a blocked line retries once
+// rotated +45°, then −45° — the wall-slide. For the PLANLESS strides (escapes,
+// sidesteps, blind pushes); planned movement belongs to Journey. The owner: "it
+// tries to walk through walls often, one of the main reasons it stops."
+func slideStride(ctx *Ctx, to data.Position, hold time.Duration, minGain int, who string) verbs.Outcome {
+	me := ctx.Snap.Me.Pos
+	o := verbs.Stride{To: to, Hold: hold, MinGain: minGain}.Do(ctx.M, ctx.GR, ctx.P, ctx.Led, who)
+	if o.Result != verbs.ResBlocked {
+		return o
+	}
+	dx, dy := to.X-me.X, to.Y-me.Y
+	for _, r := range []data.Position{
+		{X: me.X + (dx-dy)*7/10, Y: me.Y + (dx+dy)*7/10}, // rotated +45°
+		{X: me.X + (dx+dy)*7/10, Y: me.Y + (dy-dx)*7/10}, // rotated −45°
+	} {
+		o = verbs.Stride{To: r, Hold: hold, MinGain: minGain}.Do(ctx.M, ctx.GR, ctx.P, ctx.Led, who+"/slide")
+		if o.Result != verbs.ResBlocked {
+			return o
+		}
+	}
+	return o
+}
+
 func chebyshev(a, b data.Position) int {
 	dx, dy := a.X-b.X, a.Y-b.Y
 	if dx < 0 {
@@ -113,7 +136,7 @@ func (f *Flee) Step(ctx *Ctx) Verdict {
 		return Done
 	}
 	away := data.Position{X: s.Me.Pos.X + (s.Me.Pos.X - cx/n), Y: s.Me.Pos.Y + (s.Me.Pos.Y - cy/n)}
-	verbs.Stride{To: away, Hold: 2 * time.Second, MinGain: 3}.Do(ctx.M, ctx.GR, ctx.P, ctx.Led, f.Name())
+	slideStride(ctx, away, 2*time.Second, 3, f.Name())
 	return Running
 }
 
@@ -128,7 +151,8 @@ func (f *Flee) Step(ctx *Ctx) Verdict {
 //   3. HP hits the hard floor: step into the portal. Escape is a fallback she is
 //      standing next to, never a hope.
 type Breakout struct {
-	castAt time.Time
+	castAt       time.Time
+	lastStrikeAt time.Time
 }
 
 func (b *Breakout) Name() string { return "breakout" }
@@ -217,12 +241,14 @@ func (b *Breakout) Step(ctx *Ctx) Verdict {
 		return Done // broke out and clear
 	}
 
-	// HARD FLOOR: HP critical → the portal is the move. A portal must be CLICKED —
-	// standing on one does nothing (the unreliable-entry defect). Approach only until
-	// it's clickable (~20 tiles: the click itself starts a walk-and-enter), then run
-	// the farmbot's proven hover-confirm entry.
+	// A PORTAL DOWN IS A DECISION ALREADY MADE: if the exit exists and the situation
+	// is still bad — wounded, dry, or critical — USE it. The owner watched her cast a
+	// portal and then stand pondering beside it ("we want it to be active"): the ponder
+	// was a hard floor set at 18% while the cast fired at 45%. A portal must be CLICKED —
+	// standing on one does nothing; approach until clickable (~20 tiles), then the
+	// proven hover-confirm entry.
 	hardFloor := s.Me.HPPct < 18
-	if hardFloor && len(s.Portals) > 0 {
+	if len(s.Portals) > 0 && (hardFloor || s.Me.HPPct < 35 || s.Me.HealPots == 0) {
 		best, bd := s.Portals[0], chebyshev(s.Me.Pos, s.Portals[0].Pos)
 		for _, pt := range s.Portals[1:] {
 			if d := chebyshev(s.Me.Pos, pt.Pos); d < bd {
@@ -257,23 +283,36 @@ func (b *Breakout) Step(ctx *Ctx) Verdict {
 	}
 
 	if gapCount == 0 {
-		// Open gap: stride through it hard.
+		// Open gap: stride through it hard (sliding off any wall on the line).
 		dir := sectorDir[gap]
 		out := data.Position{X: s.Me.Pos.X + dir.X*22, Y: s.Me.Pos.Y + dir.Y*22}
-		verbs.Stride{To: out, Hold: 2 * time.Second, MinGain: 3}.Do(ctx.M, ctx.GR, ctx.P, ctx.Led, b.Name())
+		slideStride(ctx, out, 2*time.Second, 3, b.Name())
 		return Running
 	}
-	// FIGHT FOR THE WAY OUT: strike the blocker holding the thinnest sector.
+	// FIGHT FOR THE WAY OUT: strike the blocker holding the thinnest sector — VOLLEY
+	// pace (the per-shot evidence wait was the old slow-shot disease; it had survived
+	// here inside Breakout). A whiffed hover falls through to a push stride: always
+	// DOING something, never pondering.
 	if hasNear[gap] {
-		blocker := nearest[gap]
-		var key byte
-		if ctx.Cap != nil && ctx.Cap.Throw != nil {
-			key = ctx.Cap.Throw.Key
-		} else if ctx.Cap != nil && ctx.Cap.Melee != nil {
-			key = ctx.Cap.Melee.Key
+		if time.Since(b.lastStrikeAt) >= 350*time.Millisecond {
+			blocker := nearest[gap]
+			var key byte
+			if ctx.Cap != nil && ctx.Cap.Throw != nil {
+				key = ctx.Cap.Throw.Key
+			} else if ctx.Cap != nil && ctx.Cap.Melee != nil {
+				key = ctx.Cap.Melee.Key
+			}
+			o := verbs.HoverStrike{Target: blocker.ID, TargetPos: blocker.Pos, SelectKey: key, Volley: true}.
+				Do(ctx.M, ctx.GR, ctx.P, ctx.Led, b.Name())
+			b.lastStrikeAt = time.Now()
+			if o.Result != verbs.ResDone {
+				// Couldn't confirm the blocker under the cursor: shove into the sector
+				// anyway — displacement beats a standing sweep.
+				dir := sectorDir[gap]
+				out := data.Position{X: s.Me.Pos.X + dir.X*10, Y: s.Me.Pos.Y + dir.Y*10}
+				slideStride(ctx, out, 700*time.Millisecond, 1, b.Name())
+			}
 		}
-		verbs.HoverStrike{Target: blocker.ID, TargetPos: blocker.Pos, SelectKey: key}.
-			Do(ctx.M, ctx.GR, ctx.P, ctx.Led, b.Name())
 		return Running
 	}
 	// Degenerate: no readable ring — back away from the mass.
@@ -285,7 +324,7 @@ func (b *Breakout) Step(ctx *Ctx) Verdict {
 	}
 	if n > 0 {
 		away := data.Position{X: s.Me.Pos.X + (s.Me.Pos.X - cx/n), Y: s.Me.Pos.Y + (s.Me.Pos.Y - cy/n)}
-		verbs.Stride{To: away, Hold: 1500 * time.Millisecond}.Do(ctx.M, ctx.GR, ctx.P, ctx.Led, b.Name())
+		slideStride(ctx, away, 1500*time.Millisecond, 0, b.Name())
 	}
 	return Running
 }

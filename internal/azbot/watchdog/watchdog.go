@@ -90,11 +90,14 @@ func (w *Watchdog) Observe(pos data.Position, holder string) {
 }
 
 // Check runs the pathology tests. Rate-limited by the caller (every ~5s is plenty).
-func (w *Watchdog) Check(holder string) Verdict {
+// stationaryOK: the caller vouches that standing still IS the work right now (a bow
+// volley holds ground by design — cooling fight mid-volley cost her kills, measured
+// 2026-07-19); it suppresses Stuck/Orbit but never Thrash.
+func (w *Watchdog) Check(holder string, stationaryOK bool) Verdict {
 	now := time.Now()
 
 	// STUCK: an active holder, yet the trailing 20s of positions fit in a 5-tile box.
-	if holder != "" && len(w.pos) >= 8 {
+	if holder != "" && !stationaryOK && len(w.pos) >= 8 {
 		var recent []posSample
 		for _, s := range w.pos {
 			if now.Sub(s.at) <= 20*time.Second {

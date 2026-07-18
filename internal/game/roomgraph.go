@@ -272,7 +272,15 @@ func (gd *MemoryReader) buildLiveGridInner() (*Grid, []LiveRoom, int, error) {
 	W, H, ox, oy := lf.SizeX, lf.SizeY, lf.OriginX, lf.OriginY
 	cg := make([][]CollisionType, H)
 	for y := range cg {
-		cg[y] = make([]CollisionType, W) // zero value = CollisionTypeNonWalkable (unknown = blocked)
+		cg[y] = make([]CollisionType, W)
+		// UNKNOWN = PLANNABLE AT A PENALTY (optimistic planning). The old "unknown =
+		// blocked" made every far goal NoPath, and the blind-stride fallback walked
+		// her INTO WALLS — the owner: "it tries to walk through walls often, one of
+		// the main reasons it stops". Now the planner always has a route through
+		// unloaded space; walls materialize as rooms stream in and the plan re-routes.
+		for x := range cg[y] {
+			cg[y][x] = CollisionTypeLowPriority
+		}
 	}
 	loaded := 0
 	usedRooms := make([]LiveRoom, 0, 32)
@@ -301,6 +309,8 @@ func (gd *MemoryReader) buildLiveGridInner() (*Grid, []LiveRoom, int, error) {
 				v := uint16(buf[idx]) | uint16(buf[idx+1])<<8
 				if v&1 == 0 { // low bit clear = walkable
 					cg[gy][gx] = CollisionTypeWalkable
+				} else {
+					cg[gy][gx] = CollisionTypeNonWalkable // loaded truth: a REAL wall
 				}
 			}
 		}

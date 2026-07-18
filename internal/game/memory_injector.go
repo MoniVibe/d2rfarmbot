@@ -269,6 +269,16 @@ func (i *MemoryInjector) Unload() error {
 	if _, err := i.HealInput(); err != nil {
 		i.logf("heal input on unload failed", err)
 	}
+	// The handle STAYS OPEN and isLoaded resets: Unload is the kill-switch's disengage
+	// half, and re-engage calls Load() again. The old close-and-keep-isLoaded pair made
+	// the toggle one-way (measured 2026-07-19: "reengage injector load failed: The
+	// handle is invalid" — F10 could stop her but never hand the controls back).
+	i.isLoaded = false
+	return nil
+}
+
+// Close releases the process handle — final teardown only, never mid-session.
+func (i *MemoryInjector) Close() error {
 	return windows.CloseHandle(i.handle)
 }
 

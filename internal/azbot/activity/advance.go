@@ -200,8 +200,7 @@ func (a *Advance) Step(ctx *Ctx) Verdict {
 				a.regridAt = time.Now()
 				a.j = journey.New(ctx.GR, a.grid, clampToGrid(tgt, a.grid), a.Name())
 			}
-			verbs.Stride{To: tgt, Hold: 1200 * time.Millisecond, MinGain: 1}.
-				Do(ctx.M, ctx.GR, ctx.P, ctx.Led, a.Name())
+			slideStride(ctx, tgt, 1200*time.Millisecond, 1, a.Name())
 		}
 		return Running
 	}

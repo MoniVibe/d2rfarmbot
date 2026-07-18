@@ -25,6 +25,15 @@ func realKeyDown(vk int) bool {
 	return r&0x8000 != 0
 }
 
+// realKeyTapped is realKeyDown that also honors the SINCE-LAST-POLL bit (LSB), so a
+// quick tap BETWEEN 100ms ticks still registers — the owner pressed F10 and nothing
+// happened (measured 2026-07-19: the press fell between polls). For the kill-switch
+// only; the LSB is per-process shared state, fine when we are its only reader.
+func realKeyTapped(vk int) bool {
+	r, _, _ := procGetAsyncKeyState.Call(uintptr(vk))
+	return r&0x8001 != 0
+}
+
 type Config struct {
 	KillVK    int    // virtual key of the kill-switch (default VK_PAUSE 0x13)
 	BeltKeys  []byte // belt column keys, left to right
@@ -70,7 +79,7 @@ func (s *Sentinel) Run(stop <-chan struct{}) {
 		}
 
 		// KILL-SWITCH: one physical resource the human always owns — their keyboard.
-		if realKeyDown(s.cfg.KillVK) {
+		if realKeyTapped(s.cfg.KillVK) {
 			if !killHeld {
 				killHeld = true
 				if s.m.Engage.Engaged() {

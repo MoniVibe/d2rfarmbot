@@ -172,13 +172,14 @@ func main() {
 		logger.Error("injector load failed", "err", err)
 		return
 	}
-	defer gi.Unload()
+	defer func() { gi.Unload(); gi.Close() }()
 	sigCh := make(chan os.Signal, 1)
 	signal.Notify(sigCh, os.Interrupt, syscall.SIGTERM)
 	go func() {
 		<-sigCh
 		logger.Info("signal — healing D2R input and exiting")
 		gi.Unload()
+		gi.Close()
 		os.Exit(0)
 	}()
 	hid := game.NewHID(gr, gi)
@@ -1566,7 +1567,25 @@ func main() {
 	deadline := time.Now().Add(time.Duration(*seconds) * time.Second)
 	statusAt := time.Time{}
 	sawInvalid := false
+	wasFocused := true
 	for time.Now().Before(deadline) {
+		// OFFLINE D2R PAUSES WHEN UNFOCUSED (measured 2026-07-19: every stride gained 0
+		// while the owner read the chat window — the world was frozen, not walled). A
+		// paused world takes no input and yields no evidence: idle politely, and keep
+		// the watchdog's clocks from counting a pause as a pathology.
+		if !m.GameFocused() {
+			if wasFocused {
+				logger.Info("executive: game unfocused — world paused, standing by")
+				wasFocused = false
+			}
+			time.Sleep(400 * time.Millisecond)
+			continue
+		}
+		if !wasFocused {
+			logger.Info("executive: game refocused — resuming")
+			wasFocused = true
+			wd = watchdog.New() // pause-time position history would read as pathology
+		}
 		s := p.Capture()
 		if !s.Valid || !m.Engage.Engaged() {
 			sawInvalid = sawInvalid || !s.Valid
@@ -1625,10 +1644,27 @@ func main() {
 		if grant != nil {
 			holderName = grant.Demand.Who
 		}
-		wd.Observe(s.Me.Pos, holderName)
+		// The dodge reflex blips sub-second by design — dodge↔fight alternation IS the
+		// arrow dance, not thrash (the watchdog cooled fight mid-dance, measured 02:51).
+		obsHolder := holderName
+		if obsHolder == "dodge" {
+			obsHolder = ""
+		}
+		wd.Observe(s.Me.Pos, obsHolder)
 		if time.Since(wdCheckAt) > 5*time.Second {
 			wdCheckAt = time.Now()
-			if v := wd.Check(holderName); v.Pathology != watchdog.Healthy {
+			// A volleying archer holds ground by design: fight + a target in bow range
+			// vouches for stillness (Stuck/Orbit suppressed; Thrash still watched).
+			stationaryOK := false
+			if holderName == "fight" {
+				for _, e := range s.Enemies {
+					if chebyshev(s.Me.Pos, e.Pos) <= 28 {
+						stationaryOK = true
+						break
+					}
+				}
+			}
+			if v := wd.Check(holderName, stationaryOK); v.Pathology != watchdog.Healthy {
 				logger.Warn("PATHOLOGY", "kind", v.Pathology.String(), "detail", v.Detail,
 					"cooling", v.CoolWho, "for", time.Until(v.CoolUntil).Round(time.Second))
 				mem.PutJSON("pathology.last", memory.ScopeGame,

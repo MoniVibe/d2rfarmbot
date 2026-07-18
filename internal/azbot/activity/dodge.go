@@ -139,8 +139,17 @@ func (dg *Dodge) Step(ctx *Ctx) Verdict {
 	if nearestEnemyDist(s, a) < nearestEnemyDist(s, b) {
 		tgt = b
 	}
-	verbs.Stride{To: tgt, Hold: 350 * time.Millisecond, MinGain: 1}.
+	// A blocked sidestep tries the OTHER side before the wall-slide — the arrow's
+	// line doesn't care which way she leaves it.
+	o := verbs.Stride{To: tgt, Hold: 350 * time.Millisecond, MinGain: 1}.
 		Do(ctx.M, ctx.GR, ctx.P, ctx.Led, dg.Name())
+	if o.Result == verbs.ResBlocked {
+		other := a
+		if tgt == a {
+			other = b
+		}
+		slideStride(ctx, other, 350*time.Millisecond, 1, dg.Name())
+	}
 	dg.lastStrideAt = time.Now()
 	return Running
 }
