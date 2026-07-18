@@ -180,6 +180,7 @@ func main() {
 	routeFlag := flag.String("route", "", "override the built-in -autoprogress route: comma list of areaID[:levelCap] stops (e.g. '2:6,3:12,17:18,4:99'). A stop with a levelCap also advances once the character reaches that level, so a low-level area doesn't hold a grown character all night.")
 	throwKey := flag.String("throw", "", "Throw hotkey (e.g. f2 on the amazon): outside a favorable engage, mid-range targets (5-22) eat a thrown weapon instead of a slow walk-in. Closed-loop: fires only when the selection actually flips to Throw and the stack holds >40 quantity (at 0 the stack vanishes). Empty disables.")
 	townHub := flag.String("townhub", "", "'x,y' town hub position (the respawn point) — stalled in-town navigation beelines here first, because every town road touches it. Auto-corrected by observed respawns.")
+	townRoad := flag.String("townroad", "6020,4952;5992,4941;5963,5001;5958,4970;5952,4944", "semicolon-separated 'x,y' waypoints of the MEASURED town-to-gate road (hand-piloted, encoded). Stalled town escapes walk this chain with direct force-holds — the mod's town fences beat every planner, the road doesn't guess. Default = seed 466817790's Rogue Encampment road (2026-07-18); pass '' to disable on other seeds.")
 	autoEquip := flag.Bool("autoequip", true, "equip usable backpack items into EMPTY armor/jewelry slots (torso/head/gloves/boots/belt/rings/amulet — never weapons) when calm. Closed loop: verified by the equipped list, cursor-stuck recovery puts the item back and disables the pass for the run.")
 	equipSlots := flag.String("equipslots", "tors:1565,225;head:1565,110;glov:1345,338;feet:1723,338;belt:1540,349;neck:1619,155;rrin:1432,357;lrin:1621,357", "paperdoll click pixels per gear body-slot code, 'tors:x,y;head:x,y;...' (calibrated from a live inventory screenshot 2026-07-18, Mamazon paperdoll, raw physical px). Empty disables -autoequip.")
 	summonKey := flag.String("summon", "", "summon hotkey (e.g. f2 = RaiseSkeleton): when pets are below -maxpets and a monster corpse is near, select the summon and cast it at the corpse; the next bite's -rabies press restores the attack skill")
@@ -4570,6 +4571,15 @@ func main() {
 		fmt.Sscanf(*townHub, "%d,%d", &townHubPos.X, &townHubPos.Y)
 	}
 	beelineFlip := 0
+	var beelineLastPos data.Position
+	var townRoadPts []data.Position
+	for _, tok := range strings.Split(*townRoad, ";") {
+		var p data.Position
+		if n, _ := fmt.Sscanf(strings.TrimSpace(tok), "%d,%d", &p.X, &p.Y); n == 2 {
+			townRoadPts = append(townRoadPts, p)
+		}
+	}
+	townRoadIdx := -1 // -1 = re-seek nearest waypoint on next use
 	autoEquipAt := time.Time{}
 	autoEquipDisabled := false
 	var gearTabs *gear.Tables
@@ -5841,6 +5851,7 @@ mainLoop:
 				exitDetourDest, exitDetourUntil = data.Position{}, time.Time{}
 				gotoIdx = 0
 				entranceContactStart = time.Time{} // transitioned — reset the contact timer
+				townRoadIdx = -1                   // re-seek the town road fresh next time
 				progressAt = time.Now()
 				logger.Info("nav: re-aligned new area", "area", alignedArea,
 					"origin", fmt.Sprintf("(%d,%d)", g.OffsetX, g.OffsetY), "walkables", len(walkables))
@@ -6659,19 +6670,43 @@ mainLoop:
 						if townHubPos.X != 0 && chebyshev(me, townHubPos) > 15 {
 							tgt = townHubPos
 						}
-						bx, by := gameToScreen(gr, me.X, me.Y, tgt.X, tgt.Y)
-						beelineFlip++
-						if beelineFlip%3 != 0 {
-							ang := math.Atan2(float64(by-cy), float64(bx-cx))
-							if beelineFlip%2 == 0 {
-								ang += 1.0
-							} else {
-								ang -= 1.0
+						// THE MEASURED ROAD beats every guess: walk the hand-piloted waypoint
+						// chain to the gate. Seek the nearest waypoint on entry, advance within 6.
+						if len(townRoadPts) > 0 {
+							if townRoadIdx < 0 {
+								best := 1 << 30
+								for i, p := range townRoadPts {
+									if dd := chebyshev(me, p); dd < best {
+										best, townRoadIdx = dd, i
+									}
+								}
 							}
-							bx, by = screenAngleCarrot(cx, cy, ang)
+							for townRoadIdx < len(townRoadPts)-1 && chebyshev(me, townRoadPts[townRoadIdx]) <= 6 {
+								townRoadIdx++
+							}
+							tgt = townRoadPts[townRoadIdx]
+						}
+						// ANGLE SWEEP WITH MEMORY (the first flip design rotated blindly 2 of every
+						// 3 holds and cancelled itself out): aim DIRECT while the last hold gained
+						// ground; only when pinned, sweep 0, +52°, -52°, +103°, -103°... until a
+						// direction works, then snap back to direct. Classic bug-algorithm energy.
+						if chebyshev(me, beelineLastPos) > 5 {
+							beelineFlip = 0
+						} else {
+							beelineFlip++
+						}
+						beelineLastPos = me
+						bx, by := gameToScreen(gr, me.X, me.Y, tgt.X, tgt.Y)
+						if beelineFlip > 0 {
+							ang := math.Atan2(float64(by-cy), float64(bx-cx))
+							step := 0.9 * float64((beelineFlip+1)/2)
+							if beelineFlip%2 == 0 {
+								step = -step
+							}
+							bx, by = screenAngleCarrot(cx, cy, ang+step)
 						}
 						logger.Warn("goto: no net movement — TOWN BEELINE force-hold", "pos", fmt.Sprintf("(%d,%d)", me.X, me.Y),
-							"hub", tgt == townHubPos, "flip", beelineFlip%3)
+							"hub", tgt == townHubPos, "sweep", beelineFlip)
 						walkToHold(bx, by, 2000)
 					} else {
 						logger.Warn("goto: no net movement — open burst", "pos", fmt.Sprintf("(%d,%d)", me.X, me.Y))
