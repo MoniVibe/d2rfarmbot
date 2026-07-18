@@ -4754,6 +4754,47 @@ func main() {
 				_ = gi.RestoreGetKeyState()
 				_ = gi.RestoreGetAsyncKeyState()
 			}
+		case "mclick":
+			// Modified panel click, SINGLE-key stubs: gks/gaks each read one key as held
+			// around a client-coord click message (0 = leave that stub disabled). The matrix
+			// probe for ctrl+click quick-sell: which poll does the modifier check read?
+			//   mclick x,y,17,17  ctrl on both polls (does the click even register without 0x01?)
+			//   mclick x,y,1,17   LButton on GetKeyState, ctrl on GetAsyncKeyState
+			//   mclick x,y,17,1   the reverse
+			var g1, g2 int
+			if n, _ := fmt.Sscanf(arg, "%d,%d,%d,%d", &a, &b, &g1, &g2); n >= 3 {
+				moveStop()
+				aimPanel(a, b)
+				hid.MouseMoveClient(a, b)
+				time.Sleep(150 * time.Millisecond)
+				if g1 != 0 {
+					_ = gi.OverrideGetKeyState(byte(g1))
+				}
+				if g2 != 0 {
+					_ = gi.OverrideGetAsyncKeyState(byte(g2))
+				}
+				time.Sleep(60 * time.Millisecond)
+				hid.LeftClickNoMoveClient(a, b)
+				_ = gi.RestoreGetKeyState()
+				_ = gi.RestoreGetAsyncKeyState()
+			}
+		case "mclick2":
+			// Modified panel click, TWO-key stubs on BOTH polls: k1 and k2 all read held
+			// everywhere — the full ctrl+click simulation (game sees VK_LBUTTON + VK_CONTROL
+			// no matter which export it polls).  mclick2 x,y,1,17
+			var k1, k2 int
+			if n, _ := fmt.Sscanf(arg, "%d,%d,%d,%d", &a, &b, &k1, &k2); n == 4 {
+				moveStop()
+				aimPanel(a, b)
+				hid.MouseMoveClient(a, b)
+				time.Sleep(150 * time.Millisecond)
+				_ = gi.OverrideGetKeyState2(byte(k1), byte(k2))
+				_ = gi.OverrideGetAsyncKeyState2(byte(k1), byte(k2))
+				time.Sleep(60 * time.Millisecond)
+				hid.LeftClickNoMoveClient(a, b)
+				_ = gi.RestoreGetKeyState2()
+				_ = gi.RestoreGetAsyncKeyState2()
+			}
 		case "uibytes":
 			nm := strings.TrimSpace(arg)
 			if nm == "" {
@@ -5079,6 +5120,15 @@ mainLoop:
 		// townsfolk id, Charsi becomes a valid target. Area.IsTown() is read live from the game and
 		// cannot be wrong about the mod. -goto is exempt: leaving town is the one town errand the
 		// loop currently knows how to run.
+		// AUTOPROGRESS-FROM-TOWN: the guard below parks any run that STARTS in town — curGoto
+		// is 0 and the autoprogress block lives AFTER this guard's `continue`, so it never gets
+		// to assert a target. (Cost a night: once an errand session left the char at the
+		// campfire, every subsequent run began parked and ended parked.) Assert the route
+		// target here, before the guard reads curGoto.
+		if d.PlayerUnit.Area.IsTown() && curGoto == 0 && *autoProgress && *gotoArea == 0 {
+			curGoto, progressTarget = progressRoute[routeIdx], progressRoute[routeIdx]
+			logger.Info("autoprogress: starting in town — heading out", "area", curGoto, "routeIdx", routeIdx)
+		}
 		if d.PlayerUnit.Area.IsTown() && curGoto == 0 {
 			// NAKED-IN-TOWN = a death this process never saw (probe-time death, crash, esc by
 			// hand). The corpse holds the gear and Corpse.Found can't see across areas, so hunt:

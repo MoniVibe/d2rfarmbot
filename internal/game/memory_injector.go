@@ -98,6 +98,13 @@ var (
 	// cmp cl,<key> ; sete al ; shl ax,15 ; ret   — key at index 2
 	keyStateStub     = []byte{0x80, 0xF9, 0x00, 0x0F, 0x94, 0xC0, 0x66, 0xC1, 0xE0, 0x0F, 0xC3}
 	keyStateStubWild = []int{2}
+	// TWO-key variant: cmp cl,<k1> ; je sete ; cmp cl,<k2> ; sete al ; shl ax,15 ; ret
+	// — k1 at index 2, k2 at index 7. 16 bytes, inside the 18-byte heal window HealInput
+	// uses for GetKeyState/GetAsyncKeyState. Exists because a MODIFIED click needs the game
+	// to see two keys at once (ctrl+click quick-sell polls VK_LBUTTON *and* VK_CONTROL);
+	// the single-key stub can only answer for one.
+	keyStateStub2     = []byte{0x80, 0xF9, 0x00, 0x74, 0x03, 0x80, 0xF9, 0x00, 0x0F, 0x94, 0xC0, 0x66, 0xC1, 0xE0, 0x0F, 0xC3}
+	keyStateStub2Wild = []int{2, 7}
 	// mov rax,<imm64 packed X|Y> ; mov [rcx],rax ; mov al,1 ; ret   — imm64 at indexes 2..9
 	physStub     = []byte{0x48, 0xB8, 0, 0, 0, 0, 0, 0, 0, 0, 0x48, 0x89, 0x01, 0xB0, 0x01, 0xC3}
 	physStubWild = []int{2, 3, 4, 5, 6, 7, 8, 9}
@@ -444,6 +451,44 @@ func (i *MemoryInjector) RestoreGetAsyncKeyState() error {
 	}
 	k := byte(keyStateDisabled)
 	return windows.WriteProcessMemory(i.handle, i.getAsyncKeyStateAddr+2, &k, 1, nil)
+}
+
+// OverrideGetKeyState2 / OverrideGetAsyncKeyState2 install the TWO-key stub: both k1 and k2
+// read as held. No atomic hot-path poke exists for this shape — install and restore are full
+// writeCode calls — so use it only for discrete moments (a modified click), never per
+// movement step. Restore2 puts back the DISABLED single-key stub (not pristine bytes), which
+// returns the export to the resident-stub regime every other Override*/Restore* expects.
+func (i *MemoryInjector) OverrideGetKeyState2(k1, k2 byte) error {
+	if !i.isLoaded || i.getKeyStateAddr == 0 {
+		return nil
+	}
+	stub := append([]byte(nil), keyStateStub2...)
+	stub[2], stub[7] = k1, k2
+	return i.writeCode(i.getKeyStateAddr, stub)
+}
+func (i *MemoryInjector) OverrideGetAsyncKeyState2(k1, k2 byte) error {
+	if !i.isLoaded || i.getAsyncKeyStateAddr == 0 {
+		return nil
+	}
+	stub := append([]byte(nil), keyStateStub2...)
+	stub[2], stub[7] = k1, k2
+	return i.writeCode(i.getAsyncKeyStateAddr, stub)
+}
+func (i *MemoryInjector) RestoreGetKeyState2() error {
+	if !i.isLoaded || i.getKeyStateAddr == 0 {
+		return nil
+	}
+	stub := append([]byte(nil), keyStateStub...)
+	stub[2] = keyStateDisabled
+	return i.writeCode(i.getKeyStateAddr, stub)
+}
+func (i *MemoryInjector) RestoreGetAsyncKeyState2() error {
+	if !i.isLoaded || i.getAsyncKeyStateAddr == 0 {
+		return nil
+	}
+	stub := append([]byte(nil), keyStateStub...)
+	stub[2] = keyStateDisabled
+	return i.writeCode(i.getAsyncKeyStateAddr, stub)
 }
 
 // OverrideGetKeyboardState patches GetKeyboardState to mark `key` as down (0x80) in the
