@@ -24,6 +24,7 @@ import (
 	"github.com/hectorgimenez/d2go/pkg/data/item"
 	"github.com/hectorgimenez/d2go/pkg/data/mode"
 	"github.com/hectorgimenez/d2go/pkg/data/skill"
+	"github.com/hectorgimenez/d2go/pkg/data/quest"
 	"github.com/hectorgimenez/d2go/pkg/data/stat"
 	"github.com/hectorgimenez/d2go/pkg/data/state"
 	d2gomem "github.com/hectorgimenez/d2go/pkg/memory"
@@ -5485,6 +5486,12 @@ mainLoop:
 		// campfire, every subsequent run began parked and ended parked.) Assert the route
 		// target here, before the guard reads curGoto.
 		if d.PlayerUnit.Area.IsTown() && curGoto == 0 && *autoProgress && *gotoArea == 0 {
+			for routeIdx < len(progressRoute)-1 && progressRoute[routeIdx] == 8 &&
+				d.Quests[quest.Act1DenOfEvil].Completed() {
+				routeIdx++
+				_ = os.WriteFile(routeStateFile, []byte(fmt.Sprintf("%d", routeIdx)), 0644)
+				logger.Info("autoprogress: Den quest complete — skipping the Den", "next", progressRoute[routeIdx])
+			}
 			curGoto, progressTarget = progressRoute[routeIdx], progressRoute[routeIdx]
 			logger.Info("autoprogress: starting in town — heading out", "area", curGoto, "routeIdx", routeIdx)
 		}
@@ -5675,6 +5682,15 @@ mainLoop:
 				lastEnemySeen = time.Now()
 			}
 			if curGoto == 0 || curGoto == progressTarget {
+				// QUEST-AWARE ROUTE (user: "be aware of what's clear"): the Den has a
+				// readable completion flag — never revisit a cleared quest cave. Other
+				// stops rely on the runs-dry timer; their "done" isn't a game fact.
+				for routeIdx < len(progressRoute)-1 && progressRoute[routeIdx] == 8 &&
+					d.Quests[quest.Act1DenOfEvil].Completed() {
+					routeIdx++
+					_ = os.WriteFile(routeStateFile, []byte(fmt.Sprintf("%d", routeIdx)), 0644)
+					logger.Info("autoprogress: Den quest complete — skipping the Den", "next", progressRoute[routeIdx])
+				}
 				if int(d.PlayerUnit.Area) == progressTarget && progressTarget != 0 &&
 					time.Since(lastEnemySeen) > 150*time.Second && routeIdx < len(progressRoute)-1 {
 					routeIdx++
@@ -6467,13 +6483,28 @@ mainLoop:
 								offs := [][2]int{{0, 0}, {0, -32}, {24, -44}, {-24, -32}, {0, -64}, {36, -20}}
 								off := offs[exitClickTry%len(offs)]
 								exitClickTry++
-								sx, sy := gameToScreen(gr, me.X, me.Y, steerTgt.X, steerTgt.Y)
+								if exitClickTry%3 == 0 {
+									// FRESH-APPROACH click (the vendor lesson, stairs edition):
+									// clicking stairs you're STANDING ON may never register —
+									// back off ~9 tiles and click the sprite from outside, so
+									// the game paths him onto it like a human's click would.
+									away := data.Position{X: me.X + 9, Y: me.Y + 9}
+									for i := 0; i < 6; i++ {
+										navWalk(gr.GetData().PlayerUnit.Position, away)
+										time.Sleep(150 * time.Millisecond)
+									}
+									moveStop()
+									time.Sleep(200 * time.Millisecond)
+								}
+								me2 := gr.GetData().PlayerUnit.Position
+								sx, sy := gameToScreen(gr, me2.X, me2.Y, steerTgt.X, steerTgt.Y)
 								logger.Info("goto: clicking the exit tile", "haveObj", haveObj,
 									"tile", fmt.Sprintf("(%d,%d)", steerTgt.X, steerTgt.Y),
-									"offset", fmt.Sprintf("(%d,%d)", off[0], off[1]))
+									"offset", fmt.Sprintf("(%d,%d)", off[0], off[1]),
+									"freshApproach", exitClickTry%3 == 0)
 								moveStop()
 								interactClick(sx+off[0], sy+off[1])
-								time.Sleep(900 * time.Millisecond)
+								time.Sleep(1100 * time.Millisecond)
 								mapPointContactAt = time.Now()
 							}
 							sx, sy := screenPointToward(me, steerTgt.X-me.X, steerTgt.Y-me.Y)
@@ -6850,7 +6881,7 @@ mainLoop:
 			if *loot && chickenStreak == 0 && claim("loot", 30, 900*time.Millisecond) {
 				enemyNearby := false
 				for _, m := range d.Monsters.Enemies() {
-					if m.Stats[stat.Life] > 0 && chebyshev(me, m.Position) <= *radius {
+					if m.Stats[stat.Life] > 0 && chebyshev(me, m.Position) <= 25 { // loot-safety: 25, NOT -radius(90) — the 90 gate meant "never loot"
 						enemyNearby = true
 						break
 					}
@@ -6935,7 +6966,7 @@ mainLoop:
 			if *objects && chickenStreak == 0 && claim("objects", 25, 900*time.Millisecond) {
 				enemyNearby := false
 				for _, m := range d.Monsters.Enemies() {
-					if m.Stats[stat.Life] > 0 && chebyshev(me, m.Position) <= *radius {
+					if m.Stats[stat.Life] > 0 && chebyshev(me, m.Position) <= 25 { // loot-safety: 25, NOT -radius(90) — the 90 gate meant "never loot"
 						enemyNearby = true
 						break
 					}
