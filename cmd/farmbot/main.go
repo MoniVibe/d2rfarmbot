@@ -4276,6 +4276,8 @@ func main() {
 	tpErrandsDone := false // one errand pass per trip
 	stepHold := false          // 'hold' control command: freeze all behaviors for step-mode calibration
 	var runStepCommand func(string)
+	var runStepBatch func(string, int)
+	var finishStepResult func()
 	tpVendorWanted := false // akara control command: include the vendor errand
 	tpOrigArea := 0
 	var tpPhaseAt, tpTripStart time.Time
@@ -4472,7 +4474,7 @@ func main() {
 	bigLeftChange := func(before, after image.Image) int {
 		b := after.Bounds()
 		n := 0
-		for y := 40; y < b.Dy()-120; y += 3 {
+		for y := 40; y < b.Dy()*55/100; y += 3 { // UPPER-left: the chat panel (bottom-left) must not count
 			for x := 20; x < b.Dx()*45/100; x += 3 {
 				r1, g1, b1, _ := before.At(x, y).RGBA()
 				r2, g2, b2, _ := after.At(x, y).RGBA()
@@ -4521,6 +4523,27 @@ func main() {
 		// Open the shop: body-click until the Down+Enter dance produces a big left-panel change.
 		shopOpen := false
 		for attempt, off := range [][2]int{{0, -20}, {16, -32}, {28, -44}, {0, -45}, {16, -60}, {24, -28}} {
+			if attempt > 0 {
+				// The one reproducible success clicked right after a FRESH approach — she
+				// wanders, and stale vantage clicks keep missing. Step back and re-approach.
+				dd0 := gr.GetData()
+				me0 := dd0.PlayerUnit.Position
+				away := data.Position{X: me0.X + 8, Y: me0.Y + 8}
+				for i := 0; i < 8; i++ {
+					navWalk(gr.GetData().PlayerUnit.Position, away)
+					time.Sleep(150 * time.Millisecond)
+				}
+				for i := 0; i < 20; i++ {
+					mv := gr.GetData().PlayerUnit.Position
+					if chebyshev(mv, ak.Position) <= 5 {
+						break
+					}
+					navWalk(mv, ak.Position)
+					time.Sleep(150 * time.Millisecond)
+				}
+				moveStop()
+				time.Sleep(400 * time.Millisecond)
+			}
 			d := gr.GetData()
 			me := d.PlayerUnit.Position
 			for _, m := range d.Monsters {
@@ -4575,7 +4598,8 @@ func main() {
 			time.Sleep(450 * time.Millisecond)
 			still := false
 			for _, it2 := range gr.GetData().Inventory.ByLocation(item.LocationInventory) {
-				if it2.UnitID == it.UnitID {
+				// UnitIDs may be unstable across reads — match by grid position + name.
+				if it2.Position == it.Position && it2.Name == it.Name {
 					still = true
 					break
 				}
@@ -4607,7 +4631,14 @@ func main() {
 	//   echo "step npc 148,0,-20"             click a live unit's body+offset
 	//   echo "step walk 5530,4690"            one navWalk burst toward world point
 	//   echo resume                           release
-	runStepCommand = func(cmd string) {
+	// stepResult accumulates command outcomes; flushed to logs/step_result.txt so the
+	// orchestrator waits on the FILE instead of sleeping blind and grepping the log.
+	var stepResult strings.Builder
+	finishStepResult = func() {
+		_ = os.WriteFile(filepath.Join("logs", "step_result.txt"), []byte(stepResult.String()), 0644)
+		stepResult.Reset()
+	}
+	runStepBatch = func(cmd string, idx int) {
 		fields := strings.SplitN(cmd, " ", 2)
 		verb := fields[0]
 		arg := ""
@@ -4652,26 +4683,53 @@ func main() {
 				me := gr.GetData().PlayerUnit.Position
 				navWalk(me, data.Position{X: a, Y: b})
 			}
+		case "aim":
+			if n, _ := fmt.Sscanf(arg, "%d,%d", &a, &b); n == 2 {
+				moveStop()
+				hid.AimPhysical(a, b)
+				if *realCursor {
+					win.SetCursorPos(int32(gr.WindowLeftX+a), int32(gr.WindowTopY+b))
+				}
+			}
+		case "rawclick":
+			if n, _ := fmt.Sscanf(arg, "%d,%d", &a, &b); n == 2 {
+				_ = gi.OverrideGetKeyState(0x01)
+				_ = gi.OverrideGetAsyncKeyState(0x01)
+				hid.LeftClickNoMove(a, b)
+				_ = gi.RestoreGetKeyState()
+				_ = gi.RestoreGetAsyncKeyState()
+			}
 		case "inv":
 			loc := item.LocationType(strings.TrimSpace(arg))
 			for _, it := range gr.GetData().Inventory.ByLocation(loc) {
+				il := fmt.Sprintf("item loc=%s name=%q pos=(%d,%d) quality=%s identified=%v\n",
+					string(loc), string(it.Name), it.Position.X, it.Position.Y, string(it.Quality), it.Identified)
+				stepResult.WriteString(il)
 				logger.Info("step: item", "loc", string(loc), "name", string(it.Name),
-					"pos", fmt.Sprintf("(%d,%d)", it.Position.X, it.Position.Y),
-					"quality", string(it.Quality), "identified", it.Identified)
+					"pos", fmt.Sprintf("(%d,%d)", it.Position.X, it.Position.Y))
 			}
 		default:
 			logger.Warn("step: unknown verb", "verb", verb)
 			return
 		}
 		time.Sleep(700 * time.Millisecond)
-		if f, err := os.Create(shotPath("step.png")); err == nil {
+		shotName := "step.png"
+		if idx > 0 {
+			shotName = fmt.Sprintf("step_%d.png", idx)
+		}
+		if f, err := os.Create(shotPath(shotName)); err == nil {
 			_ = png.Encode(f, gr.Screenshot())
 			f.Close()
 		}
 		d := gr.GetData()
-		logger.Info("step: done", "cmd", cmd, "pos",
-			fmt.Sprintf("(%d,%d)", d.PlayerUnit.Position.X, d.PlayerUnit.Position.Y),
-			"area", int(d.PlayerUnit.Area), "shot", shotPath("step.png"))
+		line := fmt.Sprintf("done [%s] pos=(%d,%d) area=%d shot=%s\n", cmd,
+			d.PlayerUnit.Position.X, d.PlayerUnit.Position.Y, int(d.PlayerUnit.Area), shotName)
+		stepResult.WriteString(line)
+		logger.Info("step: done", "cmd", cmd, "shot", shotName)
+	}
+	runStepCommand = func(cmd string) {
+		runStepBatch(cmd, 0)
+		finishStepResult()
 	}
 
 
@@ -4778,11 +4836,27 @@ mainLoop:
 		// the same atlas-save + deferred input-heal path as the -seconds deadline, so deploys
 		// no longer wait out the clock (force-kill while D2R lives corrupts input patching;
 		// this is the safe alternative).
-		if time.Since(lastControlCheck) > 2*time.Second {
+		controlEvery := 2 * time.Second
+		if stepHold {
+			controlEvery = 250 * time.Millisecond // step mode: snappy command latency
+		}
+		if time.Since(lastControlCheck) > controlEvery {
 			lastControlCheck = time.Now()
 			if b, err := os.ReadFile(controlFile); err == nil {
-				cmd := strings.TrimSpace(string(b))
 				_ = os.Remove(controlFile)
+				lines := strings.Split(strings.TrimSpace(string(b)), "\n")
+				if len(lines) > 1 { // batch: step commands only, numbered screenshots + one result file
+					_ = os.Remove(filepath.Join("logs", "step_result.txt"))
+					for bi, ln := range lines {
+						ln = strings.TrimSpace(ln)
+						if strings.HasPrefix(ln, "step ") {
+							runStepBatch(strings.TrimPrefix(ln, "step "), bi+1)
+						}
+					}
+					finishStepResult()
+					continue
+				}
+				cmd := lines[0]
 				switch cmd {
 				case "exit":
 					logger.Info("control: graceful exit requested")
