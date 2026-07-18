@@ -4274,6 +4274,9 @@ func main() {
 	tpPhase := 0
 	tpParkInTown := false // 'town' control command: stop at phase 3, skip the return
 	tpErrandsDone := false // one errand pass per trip
+	stepHold := false          // 'hold' control command: freeze all behaviors for step-mode calibration
+	var runStepCommand func(string)
+	tpVendorWanted := false // akara control command: include the vendor errand
 	tpOrigArea := 0
 	var tpPhaseAt, tpTripStart time.Time
 	tpRecast := false
@@ -4464,6 +4467,208 @@ func main() {
 	}
 	deathsSinceRecovery := 0
 
+	// bigLeftChange counts changed samples in the left 45% of the screen between two shots —
+	// the open-shop detector. A full vendor panel changes ~70k samples; wandering pets ~2k.
+	bigLeftChange := func(before, after image.Image) int {
+		b := after.Bounds()
+		n := 0
+		for y := 40; y < b.Dy()-120; y += 3 {
+			for x := 20; x < b.Dx()*45/100; x += 3 {
+				r1, g1, b1, _ := before.At(x, y).RGBA()
+				r2, g2, b2, _ := after.At(x, y).RGBA()
+				if abs(int(r1>>8)-int(r2>>8))+abs(int(g1>>8)-int(g2>>8))+abs(int(b1>>8)-int(b2>>8)) > 60 {
+					n++
+				}
+			}
+		}
+		return n
+	}
+
+	// vendorErrand: open Akara's shop (body-click -> Down -> Enter, user-verified keyboard nav),
+	// SELL Normal-quality identified clutter by pick-up-and-drop-into-vendor (no ctrl needed —
+	// the key stub is single-slot), screenshot the stock for buy-calibration, ESC out.
+	vendorErrand := func() bool {
+		const akaraID = 148
+		// Find her: live unit, else walk toward the measured pen anchor until she loads in.
+		anchor := data.Position{X: 5530, Y: 4690} // seed-bound fallback; logged if she never appears
+		var ak data.Monster
+		found := false
+		for i := 0; i < 80; i++ {
+			d := gr.GetData()
+			me := d.PlayerUnit.Position
+			for _, m := range d.Monsters {
+				if int(m.Name) == akaraID {
+					ak, found = m, true
+					break
+				}
+			}
+			if found && chebyshev(me, ak.Position) <= 6 {
+				break
+			}
+			tgt := anchor
+			if found {
+				tgt = ak.Position
+			}
+			navWalk(me, tgt)
+			time.Sleep(150 * time.Millisecond)
+		}
+		if !found {
+			logger.Warn("vendor: Akara never appeared near the anchor — wrong seed layout?")
+			return false
+		}
+		moveStop()
+		time.Sleep(400 * time.Millisecond)
+		// Open the shop: body-click until the Down+Enter dance produces a big left-panel change.
+		shopOpen := false
+		for attempt, off := range [][2]int{{0, -20}, {16, -32}, {28, -44}, {0, -45}, {16, -60}, {24, -28}} {
+			d := gr.GetData()
+			me := d.PlayerUnit.Position
+			for _, m := range d.Monsters {
+				if int(m.Name) == akaraID {
+					ak = m
+					break
+				}
+			}
+			base := gr.Screenshot()
+			bx, by := gameToScreen(gr, me.X, me.Y, ak.Position.X, ak.Position.Y)
+			interactClick(bx+off[0], by+off[1])
+			time.Sleep(900 * time.Millisecond)
+			moveStop()
+			hid.PressKey(hid.GetASCIICode("down"))
+			time.Sleep(350 * time.Millisecond)
+			hid.PressKey(hid.GetASCIICode("enter"))
+			time.Sleep(1000 * time.Millisecond)
+			ch := bigLeftChange(base, gr.Screenshot())
+			logger.Info("vendor: attempt", "n", attempt, "offset", fmt.Sprintf("(%d,%d)", off[0], off[1]), "leftChange", ch)
+			if ch > 12000 {
+				shopOpen = true
+				break
+			}
+			// If Enter fell into the world, chat may be open — close it before the next try.
+			hid.PressKey(hid.GetASCIICode("enter"))
+			time.Sleep(300 * time.Millisecond)
+		}
+		if !shopOpen {
+			logger.Warn("vendor: shop never opened")
+			return false
+		}
+		if f, err := os.Create(shotPath("akara_shop.png")); err == nil {
+			_ = png.Encode(f, gr.Screenshot())
+			f.Close()
+			logger.Info("vendor: shop OPEN — stock screenshot saved", "path", shotPath("akara_shop.png"))
+		}
+		// SELL: Normal-quality identified clutter, pick-up-and-drop into the vendor grid.
+		sold := 0
+		for _, it := range gr.GetData().Inventory.ByLocation(item.LocationInventory) {
+			if sold >= 8 || it.Quality != item.QualityNormal || !it.Identified {
+				continue
+			}
+			n := string(it.Name)
+			if strings.Contains(n, "INVALID") || strings.Contains(n, "Tome") || strings.Contains(n, "Charm") ||
+				strings.Contains(n, "Potion") || strings.Contains(n, "Flag") || strings.Contains(n, "Topaz") {
+				continue
+			}
+			ix, iy := invPixel(it.Position.X, it.Position.Y)
+			uiClick(ix, iy) // pick to cursor
+			time.Sleep(350 * time.Millisecond)
+			uiClick(480, 500) // drop into the vendor grid = sell
+			time.Sleep(450 * time.Millisecond)
+			still := false
+			for _, it2 := range gr.GetData().Inventory.ByLocation(item.LocationInventory) {
+				if it2.UnitID == it.UnitID {
+					still = true
+					break
+				}
+			}
+			if !still {
+				sold++
+				logger.Info("vendor: SOLD", "name", n)
+			} else {
+				logger.Warn("vendor: sell did not take — stopping the sell pass", "name", n)
+				break
+			}
+		}
+		moveStop()
+		hid.PressKey(hid.GetASCIICode("esc")) // close the shop
+		time.Sleep(400 * time.Millisecond)
+		logger.Info("vendor: errand done", "sold", sold)
+		return true
+	}
+
+	// runStepCommand: the STEP-MODE calibration harness. Each command executes ONE primitive,
+	// then saves shots/step.png + logs position/area so the orchestrator can LOOK before the
+	// next step (no more guess-sequences baked into rebuilds). Driven via the control file:
+	//   echo hold > logs/control.txt          freeze behaviors
+	//   echo "step shot" > logs/control.txt   screenshot only
+	//   echo "step ui 1005,197"               panel click (raw physical)
+	//   echo "step rui 1360,417"              panel RIGHT-click (raw physical)
+	//   echo "step click 800,400"             world interactClick (client coords)
+	//   echo "step key down"                  press a key by name
+	//   echo "step npc 148,0,-20"             click a live unit's body+offset
+	//   echo "step walk 5530,4690"            one navWalk burst toward world point
+	//   echo resume                           release
+	runStepCommand = func(cmd string) {
+		fields := strings.SplitN(cmd, " ", 2)
+		verb := fields[0]
+		arg := ""
+		if len(fields) > 1 {
+			arg = fields[1]
+		}
+		var a, b, c int
+		switch verb {
+		case "shot":
+			// screenshot below
+		case "ui":
+			if n, _ := fmt.Sscanf(arg, "%d,%d", &a, &b); n == 2 {
+				uiClick(a, b)
+			}
+		case "rui":
+			if n, _ := fmt.Sscanf(arg, "%d,%d", &a, &b); n == 2 {
+				uiRightClick(a, b)
+			}
+		case "click":
+			if n, _ := fmt.Sscanf(arg, "%d,%d", &a, &b); n == 2 {
+				interactClick(a, b)
+			}
+		case "key":
+			moveStop()
+			hid.PressKey(hid.GetASCIICode(strings.TrimSpace(arg)))
+		case "npc":
+			if n, _ := fmt.Sscanf(arg, "%d,%d,%d", &a, &b, &c); n == 3 {
+				d := gr.GetData()
+				me := d.PlayerUnit.Position
+				for _, m := range d.Monsters {
+					if int(m.Name) == a {
+						bx, by := gameToScreen(gr, me.X, me.Y, m.Position.X, m.Position.Y)
+						logger.Info("step: npc body", "bodyScreen", fmt.Sprintf("(%d,%d)", bx, by),
+							"click", fmt.Sprintf("(%d,%d)", bx+b, by+c))
+						interactClick(bx+b, by+c)
+						break
+					}
+				}
+			}
+		case "walk":
+			if n, _ := fmt.Sscanf(arg, "%d,%d", &a, &b); n == 2 {
+				me := gr.GetData().PlayerUnit.Position
+				navWalk(me, data.Position{X: a, Y: b})
+			}
+		default:
+			logger.Warn("step: unknown verb", "verb", verb)
+			return
+		}
+		time.Sleep(700 * time.Millisecond)
+		if f, err := os.Create(shotPath("step.png")); err == nil {
+			_ = png.Encode(f, gr.Screenshot())
+			f.Close()
+		}
+		d := gr.GetData()
+		logger.Info("step: done", "cmd", cmd, "pos",
+			fmt.Sprintf("(%d,%d)", d.PlayerUnit.Position.X, d.PlayerUnit.Position.Y),
+			"area", int(d.PlayerUnit.Area), "shot", shotPath("step.png"))
+	}
+
+
+
 	// Loot filter: what's worth walking to. Quality reads work on 3.2 (verified for player
 	// stats; item quality is the same statlist machinery). Potions count as needed only while
 	// the belt is short on that type — half the belt (2 columns) reserved per type.
@@ -4582,6 +4787,15 @@ mainLoop:
 						logger.Info("control: town round-trip requested")
 						tpPhase, tpTripStart, tpParkInTown, tpErrandsDone = 1, time.Now(), false, false
 					}
+				case "akara":
+					// Town trip with the full errand suite (identify + vendor sell/screenshot).
+					if *tp == "" {
+						logger.Warn("control: akara requested but -tp key not set")
+					} else if tpPhase == 0 {
+						logger.Info("control: akara errand trip requested")
+						tpPhase, tpTripStart, tpParkInTown, tpErrandsDone = 1, time.Now(), false, false
+						tpVendorWanted = true
+					}
 				case "town":
 					// TP to town and PARK (no auto-return) — the calibration-window maker:
 					// get him to town, then 'exit' for a clean supervised probe session.
@@ -4591,11 +4805,25 @@ mainLoop:
 						logger.Info("control: town-and-park requested")
 						tpPhase, tpTripStart, tpParkInTown, tpErrandsDone = 1, time.Now(), true, false
 					}
+				case "hold":
+					stepHold = true
+					logger.Info("control: STEP MODE — behaviors frozen; 'step ...' commands accepted; 'resume' releases")
+				case "resume":
+					stepHold = false
+					logger.Info("control: step mode released")
 				case "":
 				default:
-					logger.Warn("control: unknown command", "cmd", cmd)
+					if strings.HasPrefix(cmd, "step ") {
+						runStepCommand(strings.TrimSpace(strings.TrimPrefix(cmd, "step ")))
+					} else {
+						logger.Warn("control: unknown command", "cmd", cmd)
+					}
 				}
 			}
+		}
+		if stepHold {
+			time.Sleep(150 * time.Millisecond)
+			continue
 		}
 		if shiftCheck%6 == 0 && !inWerewolf() && chickenStreak == 0 {
 			castSelf(*werewolf)
@@ -4620,8 +4848,9 @@ mainLoop:
 			switch tpPhase {
 			case 1: // cast at our feet
 				if d.PlayerUnit.Area.IsTown() {
-					logger.Warn("towntrip: already in town — aborting")
-					tpPhase = 0
+					logger.Info("towntrip: already in town — running errands only (no portal return)")
+					tpOrigArea = 0 // sentinel: phase 3 ends without a return trip
+					tpPhaseAt, tpPhase = time.Now(), 3
 					continue
 				}
 				tpOrigArea = int(d.PlayerUnit.Area)
@@ -4649,6 +4878,11 @@ mainLoop:
 					tpPhase = 0
 				}
 			case 3: // in town: run the errands, then return through our portal.
+				if tpOrigArea == 0 && tpErrandsDone {
+					logger.Info("towntrip: errands-only trip complete")
+					tpPhase = 0
+					continue
+				}
 				if tpParkInTown {
 					logger.Info("towntrip: PARKED in town per control command")
 					tpPhase, tpParkInTown = 0, false
@@ -4658,6 +4892,10 @@ mainLoop:
 					tpErrandsDone = true
 					if n := identifyErrand(); n > 0 {
 						logger.Info("towntrip: errands", "identified", n)
+					}
+					if tpVendorWanted {
+						tpVendorWanted = false
+						vendorErrand()
 					}
 				}
 				if int(d.PlayerUnit.Area) == tpOrigArea {
