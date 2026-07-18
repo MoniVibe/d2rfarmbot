@@ -4556,11 +4556,28 @@ mainLoop:
 		// zero raises the whole way because recovery never let combat run).
 		oppFight := false
 		if !d.PlayerUnit.Area.IsTown() {
-			if thr, str, pn, cen := packAssess(d, me); pn > 0 && thr <= str && chebyshev(me, cen) <= 25 {
+			thr, str, pn, cen := packAssess(d, me)
+			// CONTACT OVERRIDE: an enemy inside melee reach cannot be outwalked — feeding it to
+			// the planner as a moving obstacle just dithers (measured: sh=9, committedS pinned
+			// at 0, position jitter at the Cold Plains crossing). Favorable or not, contact
+			// hands the tick to the combat flow — its POSTURES (kite/regroup) are the right
+			// tool for bad odds, not a walk-around.
+			contact := false
+			for i := range d.Monsters {
+				m := &d.Monsters[i]
+				if m.Mode == mode.NpcDeath || m.Mode == mode.NpcDead || m.IsGoodNPC() || m.IsPet() || m.IsMerc() {
+					continue
+				}
+				if chebyshev(me, m.Position) <= 8 {
+					contact = true
+					break
+				}
+			}
+			if pn > 0 && (contact || (thr <= str && chebyshev(me, cen) <= 25)) {
 				oppFight = true
 				if time.Since(travelFightLog) > 5*time.Second {
-					logger.Info("opportunity: favorable pack — combat claims the tick",
-						"threat", thr, "strength", str, "packN", pn)
+					logger.Info("opportunity: combat claims the tick",
+						"threat", thr, "strength", str, "packN", pn, "contact", contact)
 					travelFightLog = time.Now()
 				}
 			}
