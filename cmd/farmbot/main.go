@@ -134,6 +134,18 @@ func gameToScreen(gr *game.MemoryReader, px, py, dx, dy int) (int, int) {
 	return sx, sy
 }
 
+// walkCarrot: an ALWAYS-IN-WINDOW screen point in the true iso direction of a world
+// target. Far targets project off-window (49 tiles north = screen y -65) and the game
+// DISCARDS off-window cursor positions — a force-hold aimed there walks blind (run 6:
+// 169 beelines pinned at the corner, zero tiles). Same 300/140 ellipse as
+// screenAngleCarrot, direction preserved exactly.
+func walkCarrot(gr *game.MemoryReader, me data.Position, tx, ty int) (int, int) {
+	sx, sy := gameToScreen(gr, me.X, me.Y, tx, ty)
+	cx, cy := gr.GameAreaSizeX/2, gr.GameAreaSizeY/2
+	ang := math.Atan2(float64(sy-cy), float64(sx-cx))
+	return cx + int(300*math.Cos(ang)), cy + int(140*math.Sin(ang))
+}
+
 // survivalStatus is the verdict of a per-tick survival check: quaff potions, chicken (flee),
 // or the character is already dead.
 type survivalStatus int
@@ -6466,7 +6478,7 @@ mainLoop:
 					// restarts the hold before it can stride (334 stuttering restarts vs the
 					// manual pilot's clean 2.5s holds). Fire, then let it RUN.
 					if time.Since(roadHoldAt) > 1800*time.Millisecond {
-						bx, by := gameToScreen(gr, me.X, me.Y, rp.X, rp.Y)
+						bx, by := walkCarrot(gr, me, rp.X, rp.Y)
 						logger.Warn("corpse: town-parked — walking the road", "wp", fmt.Sprintf("(%d,%d)", rp.X, rp.Y))
 						walkToHold(bx, by, 2000)
 						roadHoldAt = time.Now()
@@ -6741,7 +6753,7 @@ mainLoop:
 							beelineFlip++
 						}
 						beelineLastPos = me
-						bx, by := gameToScreen(gr, me.X, me.Y, tgt.X, tgt.Y)
+						bx, by := walkCarrot(gr, me, tgt.X, tgt.Y)
 						if beelineFlip > 0 {
 							// Cycle 8 directions (0, ±52°, ±103°, ±155°) — an unbounded counter
 							// degenerated to random aims (observed sweep=95 at the south corner).
