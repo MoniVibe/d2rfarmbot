@@ -6626,8 +6626,19 @@ mainLoop:
 							}
 						}
 					}
-					logger.Warn("goto: no net movement — open burst", "pos", fmt.Sprintf("(%d,%d)", me.X, me.Y))
-					openBurst(me)
+					if d.PlayerUnit.Area.IsTown() && gotoAim.X != 0 {
+						// TOWN BEELINE: every planner loses to the mod's lying fence collision in
+						// town (yard posts are objects, the panels between them are in NO data
+						// source). A raw directed force-hold is what actually moves here —
+						// measured 34 tiles per 2.5s hold while hand-piloting out of the yard.
+						// No monsters in town; just walk AT the goal.
+						bx, by := gameToScreen(gr, me.X, me.Y, gotoAim.X, gotoAim.Y)
+						logger.Warn("goto: no net movement — TOWN BEELINE force-hold", "pos", fmt.Sprintf("(%d,%d)", me.X, me.Y))
+						walkToHold(bx, by, 2000)
+					} else {
+						logger.Warn("goto: no net movement — open burst", "pos", fmt.Sprintf("(%d,%d)", me.X, me.Y))
+						openBurst(me)
+					}
 					if len(gotoCross) > 0 {
 						gotoFailedAt[gotoIdx] = time.Now()
 						gotoIdx, gotoTryAt = (gotoIdx+1)%len(gotoCross), time.Now()
