@@ -6299,38 +6299,33 @@ mainLoop:
 									"entrances", len(d.Entrances), "dist", chebyshev(me, exit))
 								gotoBorderSeekLog = time.Now()
 							}
-							if chebyshev(me, exit) > 12 {
+							// THE TRUE STAIRS TILE: object 37 sits at the Den stairs with
+							// Selectable=false — the flag lies (or means something else on
+							// 3.2) — and the MAP point lies by ~7 tiles (map (7642,5150) vs
+							// object (7649,5152); the "-30 subtiles" lore, Den edition).
+							// Steer and click at the OBJECT's tile whenever one is near.
+							steerTgt := exit
+							haveObj := false
+							bestObjD := 21
+							for _, o := range d.Objects {
+								if dd := chebyshev(o.Position, exit); dd < bestObjD {
+									bestObjD, steerTgt, haveObj = dd, o.Position, true
+								}
+							}
+							if chebyshev(me, steerTgt) > 12 {
 								mapPointContactAt = time.Time{}
 							} else if mapPointContactAt.IsZero() {
 								mapPointContactAt = time.Now()
-							} else if time.Since(mapPointContactAt) > 8*time.Second {
-								// Standing AT the point and nothing transitions (run 28: dist=6
-								// held for 90s) — the stairs may be a click OBJECT, not a
-								// walk-through. Click anything selectable near the mapped exit.
-								clicked := false
-								for _, o := range d.Objects {
-									if o.Selectable && chebyshev(o.Position, exit) <= 20 {
-										sx, sy := gameToScreen(gr, me.X, me.Y, o.Position.X, o.Position.Y)
-										logger.Info("goto: clicking selectable object near exit",
-											"obj", int(o.Name), "objPos", fmt.Sprintf("(%d,%d)", o.Position.X, o.Position.Y))
-										moveStop()
-										interactClick(sx, sy)
-										time.Sleep(900 * time.Millisecond)
-										clicked = true
-										break
-									}
-								}
-								if !clicked {
-									// Last resort: click the mapped point itself.
-									sx, sy := gameToScreen(gr, me.X, me.Y, exit.X, exit.Y)
-									logger.Info("goto: no selectable object either — blind-clicking the map point")
-									moveStop()
-									interactClick(sx, sy)
-									time.Sleep(900 * time.Millisecond)
-								}
+							} else if time.Since(mapPointContactAt) > 6*time.Second {
+								sx, sy := gameToScreen(gr, me.X, me.Y, steerTgt.X, steerTgt.Y)
+								logger.Info("goto: clicking the exit tile", "haveObj", haveObj,
+									"tile", fmt.Sprintf("(%d,%d)", steerTgt.X, steerTgt.Y))
+								moveStop()
+								interactClick(sx, sy)
+								time.Sleep(900 * time.Millisecond)
 								mapPointContactAt = time.Now()
 							}
-							sx, sy := screenPointToward(me, exit.X-me.X, exit.Y-me.Y)
+							sx, sy := screenPointToward(me, steerTgt.X-me.X, steerTgt.Y-me.Y)
 							walkToHold(sx, sy, 260)
 							time.Sleep(80 * time.Millisecond)
 							continue
