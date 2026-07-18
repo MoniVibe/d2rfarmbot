@@ -7440,12 +7440,25 @@ mainLoop:
 			// already-poisoned monster neither stacks nor re-spreads — it is a wasted bite. So we
 			// score rather than sort by distance, and let distance be one term among several.
 			bestScore := -(1 << 30)
+			armedSel := false
+			for _, eqs := range d.Inventory.ByLocation(item.LocationEquipped) {
+				if eqs.Location.BodyLocation == item.LocLeftArm || eqs.Location.BodyLocation == item.LocRightArm {
+					armedSel = true
+					break
+				}
+			}
 			for _, m := range d.Monsters.Enemies() {
 				if m.Stats[stat.Life] <= 0 {
 					continue
 				}
 				if bl, ok := blacklist[m.UnitID]; ok && time.Since(bl) < 12*time.Second {
 					continue // recently unreachable / undamageable — don't re-hump the same wall
+				}
+				// Weaponless: the corpse-pile camp is a proven meat grinder (deaths 1-6, same
+				// 25-tile patch). Fists pick fights in CLEAN fields only; the pile waits for a
+				// weapon.
+				if !armedSel && corpseTargetPos.X != 0 && chebyshev(m.Position, corpseTargetPos) <= 25 {
+					continue
 				}
 				dd := chebyshev(me, m.Position)
 				if dd > *radius {
