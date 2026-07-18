@@ -4681,6 +4681,7 @@ func main() {
 	corpseWalkMoveAt := time.Now()
 	roadHoldAt := time.Time{}
 	tpBeatAt := time.Time{}
+	phantomLogAt := time.Time{}
 	areaXpArea := 0
 	areaXpStart := 0
 	areaXpAt := time.Time{}
@@ -7016,13 +7017,25 @@ mainLoop:
 				// first version of this check flagged the real CP->Stony exit as phantom). The
 				// cave's map grid is small, so a foreign-frame coordinate still gets caught.
 				if exitOK && navGrid != nil && d.AreaData.Grid != nil {
+					// SQUARE frame of the LARGER dimension: area grids arrive AXIS-TRANSPOSED
+					// for some areas (the known transpose disease), so a WxH box can be the
+					// wrong shape and reject the area's own exit — run 15 burned 8,437 phantom
+					// verdicts on the real Blood Moor->Cold Plains exit. Foreign-area coords
+					// are typically hundreds of tiles off and stay caught by the square.
 					aw, ah := d.AreaData.Grid.Width, d.AreaData.Grid.Height
-					inX := exit.X >= navGrid.OffsetX-50 && exit.X <= navGrid.OffsetX+aw+50
-					inY := exit.Y >= navGrid.OffsetY-50 && exit.Y <= navGrid.OffsetY+ah+50
+					size := aw
+					if ah > size {
+						size = ah
+					}
+					inX := exit.X >= navGrid.OffsetX-50 && exit.X <= navGrid.OffsetX+size+50
+					inY := exit.Y >= navGrid.OffsetY-50 && exit.Y <= navGrid.OffsetY+size+50
 					if !inX || !inY {
-						logger.Warn("goto: exit is outside our area frame — phantom, ignoring",
-							"exit", fmt.Sprintf("(%d,%d)", exit.X, exit.Y), "hop", int(hopTarget),
-							"areaDims", fmt.Sprintf("%dx%d", aw, ah))
+						if time.Since(phantomLogAt) > 5*time.Second {
+							logger.Warn("goto: exit is outside our area frame — phantom, ignoring",
+								"exit", fmt.Sprintf("(%d,%d)", exit.X, exit.Y), "hop", int(hopTarget),
+								"areaDims", fmt.Sprintf("%dx%d", aw, ah))
+							phantomLogAt = time.Now()
+						}
 						exitOK = false
 					}
 				}
