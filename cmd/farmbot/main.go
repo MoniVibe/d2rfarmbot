@@ -4995,7 +4995,16 @@ mainLoop:
 							}
 						}
 					}
-					for _, m := range d.Monsters {
+					for i := range d.Monsters {
+						m := &d.Monsters[i]
+						// FRIENDLIES ARE NOT OBSTACLES: our own skeletons trail us everywhere, so
+						// feeding them to the planner builds a moving wall around the player —
+						// every plan invalidates the tick it's made (measured at the Cold Plains
+						// gate: committedS reset to 0 after each near-UNIT burst, worse with a
+						// bigger army). Pets/mercs/good NPCs displace or are walked through.
+						if m.IsPet() || m.IsMerc() || m.IsGoodNPC() {
+							continue
+						}
 						if chebyshev(me, m.Position) < 70 {
 							obs = append(obs, m.Position)
 							if chebyshev(me, m.Position) < 12 {
