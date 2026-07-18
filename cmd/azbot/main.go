@@ -17,6 +17,7 @@ import (
 	"unsafe"
 
 	"github.com/hectorgimenez/d2go/pkg/data"
+	"github.com/hectorgimenez/d2go/pkg/data/area"
 	"github.com/hectorgimenez/d2go/pkg/data/item"
 	"github.com/hectorgimenez/d2go/pkg/data/npc"
 	"github.com/hectorgimenez/d2go/pkg/data/stat"
@@ -132,6 +133,8 @@ func main() {
 	invDump := flag.Bool("invdump", false, "dump inventory/belt/equipped with NUMERIC item IDs (the mod scrambles names; IDs cannot lie), exit")
 	shopPick := flag.String("shoppick", "", "akaratest: uiClick a client pixel 'x,y', read the item that lands on the CURSOR (true identity from memory), then click again to put it back — the click-based slot oracle")
 	shopMap := flag.String("shopmap", "", "akaratest: hover-sweep the shop panel 'x0,y0,x1,y1,step' and log which stock item the GAME says is hovered at each point — builds the true pixel map empirically")
+	exitProbe := flag.Bool("exitprobe", false, "PURE READ: dump the current area's AdjacentLevels (raw + live-translated), live entrance units, and the BFS hop toward the next Act 1 leg — validates the crossing knowledge before the Advance activity trusts it")
+	missileProbe := flag.Int("missileprobe", 0, "PURE READ: sample the missile table for N seconds and print every projectile with measured velocity — validates the dodge oracle (stand near something that shoots)")
 	logger := slog.New(slog.NewTextHandler(os.Stdout, nil))
 
 	flag.Parse()
@@ -224,6 +227,104 @@ func main() {
 	logger.Info("sentinel live", "killswitch", *killKey, "drinkAt", *drinkAt)
 	mem.PutJSON("goal", memory.ScopeGame, memory.Provenance{Source: "owner"}, map[string]string{"goal": *goal})
 	logger.Info("director", "goal", *goal)
+
+	// ---- map knowledge: the area graph + exit positions (koolo-map subprocess; cached
+	// by seed, so this costs ~3-5s ONCE per game). Without it Advance simply never bids —
+	// honest absence, not a crash.
+	if err := gr.FetchMapData(); err != nil {
+		logger.Warn("map data unavailable — cross-area Advance disabled", "err", err)
+	} else {
+		logger.Info("map data fetched", "seed", gr.MapSeed(), "areas", len(gr.GetData().Areas))
+	}
+
+	if *exitProbe {
+		// The training drill for the leg-walker: read everything Advance would act on,
+		// touch nothing.
+		d := gr.GetData()
+		var lg *game.Grid
+		if g, _, err := gr.BuildLiveGridRooms(); err == nil {
+			lg = g
+			logger.Info("exitprobe: live grid", "origin", fmt.Sprintf("(%d,%d)", g.OffsetX, g.OffsetY),
+				"size", fmt.Sprintf("%dx%d", g.Width, g.Height))
+		} else {
+			logger.Warn("exitprobe: live grid failed", "err", err)
+		}
+		if d.AreaData.Grid != nil {
+			logger.Info("exitprobe: map grid", "area", int(d.PlayerUnit.Area),
+				"origin", fmt.Sprintf("(%d,%d)", d.AreaData.Grid.OffsetX, d.AreaData.Grid.OffsetY),
+				"size", fmt.Sprintf("%dx%d", d.AreaData.Grid.Width, d.AreaData.Grid.Height))
+		} else {
+			logger.Warn("exitprobe: NO map grid for current area — is koolo-map serving this seed?")
+		}
+		logger.Info("exitprobe: me", "pos", fmt.Sprintf("(%d,%d)", d.PlayerUnit.Position.X, d.PlayerUnit.Position.Y),
+			"area", int(d.PlayerUnit.Area), "adjacents", len(d.AdjacentLevels), "entrances", len(d.Entrances))
+		for _, al := range d.AdjacentLevels {
+			tx, ty := al.Position.X, al.Position.Y
+			if lg != nil && d.AreaData.Grid != nil {
+				tx += lg.OffsetX - d.AreaData.Grid.OffsetX
+				ty += lg.OffsetY - d.AreaData.Grid.OffsetY
+			}
+			logger.Info("exitprobe: adjacent", "area", int(al.Area), "isEntrance", al.IsEntrance,
+				"raw", fmt.Sprintf("(%d,%d)", al.Position.X, al.Position.Y),
+				"live", fmt.Sprintf("(%d,%d)", tx, ty),
+				"dist", chebyshev(d.PlayerUnit.Position, data.Position{X: tx, Y: ty}))
+		}
+		for _, en := range d.Entrances {
+			logger.Info("exitprobe: live entrance", "name", int(en.Name), "id", int(en.ID),
+				"pos", fmt.Sprintf("(%d,%d)", en.Position.X, en.Position.Y),
+				"dist", chebyshev(d.PlayerUnit.Position, en.Position))
+		}
+		// THE LIVE BORDER ORACLE: cross-level rooms straight from D2R's room graph —
+		// the geometry that cannot lie (map-data placement DOES lie on this mod).
+		if ext, err := gr.AdjacentLevelRooms(); err == nil {
+			for ar, rects := range ext {
+				for _, r := range rects {
+					logger.Info("exitprobe: LIVE border room", "area", int(ar),
+						"rect", fmt.Sprintf("(%d,%d %dx%d)", r.X, r.Y, r.W, r.H),
+						"dist", chebyshev(d.PlayerUnit.Position, data.Position{X: r.X + r.W/2, Y: r.Y + r.H/2}))
+				}
+			}
+		} else {
+			logger.Warn("exitprobe: room graph read failed", "err", err)
+		}
+		close(stop)
+		return
+	}
+
+	if *missileProbe > 0 {
+		// The dodge oracle's training drill: watch the missile table live, measure
+		// velocities from consecutive reads, judge closing-vs-fleeing — touch nothing.
+		type mtrack struct {
+			pos data.Position
+			at  time.Time
+		}
+		tracks := map[data.UnitID]mtrack{}
+		deadline := time.Now().Add(time.Duration(*missileProbe) * time.Second)
+		for time.Now().Before(deadline) {
+			d := gr.GetData()
+			me := d.PlayerUnit.Position
+			now := time.Now()
+			for _, ms := range gr.Missiles() {
+				if tr, ok := tracks[ms.UnitID]; ok {
+					dt := now.Sub(tr.at).Seconds()
+					if dt > 0.02 && (ms.Position != tr.pos) {
+						vx := float64(ms.Position.X-tr.pos.X) / dt
+						vy := float64(ms.Position.Y-tr.pos.Y) / dt
+						rx, ry := float64(me.X-ms.Position.X), float64(me.Y-ms.Position.Y)
+						closing := rx*vx+ry*vy > 0
+						logger.Info("missile", "id", int(ms.UnitID), "txt", ms.TxtFileNo,
+							"pos", fmt.Sprintf("(%d,%d)", ms.Position.X, ms.Position.Y),
+							"v", fmt.Sprintf("(%.0f,%.0f)", vx, vy),
+							"dist", chebyshev(me, ms.Position), "closing", closing)
+					}
+				}
+				tracks[ms.UnitID] = mtrack{pos: ms.Position, at: now}
+			}
+			time.Sleep(70 * time.Millisecond)
+		}
+		close(stop)
+		return
+	}
 
 	// ---- M4 fight test: calibrate capability, cross to Blood Moor, strike with evidence ----
 	if *gambleRefresh {
@@ -1313,12 +1414,52 @@ func main() {
 	acts := map[string]activity.Activity{}
 	road := []data.Position{{X: 6020, Y: 4952}, {X: 5992, Y: 4941}, {X: 5963, Y: 5001}, {X: 5962, Y: 4956}, {X: 5952, Y: 4944}}
 	mem.PutJSON("road.town.blood_moor_gate", memory.ScopeSeed, memory.Provenance{Source: "hand-piloted", Evidence: "2026-07-18, seed 466817790"}, road)
-	for _, a := range []activity.Activity{&activity.Breakout{}, &activity.Flee{}, &activity.Respawn{}, activity.NewFight(), activity.NewLoot(), activity.NewRestock(), activity.NewRepair(), &activity.Travel{Road: road}, &activity.Explore{}} {
+	// Seed the one door already proven: the road's end IS the town→Blood Moor border.
+	if _, have := mem.Get(activity.BorderKey(area.RogueEncampment, area.BloodMoor)); !have {
+		mem.PutJSON(activity.BorderKey(area.RogueEncampment, area.BloodMoor), memory.ScopeSeed,
+			memory.Provenance{Source: "hand-piloted", Evidence: "road end, seed 466817790"}, road[len(road)-1])
+	}
+	// The goal shapes the itinerary: farm grinds the proven circuit's summit; campaign /
+	// rampage marches the full act to Andariel's chamber. The arbiter owns every moment
+	// either way — Fight and Loot preempt the march by class, which IS the rampage.
+	legs := activity.FarmItinerary()
+	if *goal == "campaign" || *goal == "rampage" {
+		legs = activity.Act1Itinerary()
+	}
+	for _, a := range []activity.Activity{&activity.Breakout{}, &activity.Flee{}, activity.NewDodge(), &activity.Respawn{}, activity.NewReclaim(), activity.NewFight(), activity.NewLoot(), activity.NewRestock(), activity.NewRepair(), activity.NewAdvance(legs), &activity.Return{}, &activity.Travel{Road: road}, &activity.Explore{}} {
 		acts[a.Name()] = a
 	}
 
 	var grid *game.Grid
 	gridArea := -1
+	// THE CARTOGRAPHER: every area crossing she ever makes — by march, by wander, by
+	// portal — records BOTH sides of the door as seed facts. Advance consumes them as
+	// layer-1 border knowledge; the world's doors accumulate from use.
+	lastArea := area.ID(0)
+	var lastPos data.Position
+	recordCrossing := func(s *percept.Snapshot) {
+		if s.Me.Area != lastArea && lastArea != 0 && s.Me.Area != 0 {
+			// Portals teleport (town↔field): only record when the two sides are near
+			// each other — a real walked/clicked door, not a TP jump.
+			if chebyshev(lastPos, s.Me.Pos) <= 40 {
+				prov := memory.Provenance{Source: "measured", Evidence: fmt.Sprintf("crossed %d->%d", int(lastArea), int(s.Me.Area))}
+				mem.PutJSON(activity.BorderKey(lastArea, s.Me.Area), memory.ScopeSeed, prov, lastPos)
+				mem.PutJSON(activity.BorderKey(s.Me.Area, lastArea), memory.ScopeSeed, prov, s.Me.Pos)
+				logger.Info("cartographer: door learned", "from", int(lastArea), "to", int(s.Me.Area),
+					"at", fmt.Sprintf("(%d,%d)", lastPos.X, lastPos.Y))
+			}
+		}
+		lastArea, lastPos = s.Me.Area, s.Me.Pos
+	}
+	// Regrid: mid-area grid regrowth for the leg-walker — rooms stream in as she walks,
+	// and a grid built at the border knows nothing of the far exit.
+	regrid := func() *game.Grid {
+		if g, _, err := gr.BuildLiveGridRooms(); err == nil {
+			grid = g
+			logger.Info("executive: grid regrown", "origin", fmt.Sprintf("(%d,%d)", g.OffsetX, g.OffsetY))
+		}
+		return grid
+	}
 	wasArmed := false
 	wasDead := false
 	wd := watchdog.New()
@@ -1332,6 +1473,7 @@ func main() {
 			time.Sleep(200 * time.Millisecond)
 			continue
 		}
+		recordCrossing(s)
 		// Grid follows the area (the re-align, owned in one place).
 		if int(s.Me.Area) != gridArea {
 			if g, _, err := gr.BuildLiveGridRooms(); err == nil {
@@ -1406,7 +1548,7 @@ func main() {
 				"urgency", fmt.Sprintf("%.2f", grant.Demand.Urgency))
 		}
 		act := acts[grant.Demand.Who]
-		v := act.Step(&activity.Ctx{M: m, GR: gr, P: p, Led: led, Grid: grid, Cap: &cap, Snap: s, SwapKey: hid.GetASCIICode(*swapKey)})
+		v := act.Step(&activity.Ctx{M: m, GR: gr, P: p, Led: led, Grid: grid, Cap: &cap, Snap: s, SwapKey: hid.GetASCIICode(*swapKey), Regrid: regrid, Mem: mem})
 		if v != activity.Running {
 			logger.Info("verdict", "activity", grant.Demand.Who, "verdict", map[activity.Verdict]string{activity.Done: "done", activity.Abandoned: "abandoned"}[v])
 			arb.Release()

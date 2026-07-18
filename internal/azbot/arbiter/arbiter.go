@@ -100,6 +100,21 @@ func (a *Arbiter) Decide(demands []Demand) (*Grant, bool) {
 		cur.Demand.Urgency = best.Urgency // refresh the holder's own urgency
 		return cur, false
 	}
+	// 0. A grant lives only as long as its demand: an incumbent that STOPPED bidding
+	// has nothing to hold with — release it and seat the best live bidder. (Measured
+	// 2026-07-19: Breakout stopped bidding at HP 0 but kept the grant, and Respawn —
+	// a lower CLASS — could never evict it: 25s+ frozen on the death screen.)
+	stillBids := false
+	for _, d := range demands {
+		if d.Who == cur.Demand.Who {
+			stillBids = true
+			break
+		}
+	}
+	if !stillBids {
+		a.cur = &Grant{Demand: best, Since: time.Now(), resumed: time.Now()}
+		return a.cur, true
+	}
 	// 1. Fear overrides dwell: a strictly higher CLASS preempts immediately.
 	if best.Class < cur.Demand.Class {
 		cur.held += time.Since(cur.resumed)

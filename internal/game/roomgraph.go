@@ -313,6 +313,26 @@ func (gd *MemoryReader) buildLiveGridInner() (*Grid, []LiveRoom, int, error) {
 	return NewGrid(cg, ox, oy), usedRooms, loaded, nil
 }
 
+// AdjacentLevelRooms groups the current level's cross-border neighbor rooms by area, as
+// world-subtile rects. This is the LIVE border oracle: on this mod the generator's world
+// placement LIES (measured 2026-07-19: koolo-map placed Blood Moor's gate EAST of town
+// at (6480,4960) while the hand-piloted road proves it WEST at ~(5950,4944)), so
+// cross-area geometry must come from D2R's own room graph — topology from map data,
+// geometry from memory. Only WALKABLE borders appear here; warp entrances (caves,
+// stairs) connect via units, not shared rooms.
+func (gd *MemoryReader) AdjacentLevelRooms() (map[area.ID][]TileRect, error) {
+	g, err := gd.ReadCurrentRoomGraph()
+	if err != nil {
+		return nil, err
+	}
+	out := map[area.ID][]TileRect{}
+	for _, r := range g.External {
+		out[r.LevelID] = append(out[r.LevelID],
+			TileRect{X: r.Rect.X * 5, Y: r.Rect.Y * 5, W: r.Rect.W * 5, H: r.Rect.H * 5})
+	}
+	return out, nil
+}
+
 // CountLoadedRooms reports how many rooms in the graph have their Room1 collision streamed in.
 func (g *LiveRoomGraph) CountLoadedRooms() (loaded, total int) {
 	for _, r := range g.Rooms {

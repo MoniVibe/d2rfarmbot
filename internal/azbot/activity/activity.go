@@ -12,6 +12,7 @@ import (
 	"github.com/hectorgimenez/koolo/internal/azbot/arbiter"
 	"github.com/hectorgimenez/koolo/internal/azbot/combat"
 	"github.com/hectorgimenez/koolo/internal/azbot/journey"
+	"github.com/hectorgimenez/koolo/internal/azbot/memory"
 	"github.com/hectorgimenez/koolo/internal/azbot/motor"
 	"github.com/hectorgimenez/koolo/internal/azbot/percept"
 	"github.com/hectorgimenez/koolo/internal/azbot/verbs"
@@ -36,6 +37,11 @@ type Ctx struct {
 	Snap *percept.Snapshot
 	// SwapKey: the weapon-swap key (W) — the bowzon dance's hinge.
 	SwapKey byte
+	// Regrid rebuilds the live navigation grid mid-area (rooms stream in as she walks;
+	// a grid built at the border knows nothing of the far exit). Owned by the executive.
+	Regrid func() *game.Grid
+	// Mem: the WAL fact store — Advance reads the cartographer's border facts here.
+	Mem *memory.Store
 }
 
 type Activity interface {
@@ -726,6 +732,9 @@ func (t *Travel) Name() string { return "travel" }
 func (t *Travel) Demand(s *percept.Snapshot) *arbiter.Demand {
 	if !s.Valid || !s.Me.InTown || s.Me.HPPct < 60 || len(t.Road) == 0 {
 		return nil
+	}
+	if ServicesPending(s) {
+		return nil // errands first — Travel outranks Service by class and would starve them
 	}
 	return &arbiter.Demand{Who: t.Name(), Class: arbiter.ClassTravel, Urgency: 0.3,
 		Commit: arbiter.Commitment{MinHold: 5 * time.Second}}

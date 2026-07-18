@@ -165,6 +165,22 @@ func closeShop(ctx *Ctx) {
 	time.Sleep(300 * time.Millisecond)
 }
 
+// ServicesPending reports whether a town errand is waiting: a real belt deficit she can
+// afford, or gear worn to the quarter. The class ladder puts Travel ABOVE Service, so
+// the travel activities consult this and stand down — otherwise Travel starves the
+// errands forever and she marches out with an empty belt (the latent starvation bug).
+func ServicesPending(s *percept.Snapshot) bool {
+	if s.Me.Gold >= 10 && s.Me.MinDurPct <= 25 {
+		return true
+	}
+	if s.Me.Gold >= 100 {
+		if hp, mana := plan(s); hp+mana >= 2 {
+			return true
+		}
+	}
+	return false
+}
+
 // ---------------------------------------------------------------- Restock (ClassService)
 
 // Restock keeps the belt at doctrine: one row of mana, the rest HP — scaled to the

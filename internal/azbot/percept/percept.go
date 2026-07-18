@@ -48,6 +48,10 @@ type PlayerState struct {
 	// WeaponKind: what the ACTIVE hands hold — "bow", "melee", or "none". The W swap
 	// flips this next capture; combat reads it as the closed loop on weapon swapping.
 	WeaponKind string
+	// Corpse: her own body, holding the gear and gold a death took. The Reclaim
+	// activity's whole world.
+	CorpseFound bool
+	CorpsePos   data.Position
 }
 
 // EnemyRef is a live hostile: identity, position, and Mode (the honest liveness read —
@@ -75,6 +79,15 @@ type PortalRef struct {
 	Pos data.Position
 }
 
+// MissileRef is a projectile in flight (unit table type 3). No ownership, no velocity —
+// consumers infer both from the snapshot stream (two frames give the vector; her own
+// arrows always fly AWAY, so only closing missiles are threats).
+type MissileRef struct {
+	ID  data.UnitID
+	Txt int
+	Pos data.Position
+}
+
 // Snapshot is one immutable perception frame. Valid=false frames (load screens,
 // zero-position garbage) are published so consumers see the gap, but carry no state.
 type Snapshot struct {
@@ -86,7 +99,8 @@ type Snapshot struct {
 	MenuOpen bool
 	Enemies  []EnemyRef
 	Items    []ItemRef
-	Portals  []PortalRef // town portals (and red portals) in the world
+	Portals  []PortalRef  // town portals (and red portals) in the world
+	Missiles []MissileRef // projectiles in flight — the dodge reflex's raw feed
 }
 
 // AttachReport is the M0 epistemics gate verdict: behavioral probes over the channels
@@ -211,6 +225,10 @@ func (p *Perceptor) Capture() *Snapshot {
 			s.Me.BeltMana++
 		}
 	}
+	if d.Corpse.Found {
+		s.Me.CorpseFound = true
+		s.Me.CorpsePos = d.Corpse.Position
+	}
 	s.Me.MinDurPct = 100
 	for _, eq := range d.Inventory.ByLocation(item.LocationEquipped) {
 		dur, okD := eq.FindStat(stat.Durability, 0)
@@ -225,6 +243,11 @@ func (p *Perceptor) Capture() *Snapshot {
 	for i := range d.Objects {
 		if d.Objects[i].IsPortal() || d.Objects[i].IsRedPortal() {
 			s.Portals = append(s.Portals, PortalRef{ID: d.Objects[i].ID, Pos: d.Objects[i].Position})
+		}
+	}
+	if !s.Me.InTown { // town has no hostile fire; skip the read there
+		for _, ms := range p.gr.Missiles() {
+			s.Missiles = append(s.Missiles, MissileRef{ID: ms.UnitID, Txt: ms.TxtFileNo, Pos: ms.Position})
 		}
 	}
 	p.last.Store(s)
