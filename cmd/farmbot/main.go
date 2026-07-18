@@ -6480,6 +6480,8 @@ mainLoop:
 					if time.Since(roadHoldAt) > 1800*time.Millisecond {
 						bx, by := walkCarrot(gr, me, rp.X, rp.Y)
 						logger.Warn("corpse: town-parked — walking the road", "wp", fmt.Sprintf("(%d,%d)", rp.X, rp.Y))
+						moveStop() // fresh key edge — direction samples at key-down (see beeline)
+						time.Sleep(80 * time.Millisecond)
 						walkToHold(bx, by, 2000)
 						roadHoldAt = time.Now()
 						time.Sleep(2100 * time.Millisecond) // commit — see the beeline note
@@ -6783,6 +6785,16 @@ mainLoop:
 								}
 								sbx, sby = screenAngleCarrot(cx, cy, ang+stp)
 							}
+							// FRESH KEY EDGE per stride (the seventh and final theory, with the
+							// field-vs-town asymmetry explained): D2R samples the walk direction
+							// at the force-move KEY-DOWN EDGE. A continuously-held key keeps the
+							// original (fence-facing) direction no matter where the cursor re-aims
+							// — six chained strides, moved=0. Field movement never noticed because
+							// combat/mover churn releases the key constantly, making an edge per
+							// carrot. The manual keyhold verb always pre-released. So: release,
+							// aim, press — every stride.
+							moveStop()
+							time.Sleep(80 * time.Millisecond)
 							walkToHold(sbx, sby, 2000)
 							time.Sleep(2100 * time.Millisecond)
 						}
