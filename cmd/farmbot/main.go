@@ -4665,6 +4665,8 @@ func main() {
 		return bare(body)
 	}
 	var corpseTargetPos data.Position
+	var corpseWalkLastPos data.Position
+	corpseWalkMoveAt := time.Now()
 	// meleeSwing: a left-click attack that actually CONNECTS. A blind interactClick at the
 	// monster's computed feet position reads as "walk here" whenever the sprite isn't exactly
 	// there — the char shuffles in place instead of swinging (observed live). Sweep until the
@@ -6429,8 +6431,31 @@ mainLoop:
 					}
 					retreat := data.Position{X: me.X + (me.X-cen.X), Y: me.Y + (me.Y-cen.Y)}
 					navWalk(me, retreat)
+				} else if d.PlayerUnit.Area.IsTown() && len(townRoadPts) > 0 &&
+					chebyshev(me, corpseWalkLastPos) < 3 && time.Since(corpseWalkMoveAt) > 8*time.Second {
+					// Parked in town with the corpse across the border (run 3: 39 tiles away,
+					// found=true, zero movement): the planners lose to the town fences — walk
+					// the measured road to the gate with force-holds, same as the goto escape.
+					if townRoadIdx < 0 {
+						best := 1 << 30
+						for i, p := range townRoadPts {
+							if dd := chebyshev(me, p); dd < best {
+								best, townRoadIdx = dd, i
+							}
+						}
+					}
+					for townRoadIdx < len(townRoadPts)-1 && chebyshev(me, townRoadPts[townRoadIdx]) <= 6 {
+						townRoadIdx++
+					}
+					rp := townRoadPts[townRoadIdx]
+					bx, by := gameToScreen(gr, me.X, me.Y, rp.X, rp.Y)
+					logger.Warn("corpse: town-parked — walking the road", "wp", fmt.Sprintf("(%d,%d)", rp.X, rp.Y))
+					walkToHold(bx, by, 2000)
 				} else {
 					navWalk(me, corpseTargetPos)
+				}
+				if chebyshev(me, corpseWalkLastPos) >= 3 {
+					corpseWalkLastPos, corpseWalkMoveAt = me, time.Now()
 				}
 			case !d.Corpse.Found:
 				// Close enough that its rooms are loaded — a consistent absence here is REAL.
