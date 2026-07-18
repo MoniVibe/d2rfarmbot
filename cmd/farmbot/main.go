@@ -520,6 +520,12 @@ func main() {
 	deriveCombat := func(d game.Data) combatProf {
 		var p combatProf
 		for _, it := range d.Inventory.ByLocation(item.LocationEquipped) {
+			// ACTIVE hands only: the swap set (secondary arm slots) still carries the old
+			// bow+quiver after a weapon switch and must not vote. First deploy read ALL
+			// equipped slots and kept sniping at 21 tiles with the wand in hand.
+			if it.Location.BodyLocation != item.LocLeftArm && it.Location.BodyLocation != item.LocRightArm {
+				continue
+			}
 			n := string(it.Name)
 			// Name-substring on purpose: the mod remaps SOME item names (tomes read as
 			// "Jawbone"/"Eye"), so an unknown name defaults to NOT-ranged — worst case he
@@ -4868,8 +4874,8 @@ func main() {
 		case "inv":
 			loc := item.LocationType(strings.TrimSpace(arg))
 			for _, it := range gr.GetData().Inventory.ByLocation(loc) {
-				il := fmt.Sprintf("item loc=%s name=%q pos=(%d,%d) quality=%s identified=%v\n",
-					string(loc), string(it.Name), it.Position.X, it.Position.Y, string(it.Quality), it.Identified)
+				il := fmt.Sprintf("item loc=%s body=%s name=%q pos=(%d,%d) quality=%s identified=%v\n",
+					string(loc), string(it.Location.BodyLocation), string(it.Name), it.Position.X, it.Position.Y, string(it.Quality), it.Identified)
 				stepResult.WriteString(il)
 				logger.Info("step: item", "loc", string(loc), "name", string(it.Name),
 					"pos", fmt.Sprintf("(%d,%d)", it.Position.X, it.Position.Y))
@@ -4943,6 +4949,35 @@ func main() {
 			}
 		}
 		return false
+	}
+	// INTENT LEDGER (the user's queue): one JOURNEY at a time. The loop re-decides every
+	// tick with priorities implicit in block order — fine for instant actions (a drink,
+	// a summon cast: 200ms, no steering), but two WALK-owning behaviors alternating wins
+	// is exactly the back-and-forth thrash. A claim grants the walk to one intent for a
+	// hold window; a different intent takes it early only by strictly outranking the
+	// holder (ties would flap). Wired so far: critloot(70) > combat contact(60) > combat
+	// engage(50) > loot(30) > objects(25). Survival drinking and corpse recovery run
+	// above/outside the ledger. Every transition is logged — the tuning ledger.
+	curIntent, curPrio := "", 0
+	var intentUntil time.Time
+	claim := func(name string, prio int, hold time.Duration) bool {
+		now := time.Now()
+		if name != curIntent && now.Before(intentUntil) && prio <= curPrio {
+			return false
+		}
+		if name != curIntent {
+			logger.Info("intent", "from", curIntent, "to", name, "prio", prio)
+		}
+		curIntent, curPrio, intentUntil = name, prio, now.Add(hold)
+		return true
+	}
+	// groundHeal mirrors beltHealPos generosity for GROUND items: vanilla heals, rejuvs,
+	// and the mod's Herb all count — the critical-pickup rule cares about drinkability,
+	// not species.
+	groundHeal := func(it data.Item) bool {
+		n := strings.ToLower(string(it.Name))
+		return strings.Contains(n, "healingpotion") || strings.Contains(n, "rejuvenation") ||
+			strings.Contains(n, "herb")
 	}
 	// DAMAGE WATCHDOG state. In melee the ONLY give-up path was stuckCount — which the bite branch
 	// resets on every tick — so a monster we cannot hurt was bitten until the run timer expired.
@@ -5394,6 +5429,73 @@ mainLoop:
 			}
 		}
 
+		// CRITICAL PICKUP (the user's priority rule): an EMPTY belt turns a ground heal into
+		// the highest journey there is — above engaging (a fight with no heals is how deaths
+		// happen), below true contact (never walk through a swing for a bottle) and below
+		// survival/corpse recovery, which run earlier and outside the ledger. Without this,
+		// the loot block's "no enemy within radius" safety made a dry-belt pickup IMPOSSIBLE
+		// while anything hostile lived nearby — greed-safety inverted into a death rule.
+		if *loot && chickenStreak == 0 {
+			if _, ok := beltHealPos(d); !ok {
+				contact := false
+				for _, m := range d.Monsters.Enemies() {
+					if m.Stats[stat.Life] > 0 && chebyshev(me, m.Position) <= 5 {
+						contact = true
+						break
+					}
+				}
+				if !contact {
+					bestDist := 1 << 30
+					var pot data.Item
+					havePot := false
+					for _, it := range d.Inventory.ByLocation(item.LocationGround) {
+						if bl, ok := lootBlacklist[it.UnitID]; ok && time.Since(bl) < 15*time.Second {
+							continue
+						}
+						if !groundHeal(it) {
+							continue
+						}
+						if dd := chebyshev(me, it.Position); dd < bestDist && dd <= *lootradius {
+							bestDist, pot, havePot = dd, it, true
+						}
+					}
+					if havePot && claim("critloot", 70, 1200*time.Millisecond) {
+						if bestDist <= 2 {
+							sx, sy := screenPointToward(me, me.X-pot.Position.X, me.Y-pot.Position.Y)
+							walkToHold(sx, sy, 150)
+							continue
+						}
+						if bestDist > 5 {
+							sx, sy := screenPointToward(me, pot.Position.X-me.X, pot.Position.Y-me.Y)
+							logger.Info("critloot: belt dry — going for ground heal", "name", string(pot.Name),
+								"dist", bestDist)
+							walkToHold(sx, sy, min(240, max(90, bestDist*9)))
+							continue
+						}
+						hoverPickClick(pot.Position, pot.UnitID)
+						still := false
+						for _, it := range gr.GetData().Inventory.ByLocation(item.LocationGround) {
+							if it.UnitID == pot.UnitID {
+								still = true
+								break
+							}
+						}
+						if still {
+							lootAttempts[pot.UnitID]++
+							if lootAttempts[pot.UnitID] >= 5 {
+								lootBlacklist[pot.UnitID] = time.Now()
+								delete(lootAttempts, pot.UnitID)
+							}
+						} else {
+							logger.Info("critloot: picked up heal", "name", string(pot.Name))
+							delete(lootAttempts, pot.UnitID)
+						}
+						continue
+					}
+				}
+			}
+		}
+
 		// SUMMON: the necro flywheel — attacks make corpses, corpses make skeletons, skeletons
 		// tank. Select the summon by its bound hotkey, cast at the nearest monster corpse; the
 		// next bite's -rabies press flips the right skill back to the attack. CLOSED LOOP: a
@@ -5423,7 +5525,18 @@ mainLoop:
 				}
 				summonCastPets = -1
 			}
-			if pets < *maxPets && time.Now().After(summonDisabledUntil) {
+			// SELF-AWARE ARMY CAP: skeleton count is a live fact — Raise Skeleton allows
+			// one skeleton per skill level (item bonuses included in the read), plus the
+			// golem in the same pet count. -maxpets froze the army at 4 while the skill
+			// grew to 5; the flag is now a FLOOR-only fallback for when the read is empty.
+			petCap := *maxPets
+			if pts, ok := d.PlayerUnit.Skills[skill.RaiseSkeleton]; ok && pts.Level > 0 {
+				petCap = int(pts.Level)
+				if *golemKey != "" {
+					petCap++ // the golem occupies a pet slot but not a skeleton slot
+				}
+			}
+			if pets < petCap && time.Now().After(summonDisabledUntil) {
 				best := 1 << 30
 				var corpsePos data.Position
 				for i := range d.Corpses {
@@ -6316,8 +6429,9 @@ mainLoop:
 
 			// LOOT (gated behind -loot): combat already has priority (we're only here because
 			// there's no live target), and survival already ran this tick. Never loot with an
-			// enemy still in engage range or while chickening — safety over greed.
-			if *loot && chickenStreak == 0 {
+			// enemy still in engage range or while chickening — safety over greed. The claim
+			// adds hysteresis: no diving at loot the instant a target blinks out of the list.
+			if *loot && chickenStreak == 0 && claim("loot", 30, 900*time.Millisecond) {
 				enemyNearby := false
 				for _, m := range d.Monsters.Enemies() {
 					if m.Stats[stat.Life] > 0 && chebyshev(me, m.Position) <= *radius {
@@ -6387,7 +6501,7 @@ mainLoop:
 			// OBJECTS (gated behind -objects): open chests / smash barrels / use selectable
 			// objects when idle and safe. Same hoverPickClick primitive as loot. Skips waypoints
 			// (would open the travel panel) and blacklists each object after use.
-			if *objects && chickenStreak == 0 {
+			if *objects && chickenStreak == 0 && claim("objects", 25, 900*time.Millisecond) {
 				enemyNearby := false
 				for _, m := range d.Monsters.Enemies() {
 					if m.Stats[stat.Life] > 0 && chebyshev(me, m.Position) <= *radius {
@@ -6524,6 +6638,16 @@ mainLoop:
 
 		dist := chebyshev(me, target.Position)
 		sx, sy := gameToScreen(gr, me.X, me.Y, target.Position.X, target.Position.Y)
+		// The fight holds the intent ledger like any other journey: contact outranks a
+		// critical pickup (never walk through a swing), plain engaging yields to it.
+		combatPrio := 50
+		if dist <= 8 {
+			combatPrio = 60
+		}
+		if !claim("combat", combatPrio, 900*time.Millisecond) {
+			time.Sleep(60 * time.Millisecond)
+			continue
+		}
 		// Attack mode for THIS tick, derived from live equipment/skills/bindings — see
 		// deriveCombat. Ranged (bow in hand): the legacy flag path, -attackrange engage.
 		// Not ranged: a bound damage spell casts at -castrange when mana allows; otherwise
@@ -6618,7 +6742,30 @@ mainLoop:
 				stuckCount++
 			}
 			lastDist = dist
-			if stuckCount >= 8 {
+			// SUMMONER PATIENCE: with engage=4 every target starts far, closing takes real
+			// time, and monsters dance with the skeletons — the old threshold blacklisted
+			// whole packs in seconds (observed: 9 blacklists in 6s, Den of Evil). If the
+			// ARMY is already on the target, Benji doesn't need to reach it at all: hold
+			// position and let them work.
+			stuckLimit := 8
+			if !prof.ranged {
+				stuckLimit = 20
+				if stuckCount >= 8 {
+					armyOnIt := false
+					for i := range d.Monsters {
+						if d.Monsters[i].IsPet() && chebyshev(d.Monsters[i].Position, target.Position) <= 8 {
+							armyOnIt = true
+							break
+						}
+					}
+					if armyOnIt {
+						stuckCount = 0
+						time.Sleep(250 * time.Millisecond)
+						continue
+					}
+				}
+			}
+			if stuckCount >= stuckLimit {
 				logger.Info("not closing on target, blacklisting", "dist", dist)
 				blacklist[targetID] = time.Now()
 				targetID = 0
