@@ -4693,7 +4693,11 @@ func main() {
 	// monster's computed feet position reads as "walk here" whenever the sprite isn't exactly
 	// there — the char shuffles in place instead of swinging (observed live). Sweep until the
 	// game itself reports the target hovered, then click THAT point; blind-click as last resort.
-	meleeSwing := func(targetID data.UnitID, world data.Position) bool {
+	// hoverAim sweeps the cursor over the target's sprite until the GAME confirms the hover
+	// lands on that unit — the one honest answer to "will this click hit?". Shared by the
+	// plain attack and (since the air-punching audit) every skill strike: a swing without a
+	// confirmed hover is a swing at air, no matter how right the math felt.
+	hoverAim := func(targetID data.UnitID, world data.Position) (int, int, bool) {
 		moveStop() // attack aim must not double as a walk order
 		me := gr.GetData().PlayerUnit.Position
 		bx, by := gameToScreen(gr, me.X, me.Y, world.X, world.Y)
@@ -4703,15 +4707,21 @@ func main() {
 				hid.AimPhysical(px, py)
 				time.Sleep(45 * time.Millisecond)
 				hd := gr.GetData().HoverData
-				if !hd.IsHovered || hd.UnitID != targetID {
-					continue
+				if hd.IsHovered && hd.UnitID == targetID {
+					return px, py, true
 				}
-				interactClick(px, py)
-				return true
 			}
 		}
-		interactClick(bx, by) // last resort — may register as a move, but keeps pressure on
-		return false
+		return bx, by, false
+	}
+	meleeSwing := func(targetID data.UnitID, world data.Position) bool {
+		if px, py, ok := hoverAim(targetID, world); ok {
+			interactClick(px, py)
+			return true
+		} else {
+			interactClick(px, py) // last resort — may register as a move, but keeps pressure on
+			return false
+		}
 	}
 
 	// fightThrough: when movement is blocked and something hostile is in reach, the smart move
@@ -6014,7 +6024,11 @@ mainLoop:
 		// survival/corpse recovery, which run earlier and outside the ledger. Without this,
 		// the loot block's "no enemy within radius" safety made a dry-belt pickup IMPOSSIBLE
 		// while anything hostile lived nearby — greed-safety inverted into a death rule.
-		if *loot && chickenStreak == 0 {
+		if *loot && chickenStreak == 0 &&
+			!(corpseTargetPos.X != 0 && chebyshev(me, corpseTargetPos) <= 40) {
+			// The second clause: when the corpse that ends the whole crisis is NEAR, the herb
+			// waits — the critloot claim (70) was observed dragging her off the corpse
+			// approach at dist 13, three tiles from pickup range.
 			if _, ok := beltHealPos(d); !ok {
 				contact := false
 				for _, m := range d.Monsters.Enemies() {
@@ -6571,20 +6585,11 @@ mainLoop:
 		if d.Corpse.Found && !d.Corpse.StateNotInteractable() {
 			corpseTargetPos = d.Corpse.Position
 		}
-		// WEAPON GATE (deaths 1-4 all at the pile camp): a bare-handed run at a corpse guarded
-		// by a 12x camp is a scheduled death — the weapon needed to win it is ON the corpse.
-		// Break the circle: no recovery attempts while weaponless (unless the corpse is in
-		// grab range) — fist-farm stragglers, loot any stick via gear hunger, THEN collect.
-		recoveryArmed := false
-		for _, eqw := range d.Inventory.ByLocation(item.LocationEquipped) {
-			if eqw.Location.BodyLocation == item.LocLeftArm || eqw.Location.BodyLocation == item.LocRightArm {
-				recoveryArmed = true
-				break
-			}
-		}
-		if corpseTargetPos.X != 0 && !oppFight &&
-			(recoveryArmed || chebyshev(me, corpseTargetPos) <= 15) &&
-			time.Since(corpseGiveUp) > 10*time.Minute {
+		// The crude weapon gate is gone (it blocked the one journey that ends the weaponless
+		// crisis): the don't-feed-the-camp assessment in the approach branch is the honest
+		// judge of whether a recovery attempt is suicide — it measures the ACTUAL pack, not
+		// a proxy rule from four deaths ago.
+		if corpseTargetPos.X != 0 && !oppFight && time.Since(corpseGiveUp) > 10*time.Minute {
 			if corpseRecoverStart.IsZero() {
 				corpseRecoverStart = time.Now()
 				logger.Info("corpse: recovery started", "pos", fmt.Sprintf("(%d,%d)", corpseTargetPos.X, corpseTargetPos.Y))
@@ -6646,6 +6651,26 @@ mainLoop:
 						roadHoldAt = time.Now()
 						time.Sleep(2100 * time.Millisecond) // commit — see the beeline note
 					}
+				} else if !d.PlayerUnit.Area.IsTown() &&
+					chebyshev(me, corpseWalkLastPos) < 3 && time.Since(corpseWalkMoveAt) > 8*time.Second {
+					// FIELD LAST-MILE: the planner oscillates at pond/rock collision (observed
+					// pinned at dist 13-15 for whole runs, three tiles from pickup range).
+					// Escalate exactly like a human hand: fresh key edge, aim at the corpse,
+					// commit to the stride, re-read. Two strides ≈ what freed her every time.
+					for stride := 0; stride < 2; stride++ {
+						mp := gr.GetData().PlayerUnit.Position
+						if chebyshev(mp, corpseTargetPos) <= 8 {
+							break
+						}
+						bx2, by2 := walkCarrot(gr, mp, corpseTargetPos.X, corpseTargetPos.Y)
+						moveStop()
+						time.Sleep(80 * time.Millisecond)
+						walkToHold(bx2, by2, 1600)
+						time.Sleep(1700 * time.Millisecond)
+					}
+					moveStop()
+					corpseWalkLastPos, corpseWalkMoveAt = gr.GetData().PlayerUnit.Position, time.Now()
+					logger.Warn("corpse: field last-mile strides", "pos", fmt.Sprintf("(%d,%d)", corpseWalkLastPos.X, corpseWalkLastPos.Y))
 				} else {
 					navWalk(me, corpseTargetPos)
 				}
@@ -7923,7 +7948,14 @@ mainLoop:
 				time.Sleep(60 * time.Millisecond)
 				switch gr.GetData().PlayerUnit.RightSkill {
 				case skill.Jab, skill.PowerStrike, skill.Throw:
-					hid.Click(game.RightButton, sx, sy)
+					// HOVER-CONFIRMED skill strike (the air-punching audit): the old path
+					// right-clicked at a screen position computed from a stale read — the
+					// monster steps aside, the click lands on ground, the skill swings at
+					// nothing. Only click when the game confirms the cursor is ON the target;
+					// a tick with no confirmation attacks nothing and re-aims next tick.
+					if px, py, ok := hoverAim(target.UnitID, target.Position); ok {
+						hid.Click(game.RightButton, px, py)
+					}
 				default:
 					meleeSwing(target.UnitID, target.Position)
 				}
