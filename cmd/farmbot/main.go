@@ -179,6 +179,7 @@ func main() {
 	autoProgress := flag.Bool("autoprogress", false, "farm along the act-1 route (Den of Evil -> Cold Plains -> Burial Grounds -> Stony Field -> Dark Wood -> Black Marsh), advancing when an area runs dry; position persisted across runs")
 	routeFlag := flag.String("route", "", "override the built-in -autoprogress route: comma list of areaID[:levelCap] stops (e.g. '2:6,3:12,17:18,4:99'). A stop with a levelCap also advances once the character reaches that level, so a low-level area doesn't hold a grown character all night.")
 	throwKey := flag.String("throw", "", "Throw hotkey (e.g. f2 on the amazon): outside a favorable engage, mid-range targets (5-22) eat a thrown weapon instead of a slow walk-in. Closed-loop: fires only when the selection actually flips to Throw and the stack holds >40 quantity (at 0 the stack vanishes). Empty disables.")
+	townHub := flag.String("townhub", "", "'x,y' town hub position (the respawn point) — stalled in-town navigation beelines here first, because every town road touches it. Auto-corrected by observed respawns.")
 	autoEquip := flag.Bool("autoequip", true, "equip usable backpack items into EMPTY armor/jewelry slots (torso/head/gloves/boots/belt/rings/amulet — never weapons) when calm. Closed loop: verified by the equipped list, cursor-stuck recovery puts the item back and disables the pass for the run.")
 	equipSlots := flag.String("equipslots", "tors:1565,225;head:1565,110;glov:1345,338;feet:1723,338;belt:1540,349;neck:1619,155;rrin:1432,357;lrin:1621,357", "paperdoll click pixels per gear body-slot code, 'tors:x,y;head:x,y;...' (calibrated from a live inventory screenshot 2026-07-18, Mamazon paperdoll, raw physical px). Empty disables -autoequip.")
 	summonKey := flag.String("summon", "", "summon hotkey (e.g. f2 = RaiseSkeleton): when pets are below -maxpets and a monster corpse is near, select the summon and cast it at the corpse; the next bite's -rabies press restores the attack skill")
@@ -4560,6 +4561,15 @@ func main() {
 	autoStatAt := time.Time{}
 	trapEscapeAt := time.Time{}
 	lastThrowAt := time.Time{}
+	// The town HUB: the respawn/campfire point every town road touches. Stalled town
+	// navigation beelines HERE first (the yard's south pocket has no direct west route —
+	// measured; from the hub the game's own pathfinder reaches the Blood Moor gate in
+	// seconds). Seeded by -townhub, corrected live by every observed respawn.
+	var townHubPos data.Position
+	if *townHub != "" {
+		fmt.Sscanf(*townHub, "%d,%d", &townHubPos.X, &townHubPos.Y)
+	}
+	beelineFlip := 0
 	autoEquipAt := time.Time{}
 	autoEquipDisabled := false
 	var gearTabs *gear.Tables
@@ -5729,6 +5739,13 @@ mainLoop:
 				break mainLoop
 			}
 			logger.Info("death: respawned in town", "via", respawnKey)
+			// The respawn point IS the town hub — record the truth every time (the seed-flag
+			// guess was 30 tiles off: Mamazon's first-login pos was where the USER stood, not
+			// the spawn; the real one sits on the west road by the Blood Moor gate).
+			if hp := gr.GetData().PlayerUnit.Position; hp.X != 0 {
+				townHubPos = hp
+				logger.Info("town hub recorded from respawn", "pos", fmt.Sprintf("(%d,%d)", hp.X, hp.Y))
+			}
 			// Rebuild what needs no corpse BEFORE marching out: the golem is free company for
 			// the naked corpse-run (summons died with us; skeletons must wait for field corpses).
 			if *golemKey != "" {
@@ -6633,9 +6650,28 @@ mainLoop:
 						// town (yard posts are objects, the panels between them are in NO data
 						// source). A raw directed force-hold is what actually moves here —
 						// measured 34 tiles per 2.5s hold while hand-piloting out of the yard.
-						// No monsters in town; just walk AT the goal.
-						bx, by := gameToScreen(gr, me.X, me.Y, gotoAim.X, gotoAim.Y)
-						logger.Warn("goto: no net movement — TOWN BEELINE force-hold", "pos", fmt.Sprintf("(%d,%d)", me.X, me.Y))
+						// HUB-FIRST: the yard's south pocket has no direct west route (measured:
+						// the plain beeline pushed the real fence for a minute) — head for the
+						// respawn hub, which every town road touches; from there the game's own
+						// pathfinder reaches the gate in seconds. Every third hold rotates the
+						// direction ±60° — a poor man's wall-slide for the corners.
+						tgt := gotoAim
+						if townHubPos.X != 0 && chebyshev(me, townHubPos) > 15 {
+							tgt = townHubPos
+						}
+						bx, by := gameToScreen(gr, me.X, me.Y, tgt.X, tgt.Y)
+						beelineFlip++
+						if beelineFlip%3 != 0 {
+							ang := math.Atan2(float64(by-cy), float64(bx-cx))
+							if beelineFlip%2 == 0 {
+								ang += 1.0
+							} else {
+								ang -= 1.0
+							}
+							bx, by = screenAngleCarrot(cx, cy, ang)
+						}
+						logger.Warn("goto: no net movement — TOWN BEELINE force-hold", "pos", fmt.Sprintf("(%d,%d)", me.X, me.Y),
+							"hub", tgt == townHubPos, "flip", beelineFlip%3)
 						walkToHold(bx, by, 2000)
 					} else {
 						logger.Warn("goto: no net movement — open burst", "pos", fmt.Sprintf("(%d,%d)", me.X, me.Y))

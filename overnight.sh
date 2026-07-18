@@ -28,7 +28,7 @@ for i in $(seq 1 36); do
     -werewolf "" -rabies "" -spirit "" -wolves "" -creeper "" \
     -summon "" -golem "" -melee f1 -throw f2 -meleebelow 10 -attackrange 4 \
     -loot -objects -autoprogress -route "2:6,3:12,17:18,4:99" \
-    -tp f3 -idkey f4 -cubekey "" -tripitems 22 \
+    -tp f3 -idkey f4 -cubekey "" -tripitems 22 -townhub "5992,4941" \
     -autostat "347,305,347,428,347,552" \
     -autoskill "1523,201,1651,279,9,3;1380,201,1397,279,10,6;1523,201,1524,365,13,2;1523,201,1524,625,29,2;1523,201,1651,449,23,3;1523,201,1651,279,9,10;1380,201,1397,279,10,15;1523,201,1651,449,23,10;1523,201,1524,365,13,8;1523,201,1524,625,29,8" \
     > logs/overnight_$i.log 2>&1

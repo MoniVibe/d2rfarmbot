@@ -16,13 +16,13 @@ if [ "$1" = "resume" ]; then
   exit 0
 fi
 if [ "$1" = "hold" ]; then
-  RL=$(ls -t logs/overnight_[0-9]*.log logs/devrun_*.log 2>/dev/null | head -1)
-  N0=$(grep -c "STEP MODE" "$RL" 2>/dev/null || echo 0)
+  RL=$(ls -t logs/overnight_[0-9]*.log logs/devrun_*.log logs/manual_*.log 2>/dev/null | head -1)
+  N0=$(grep -c "STEP MODE" "$RL" 2>/dev/null); N0=${N0:-0}
   for i in $(seq 1 20); do
     echo hold > logs/control.txt
     sleep 2
-    N1=$(grep -c "STEP MODE" "$RL" 2>/dev/null || echo 0)
-    if [ "${N1:-0}" -gt "${N0:-0}" ]; then
+    N1=$(grep -c "STEP MODE" "$RL" 2>/dev/null); N1=${N1:-0}
+    if [ "$N1" -gt "$N0" ]; then
       echo "hold CONFIRMED (write $i, log $RL)"
       exit 0
     fi
