@@ -14,15 +14,31 @@ import (
 	"time"
 	"unsafe"
 
+	"github.com/hectorgimenez/d2go/pkg/data"
 	"github.com/hectorgimenez/koolo/internal/azbot/memory"
 	"github.com/hectorgimenez/koolo/internal/azbot/motor"
 	"github.com/hectorgimenez/koolo/internal/azbot/percept"
 	"github.com/hectorgimenez/koolo/internal/azbot/sentinel"
+	"github.com/hectorgimenez/koolo/internal/azbot/verbs"
 	"github.com/hectorgimenez/koolo/internal/config"
 	"github.com/hectorgimenez/koolo/internal/game"
 	"github.com/lxn/win"
 	"golang.org/x/sys/windows"
 )
+
+func chebyshev(a, b data.Position) int {
+	dx, dy := a.X-b.X, a.Y-b.Y
+	if dx < 0 {
+		dx = -dx
+	}
+	if dy < 0 {
+		dy = -dy
+	}
+	if dx > dy {
+		return dx
+	}
+	return dy
+}
 
 func findD2RPID() uint32 {
 	snap, err := windows.CreateToolhelp32Snapshot(windows.TH32CS_SNAPPROCESS, 0)
@@ -86,10 +102,11 @@ func main() {
 	seconds := flag.Int("seconds", 3600, "run duration in seconds")
 	dpiScale := flag.Float64("dpiscale", 1.25, "display scale (this laptop: 1.25)")
 	moveKey := flag.String("move", "e", "Force Move key (D2R Options>Controls binding)")
-	killKey := flag.String("killswitch", "pause", "hotkey to toggle bot control (pause|f9..f12|scrolllock|single letter). Disengage heals all input patches — the human owns Diablo instantly.")
+	killKey := flag.String("killswitch", "f12", "hotkey to toggle bot control (f9..f12|pause|scrolllock|single letter). Disengage heals all input patches — the human owns Diablo instantly.")
 	belt := flag.String("belt", "1,2,3,4", "belt column keys")
 	drinkAt := flag.Int("drinkat", 55, "sentinel drinks at or below this HP%")
 	memDir := flag.String("memdir", "logs/azmem", "memory store directory (WAL)")
+	roadTest := flag.Bool("roadtest", false, "M2 soak: walk the measured town road out and back on Stride verbs, print the outcome histogram, exit")
 	logger := slog.New(slog.NewTextHandler(os.Stdout, nil))
 
 	flag.Parse()
@@ -174,6 +191,42 @@ func main() {
 	})
 	go sen.Run(stop)
 	logger.Info("sentinel live", "killswitch", *killKey, "drinkAt", *drinkAt)
+
+	// ---- M2 road test: walk the measured town road on Stride verbs, ledger everything ----
+	if *roadTest {
+		led := verbs.NewLedger(512)
+		led.Sink = func(o verbs.Outcome) {
+			logger.Info("outcome", "verb", o.Verb, "result", o.Result.String(), "ev", o.Evidence)
+		}
+		// Seed the hand-piloted road as facts (provenance recorded once, consumed as data).
+		road := []data.Position{{X: 6020, Y: 4952}, {X: 5992, Y: 4941}, {X: 5963, Y: 5001}, {X: 5962, Y: 4956}, {X: 5952, Y: 4944}}
+		mem.PutJSON("road.town.blood_moor_gate", memory.ScopeSeed,
+			memory.Provenance{Source: "hand-piloted", Evidence: "2026-07-18 sessions, seed 466817790"}, road)
+		course := append(append([]data.Position{}, road...), road[len(road)-2], road[0]) // out and back
+		hist := map[string]int{}
+		for wi, wp := range course {
+			for tries := 0; tries < 12; tries++ {
+				s := p.Capture()
+				if !s.Valid {
+					time.Sleep(300 * time.Millisecond)
+					continue
+				}
+				if chebyshev(s.Me.Pos, wp) <= 6 {
+					logger.Info("roadtest: waypoint reached", "i", wi, "wp", fmt.Sprintf("(%d,%d)", wp.X, wp.Y))
+					break
+				}
+				if !m.Engage.Engaged() {
+					time.Sleep(500 * time.Millisecond) // human has the controls; wait politely
+					continue
+				}
+				o := verbs.Stride{To: wp}.Do(m, gr, p, led, "roadtest")
+				hist[o.Result.String()]++
+			}
+		}
+		logger.Info("roadtest: histogram", "results", fmt.Sprintf("%v", hist))
+		close(stop)
+		return
+	}
 
 	// ---- M1 executive skeleton: perceive on cadence, report status. Activities in M2+. ----
 	deadline := time.Now().Add(time.Duration(*seconds) * time.Second)
