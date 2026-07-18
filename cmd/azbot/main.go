@@ -126,6 +126,9 @@ func main() {
 	repairXY := flag.String("repairxy", "", "client x,y of the repair button (measured from logs/charsi_shop.png)")
 	akaraTest := flag.Bool("akaratest", false, "manual harness: find Akara, open TRADE, dump belt self-model + her readable stock (LocationVendor), screenshot for slot calibration; with -buy also execute the restock plan (1 row mana, rest HP) and report gold/belt deltas, exit")
 	buyPots := flag.Bool("buy", false, "akaratest: execute the potion purchases (needs gold)")
+	gambleBuy := flag.String("gamblebuy", "", "gamble-buy the item at client pixel 'x,y' and read the rolled result the same frame (gold delta + full affix dump)")
+	gambleRefresh := flag.Bool("gamblerefresh", false, "read the parked cursor as the refresh button, click it, verify the stock re-rolls")
+	gambleDump := flag.Bool("gambledump", false, "PURE READ: dump the open gamble/vendor screen's stock with quality+affixes+stats — tests the pre-roll hypothesis, touches nothing")
 	invDump := flag.Bool("invdump", false, "dump inventory/belt/equipped with NUMERIC item IDs (the mod scrambles names; IDs cannot lie), exit")
 	shopPick := flag.String("shoppick", "", "akaratest: uiClick a client pixel 'x,y', read the item that lands on the CURSOR (true identity from memory), then click again to put it back — the click-based slot oracle")
 	shopMap := flag.String("shopmap", "", "akaratest: hover-sweep the shop panel 'x0,y0,x1,y1,step' and log which stock item the GAME says is hovered at each point — builds the true pixel map empirically")
@@ -223,6 +226,112 @@ func main() {
 	logger.Info("director", "goal", *goal)
 
 	// ---- M4 fight test: calibrate capability, cross to Blood Moor, strike with evidence ----
+	if *gambleRefresh {
+		// The owner parked the REAL cursor on the mod's refresh button — read it,
+		// convert to client pixels, record, click it, and verify the stock changes.
+		var pt struct{ X, Y int32 }
+		windows.NewLazySystemDLL("user32.dll").NewProc("GetCursorPos").Call(uintptr(unsafe.Pointer(&pt)))
+		cx := int(pt.X) - int(float64(gr.WindowLeftX)*(*dpiScale))
+		cy := int(pt.Y) - int(float64(gr.WindowTopY)*(*dpiScale))
+		logger.Info("gamblerefresh: parked cursor", "screen", fmt.Sprintf("(%d,%d)", pt.X, pt.Y),
+			"client", fmt.Sprintf("(%d,%d)", cx, cy))
+		stockSig := func() string {
+			sig := ""
+			for _, it := range gr.GetData().Inventory.ByLocation(item.LocationVendor) {
+				sig += fmt.Sprintf("%d@%d,%d;", it.ID, it.Position.X, it.Position.Y)
+			}
+			return sig
+		}
+		before := stockSig()
+		m.UIClick(cx, cy)
+		time.Sleep(700 * time.Millisecond)
+		after := stockSig()
+		if before == after {
+			// Panel click deaf on this button — the mod UI may honor only REAL input.
+			logger.Info("gamblerefresh: uiClick deaf — trying OS-level real click (foregrounding)")
+			win.SetForegroundWindow(hwnd)
+			time.Sleep(400 * time.Millisecond)
+			game.SendClickRealScreen(int(pt.X), int(pt.Y))
+			time.Sleep(900 * time.Millisecond)
+			after = stockSig()
+		}
+		logger.Info("gamblerefresh: result", "changed", before != after, "itemsBefore", strings.Count(before, ";"), "itemsAfter", strings.Count(after, ";"))
+		for _, it := range gr.GetData().Inventory.ByLocation(item.LocationVendor) {
+			logger.Info("gamblerefresh: stock now", "id", it.ID, "name", string(it.Name), "gx", it.Position.X, "gy", it.Position.Y)
+		}
+		close(stop)
+		return
+	}
+
+	if *gambleBuy != "" {
+		var bx, by int
+		if _, err := fmt.Sscanf(*gambleBuy, "%d,%d", &bx, &by); err != nil {
+			logger.Error("bad -gamblebuy")
+			close(stop)
+			return
+		}
+		goldOf := func() int {
+			if v, ok := gr.GetData().PlayerUnit.BaseStats.FindStat(stat.Gold, 0); ok {
+				return v.Value
+			}
+			return 0
+		}
+		invSig := func() map[string]bool {
+			sig := map[string]bool{}
+			for _, it := range gr.GetData().Inventory.ByLocation(item.LocationInventory) {
+				sig[fmt.Sprintf("%d@%d,%d", it.ID, it.Position.X, it.Position.Y)] = true
+			}
+			return sig
+		}
+		g0, inv0 := goldOf(), invSig()
+		m.UIClick(bx, by)
+		time.Sleep(700 * time.Millisecond)
+		if goldOf() == g0 {
+			logger.Info("gamblebuy: uiClick deaf — real click fallback")
+			win.SetForegroundWindow(hwnd)
+			time.Sleep(400 * time.Millisecond)
+			game.SendClickRealScreen(int(float64(gr.WindowLeftX)*(*dpiScale))+bx, int(float64(gr.WindowTopY)*(*dpiScale))+by)
+			time.Sleep(900 * time.Millisecond)
+		}
+		g1 := goldOf()
+		logger.Info("gamblebuy: transaction", "goldDelta", g1-g0, "gold", g1)
+		// THE ORACLE MOMENT: read the rolled result the same frame it exists.
+		for _, it := range gr.GetData().Inventory.ByLocation(item.LocationInventory) {
+			if !inv0[fmt.Sprintf("%d@%d,%d", it.ID, it.Position.X, it.Position.Y)] {
+				logger.Info("gamblebuy: RESULT", "id", it.ID, "name", string(it.Name),
+					"quality", int(it.Quality), "identified", it.Identified, "idName", it.IdentifiedName,
+					"prefixes", fmt.Sprintf("%v", it.Affixes.Magic.Prefixes),
+					"suffixes", fmt.Sprintf("%v", it.Affixes.Magic.Suffixes), "stats", len(it.Stats))
+				for _, st := range it.Stats {
+					logger.Info("gamblebuy: result stat", "id", int(st.ID), "value", st.Value)
+				}
+			}
+		}
+		close(stop)
+		return
+	}
+
+	if *gambleDump {
+		d := gr.GetData()
+		for _, it := range d.Inventory.ByLocation(item.LocationVendor) {
+			pre, suf := it.Affixes.Magic.Prefixes, it.Affixes.Magic.Suffixes
+			nStats := len(it.Stats)
+			logger.Info("gambledump", "id", it.ID, "name", string(it.Name),
+				"pos", fmt.Sprintf("(%d,%d)", it.Position.X, it.Position.Y),
+				"quality", int(it.Quality), "identified", it.Identified,
+				"idName", it.IdentifiedName,
+				"prefixes", fmt.Sprintf("%v", pre), "suffixes", fmt.Sprintf("%v", suf),
+				"stats", nStats, "store", it.InTradeOrStoreScreen)
+		}
+		g := 0
+		if v, ok := d.PlayerUnit.BaseStats.FindStat(stat.Gold, 0); ok {
+			g = v.Value
+		}
+		logger.Info("gambledump: gold", "gold", g)
+		close(stop)
+		return
+	}
+
 	if *invDump {
 		d := gr.GetData()
 		for _, loc := range []item.LocationType{item.LocationInventory, item.LocationBelt, item.LocationEquipped, item.LocationCursor} {
