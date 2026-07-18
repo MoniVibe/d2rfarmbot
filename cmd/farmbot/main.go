@@ -6517,12 +6517,24 @@ mainLoop:
 								hid.MovePointer(hx, hy)
 								time.Sleep(120 * time.Millisecond)
 								hd := gr.GetData().HoverData
+								if hd.IsHovered {
+									logger.Info("goto: spiral hover hit", "unitType", hd.UnitType,
+										"unitID", int(hd.UnitID), "at", fmt.Sprintf("(%d,%d)", hx, hy))
+								}
 								if hd.IsHovered && (hd.UnitType == 5 || hd.UnitType == 2) {
 									logger.Info("goto: ENTRANCE HOVER confirmed — clicking",
 										"unitType", hd.UnitType, "at", fmt.Sprintf("(%d,%d)", hx, hy))
 									hid.Click(game.LeftButton, hx, hy)
 									time.Sleep(1000 * time.Millisecond)
 								}
+								continue
+							}
+							// Approach RIDES THE MOVER (click gait pathfinds around the rock
+							// lip — the straight push rubbed the wall, per the user's eyes);
+							// only the last tiles get the straight contact shove.
+							if chebyshev(me, steerTgt) > 4 {
+								navWalk(me, steerTgt)
+								time.Sleep(80 * time.Millisecond)
 								continue
 							}
 							sx, sy := screenPointToward(me, steerTgt.X-me.X, steerTgt.Y-me.Y)
