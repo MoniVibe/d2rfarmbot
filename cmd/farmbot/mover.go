@@ -30,7 +30,12 @@ const (
 	MoveBlocked // no net progress and no plan improves it — caller decides (fight/abandon)
 )
 
+// wedges are ACTUATION-TRUTH obstacles: spots where the game refused passage the grid
+// claimed was walkable (river banks with bad collision, invisible fence pockets). Recorded
+// by the stall watchdogs, fed into every plan and the direct-line check — the map prior
+// lies, the game's refusal doesn't.
 type Mover struct {
+	wedges []data.Position
 	gr   *game.MemoryReader
 	live *Navigator // partial but mod-accurate
 	full *Navigator // whole-area map prior (nil when unavailable/untrusted)
@@ -62,6 +67,26 @@ func NewMover(gr *game.MemoryReader, live, full *Navigator,
 func (m *Mover) Rebind(live, full *Navigator) {
 	m.live, m.full = live, full
 	m.dest = data.Position{}
+}
+
+// SetWedges replaces the refusal list (see wedges field doc).
+func (m *Mover) SetWedges(w []data.Position) { m.wedges = w }
+
+// lineHitsWedge reports whether the segment a->b passes within 2 of a recorded refusal.
+func (m *Mover) lineHitsWedge(a, b data.Position) bool {
+	steps := max(abs(b.X-a.X), abs(b.Y-a.Y))
+	for _, w := range m.wedges {
+		for i := 0; i <= steps; i++ {
+			p := a
+			if steps > 0 {
+				p = data.Position{X: a.X + (b.X-a.X)*i/steps, Y: a.Y + (b.Y-a.Y)*i/steps}
+			}
+			if chebyshev(p, w) <= 2 {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 // losClear reports whether the straight segment a->b crosses only walkable cells of g.
@@ -166,17 +191,24 @@ func (m *Mover) Step(me data.Position, dest data.Position) MoveStatus {
 	}
 
 	// Direct line? Skip planning entirely — the measured 0.98-efficiency straight walk.
-	if losClear(grid, me, dest) {
+	// (Unless the line crosses a recorded refusal — the grid lies there.)
+	if losClear(grid, me, dest) && !m.lineHitsWedge(me, dest) {
 		sx, sy := m.toScreen(me, dest.X-me.X, dest.Y-me.Y)
 		m.walkToHold(sx, sy, 300)
 		return MoveMoving
 	}
 
+	if !nv.havePlan {
+		nv.SetObstacles(m.wedges) // refusals block planning even when the grid disagrees
+	}
 	if !nv.havePlan && !nv.BuildPlan(me, dest, time.Now()) {
 		// This planner can't reach it — try the other before giving the caller a carrot shrug.
 		alt := m.full
 		if nv == m.full {
 			alt = m.live
+		}
+		if alt != nil && !alt.havePlan {
+			alt.SetObstacles(m.wedges)
 		}
 		if alt != nil && (alt.havePlan || alt.BuildPlan(me, dest, time.Now())) {
 			nv = alt

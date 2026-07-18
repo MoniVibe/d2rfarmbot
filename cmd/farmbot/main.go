@@ -3948,9 +3948,14 @@ func main() {
 	// the movelab-winning LOS-lookahead executor with closed-loop stall handling. Planners are
 	// re-pointed every call because nav setup / realign rebuild them. MoveBlocked means the
 	// mover exhausted planner fallback + clearance escape — bring violence.
+	// wedges: spots where the game refused passage the grid claimed walkable — recorded by
+	// the stall watchdogs, cleared on area change. Fed to every planner (see mover.go doc).
+	var wedges []data.Position
+	var gotoAim data.Position // the travel aim this tick (candidate approach or mapped exit)
 	mover := NewMover(gr, nil, nil, walkToHold, screenPointToward, openBurst)
 	navWalk := func(me, dest data.Position) {
 		mover.live, mover.full = navi, mapNavi
+		mover.SetWedges(wedges)
 		if mover.Step(me, dest) == MoveBlocked {
 			if fightThrough(gr.GetData(), me) {
 				logger.Info("navWalk: blocked — fighting through")
@@ -4352,6 +4357,7 @@ mainLoop:
 				walkables, walkCentroid = computeWalk(g)
 				buildMapNavi()
 				posHist, exploreDest, badDests, gotoCross = nil, data.Position{}, nil, nil
+				wedges, gotoAim = nil, data.Position{}
 				exploreBestDist, exploreBestAt = 1<<30, time.Now()
 				exitSeekExit, exitSeekBestDist = data.Position{}, 1<<30
 				exitDetourDest, exitDetourUntil = data.Position{}, time.Time{}
@@ -4750,21 +4756,38 @@ mainLoop:
 			// physical wedge the grid can't see (fence pockets the live town collision marks
 			// walkable) would freeze travel forever — measured twice, minutes of bit-identical
 			// position while "walking". No net movement for 8s -> unstick burst + rotate + replan.
-			if chebyshev(me, gotoLastPos) > 2 {
-				gotoLastPos, gotoProgressAt = me, time.Now()
-			}
+			// NET displacement over a FIXED 5s window — the old anchor reset on any 2-tile
+			// frame-to-frame move, so a physical wedge with ±3-tile jitter never tripped it
+			// (measured: minutes at the Cold Plains gate, committedS pinned at 0, sh flat).
 			if time.Since(gotoProgressAt) > 5*time.Second {
-				if fightThrough(d, me) {
-					logger.Info("goto: blocked — fighting through")
-					gotoProgressAt = time.Now()
-					continue
+				if chebyshev(me, gotoLastPos) <= 4 { // jitter, not travel
+					if fightThrough(d, me) {
+						logger.Info("goto: blocked — fighting through")
+						gotoLastPos, gotoProgressAt = me, time.Now()
+						continue
+					}
+					// Record the refusal: the cells just AHEAD (toward the aim) are where the
+					// game said no — poison them so every replan routes around, not through.
+					if gotoAim.X != 0 {
+						dx, dy := gotoAim.X-me.X, gotoAim.Y-me.Y
+						n := max(abs(dx), abs(dy))
+						if n > 0 {
+							w := data.Position{X: me.X + dx*3/n, Y: me.Y + dy*3/n}
+							wedges = append(wedges, w)
+							if len(wedges) > 40 {
+								wedges = wedges[len(wedges)-40:]
+							}
+							logger.Warn("goto: passage refused — wedge recorded",
+								"at", fmt.Sprintf("(%d,%d)", w.X, w.Y), "wedges", len(wedges))
+						}
+					}
+					logger.Warn("goto: no net movement — open burst", "pos", fmt.Sprintf("(%d,%d)", me.X, me.Y))
+					openBurst(me)
+					if len(gotoCross) > 0 {
+						gotoIdx, gotoTryAt = (gotoIdx+1)%len(gotoCross), time.Now()
+					}
+					navi.havePlan = false
 				}
-				logger.Warn("goto: no net movement — open burst", "pos", fmt.Sprintf("(%d,%d)", me.X, me.Y))
-				openBurst(me)
-				if len(gotoCross) > 0 {
-					gotoIdx, gotoTryAt = (gotoIdx+1)%len(gotoCross), time.Now()
-				}
-				navi.havePlan = false
 				gotoLastPos = gr.GetData().PlayerUnit.Position
 				gotoProgressAt = time.Now()
 				continue
@@ -4799,6 +4822,7 @@ mainLoop:
 				// straight at it degenerates into an instant-arrive/replan loop with ZERO movement),
 				// and refresh the live grid as rooms stream in so the frontier advances.
 				if exit, ok := mapExitTo(d, hopTarget); ok {
+					gotoAim = exit
 					if time.Since(gotoBorderSeekLog) > 5*time.Second {
 						logger.Info("goto: seeking exit (border rooms not loaded)",
 							"hop", int(hopTarget), "exit", fmt.Sprintf("(%d,%d)", exit.X, exit.Y),
@@ -4975,11 +4999,13 @@ mainLoop:
 					navi.havePlan = false
 				}
 				ap, cr := gotoCross[gotoIdx][0], gotoCross[gotoIdx][1]
+				gotoAim = ap
 				// (Re)plan to the current approach point when needed, feeding live objects (chests,
 				// stalls, the well, NPCs) as obstacles so the route goes AROUND them — they block
 				// movement but aren't in the static tile grid.
 				if !navi.havePlan || navi.goal != ap {
 					obs := make([]data.Position, 0, 64)
+					obs = append(obs, wedges...) // recorded refusals outrank the grid
 					for _, o := range d.Objects {
 						// Only objects that physically COLLIDE. d.Objects is now populated from the
 						// unit table everywhere (it used to be empty without map data), and feeding
