@@ -3912,7 +3912,11 @@ func main() {
 	corpseGoneStreak := 0
 	autoSkillAt := time.Time{}
 	progressTarget := 0
-	progressRoute := []int{8, 3, 9, 4, 5, 6} // Den of Evil, Cold Plains, Burial Grounds, Stony Field, Dark Wood, Black Marsh
+	// NOTE: 17 is Burial Grounds. The old table had 9 here believing it was Burial — but 9 is
+	// CAVE LEVEL 1 (d2go area.go), so the route marched into the cave all night (two deaths,
+	// hours of "lost near y~5380" = the cave entrance) while actual Burial Grounds visits —
+	// including a clean Blood Raven kill — were walk-through-entrance ACCIDENTS.
+	progressRoute := []int{8, 3, 17, 4, 5, 6} // Den of Evil, Cold Plains, Burial Grounds, Stony Field, Dark Wood, Black Marsh
 	routeIdx := 0
 	routeStateFile := filepath.Join("logs", "route_state.txt")
 	if b, err := os.ReadFile(routeStateFile); err == nil {
