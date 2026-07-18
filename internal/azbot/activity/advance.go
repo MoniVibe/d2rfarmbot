@@ -31,8 +31,12 @@ import (
 
 // BorderKey is the WAL fact key for a learned crossing: the position on the FROM side
 // where the transition to TO fired. Written by the executive's cartographer on every
-// area change; consumed here as layer-1 door knowledge.
-func BorderKey(from, to area.ID) string { return fmt.Sprintf("border.%d.%d", int(from), int(to)) }
+// area change; consumed here as layer-1 door knowledge. SEED-NAMESPACED: the map seed
+// re-rolls every new game (measured 2026-07-19, relog drill: 466817790 → 1502982702),
+// so door geometry from one world must never steer another.
+func BorderKey(seed uint, from, to area.ID) string {
+	return fmt.Sprintf("border.%d.%d.%d", seed, int(from), int(to))
+}
 
 // Leg is one stop on an itinerary: the area, and the character level that makes entering
 // it worthwhile. Under-leveled → Advance stops bidding and she grinds where she stands
@@ -103,7 +107,18 @@ func (a *Advance) place(ar area.ID) int {
 }
 
 func (a *Advance) Demand(s *percept.Snapshot) *arbiter.Demand {
-	if !s.Valid || s.Me.InTown || s.Me.HPPct < 50 || len(a.Itinerary) < 2 {
+	if !s.Valid || len(a.Itinerary) < 2 {
+		return nil
+	}
+	// In town Advance IS the way out (the live border oracle reads the gate from
+	// anywhere — seed-independent, unlike the hand-piloted road): bid unless the town
+	// errands are waiting. Town is safe, so the HP floor drops (no regen in town; a
+	// 58%-HP amazon once idled at the well forever waiting to feel better).
+	if s.Me.InTown {
+		if ServicesPending(s) || s.Me.HPPct < 30 {
+			return nil
+		}
+	} else if s.Me.HPPct < 50 {
 		return nil
 	}
 	idx := a.place(s.Me.Area)
@@ -126,11 +141,8 @@ func (a *Advance) Step(ctx *Ctx) Verdict {
 	if !s.Valid {
 		return Running
 	}
-	if s.Me.InTown {
-		a.resetLeg(s.Me.Pos)
-		return Done // a Breakout portal took her home; Travel/Return own the way back
-	}
 	// Adopt where the world says we are (crossings, deaths, portals all land here).
+	// Town is just another node: the BFS routes town→BloodMoor→... like any other hop.
 	if i := a.place(s.Me.Area); i != a.idx {
 		a.idx = i
 		a.resetLeg(s.Me.Pos)
@@ -204,7 +216,7 @@ func (a *Advance) Step(ctx *Ctx) Verdict {
 func (a *Advance) borderTarget(ctx *Ctx, d game.Data, hop area.ID, me data.Position) (data.Position, bool) {
 	if ctx.Mem != nil {
 		var p data.Position
-		if ctx.Mem.GetJSON(BorderKey(d.PlayerUnit.Area, hop), &p) && p.X != 0 {
+		if ctx.Mem.GetJSON(BorderKey(ctx.GR.MapSeed(), d.PlayerUnit.Area, hop), &p) && p.X != 0 {
 			return p, true
 		}
 	}
@@ -271,7 +283,7 @@ func (a *Advance) knownDoor(ctx *Ctx, d game.Data, pos data.Position) bool {
 	}
 	for _, al := range ad.AdjacentLevels {
 		var p data.Position
-		if ctx.Mem.GetJSON(BorderKey(d.PlayerUnit.Area, al.Area), &p) && p.X != 0 &&
+		if ctx.Mem.GetJSON(BorderKey(ctx.GR.MapSeed(), d.PlayerUnit.Area, al.Area), &p) && p.X != 0 &&
 			chebyshev(p, pos) <= 8 {
 			return true
 		}

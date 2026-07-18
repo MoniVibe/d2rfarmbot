@@ -127,6 +127,13 @@ type Perceptor struct {
 	gr   *game.MemoryReader
 	seq  atomic.Uint64
 	last atomic.Pointer[Snapshot]
+	// Corpse latch: the live corpse unit exists only while its rooms are streamed in,
+	// so a town respawn "loses" the body (measured 2026-07-19: Reclaim never bid, naked
+	// Fight punched the swarm). The Perceptor itself witnesses the death and remembers
+	// where the body fell until the gear comes back.
+	corpseLatch    data.Position
+	corpseLatched  bool
+	lastAliveArmed bool
 }
 
 func New(gr *game.MemoryReader) *Perceptor { return &Perceptor{gr: gr} }
@@ -228,6 +235,17 @@ func (p *Perceptor) Capture() *Snapshot {
 	if d.Corpse.Found {
 		s.Me.CorpseFound = true
 		s.Me.CorpsePos = d.Corpse.Position
+		p.corpseLatch, p.corpseLatched = d.Corpse.Position, true // refresh with live truth
+	} else if s.Me.HPPct <= 0 && !s.Me.InTown {
+		// Witness the death: the body falls where she stands.
+		p.corpseLatch, p.corpseLatched = pos, true
+	} else if p.corpseLatched {
+		if s.Me.Armed {
+			p.corpseLatched = false // gear is back — the latch served its purpose
+		} else {
+			s.Me.CorpseFound = true // the remembered body, beyond the streamed rooms
+			s.Me.CorpsePos = p.corpseLatch
+		}
 	}
 	s.Me.MinDurPct = 100
 	for _, eq := range d.Inventory.ByLocation(item.LocationEquipped) {

@@ -135,6 +135,9 @@ func main() {
 	shopMap := flag.String("shopmap", "", "akaratest: hover-sweep the shop panel 'x0,y0,x1,y1,step' and log which stock item the GAME says is hovered at each point — builds the true pixel map empirically")
 	exitProbe := flag.Bool("exitprobe", false, "PURE READ: dump the current area's AdjacentLevels (raw + live-translated), live entrance units, and the BFS hop toward the next Act 1 leg — validates the crossing knowledge before the Advance activity trusts it")
 	missileProbe := flag.Int("missileprobe", 0, "PURE READ: sample the missile table for N seconds and print every projectile with measured velocity — validates the dodge oracle (stand near something that shoots)")
+	relogTest := flag.Bool("relogtest", false, "manual harness, staged: alone = open the pause menu, screenshot it (logs/relog_pausemenu.png), close it. With -exitxy = click Save+Exit, screenshot the main menu (logs/relog_mainmenu.png). With -playxy too = full relog loop, verify the corpse materialized in town")
+	exitXY := flag.String("exitxy", "", "relogtest: screenshot x,y of the pause menu's Save and Exit button")
+	playXY := flag.String("playxy", "", "relogtest: screenshot x,y of the main menu's Play button")
 	logger := slog.New(slog.NewTextHandler(os.Stdout, nil))
 
 	flag.Parse()
@@ -197,7 +200,7 @@ func main() {
 		time.Sleep(500 * time.Millisecond)
 	}
 	logger.Info("attach report", "verdict", report.String())
-	if !report.OK() {
+	if !report.OK() && !*relogTest {
 		logger.Error("EPISTEMICS GATE FAILED — refusing to run on garbage reads. Is a character in-game?")
 		return
 	}
@@ -322,6 +325,99 @@ func main() {
 			}
 			time.Sleep(70 * time.Millisecond)
 		}
+		close(stop)
+		return
+	}
+
+	if *relogTest {
+		// THE RELOG RITUAL, drilled in stages (the owner's ask: exit game and relog so
+		// the corpse materializes IN TOWN — no naked suicide runs across the moor).
+		// Menus read hardware-level input only: foreground + SendKeyReal/SendClickRealScreen.
+		shot := func(path string) {
+			if f, err := os.Create(path); err == nil {
+				_ = png.Encode(f, gr.Screenshot())
+				f.Close()
+				logger.Info("relogtest: screenshot", "path", path)
+			}
+		}
+		// Screenshot pixels are PHYSICAL client px (1920-wide); SendClickRealScreen wants
+		// LOGICAL screen coords (the DPI-unaware process's 1536-wide desktop): divide by
+		// the display scale, then add the logical client origin. Validated against the
+		// gamble-refresh pair: shot(569,744) ↔ logical screen (455,583).
+		toScreen := func(px, py int) (int, int) {
+			return int(float64(px)/(*dpiScale)) + gr.WindowLeftX, int(float64(py)/(*dpiScale)) + gr.WindowTopY
+		}
+		win.SetForegroundWindow(hwnd)
+		time.Sleep(400 * time.Millisecond)
+		atMenu := !report.OK() // already OUT of the game (character select): skip the exit phase
+		if atMenu && *playXY == "" {
+			shot("logs/relog_mainmenu.png")
+			logger.Info("relogtest: at the menu already — measure Play, rerun with -playxy")
+			close(stop)
+			return
+		}
+		if !atMenu {
+			game.SendKeyReal(0x1B) // ESC — the pause menu
+			time.Sleep(900 * time.Millisecond)
+		}
+		if !atMenu && *exitXY == "" {
+			shot("logs/relog_pausemenu.png")
+			game.SendKeyReal(0x1B) // close it again — touch nothing else
+			logger.Info("relogtest: stage A done — measure Save+Exit from the screenshot, rerun with -exitxy")
+			close(stop)
+			return
+		}
+		if !atMenu {
+			var ex, ey int
+			fmt.Sscanf(*exitXY, "%d,%d", &ex, &ey)
+			sx, sy := toScreen(ex, ey)
+			logger.Info("relogtest: clicking Save+Exit", "shot", *exitXY, "screen", fmt.Sprintf("(%d,%d)", sx, sy))
+			game.SendClickRealScreen(sx, sy)
+			// Wait for the world to actually unload (position reads go garbage).
+			gone := false
+			for i := 0; i < 40; i++ {
+				time.Sleep(500 * time.Millisecond)
+				pos := gr.GetData().PlayerUnit.Position
+				if pos.X == 0 && pos.Y == 0 {
+					gone = true
+					break
+				}
+			}
+			logger.Info("relogtest: world unloaded", "gone", gone)
+			time.Sleep(3 * time.Second) // let the main menu settle
+			if *playXY == "" {
+				shot("logs/relog_mainmenu.png")
+				logger.Info("relogtest: stage B done — measure Play from the screenshot, rerun with -playxy (game is AT THE MENU)")
+				close(stop)
+				return
+			}
+		}
+		var px2, py2 int
+		fmt.Sscanf(*playXY, "%d,%d", &px2, &py2)
+		psx, psy := toScreen(px2, py2)
+		logger.Info("relogtest: clicking Play", "shot", *playXY, "screen", fmt.Sprintf("(%d,%d)", psx, psy))
+		game.SendClickRealScreen(psx, psy)
+		// Gate loop: wait for a sane in-game read.
+		ok := false
+		for i := 0; i < 60; i++ {
+			time.Sleep(1 * time.Second)
+			if p.Gate().OK() {
+				ok = true
+				break
+			}
+		}
+		if !ok {
+			shot("logs/relog_stuck.png")
+			logger.Error("relogtest: never gated back in — screenshot saved")
+			close(stop)
+			return
+		}
+		time.Sleep(2 * time.Second)
+		d := gr.GetData()
+		logger.Info("relogtest: BACK IN GAME", "pos", fmt.Sprintf("(%d,%d)", d.PlayerUnit.Position.X, d.PlayerUnit.Position.Y),
+			"area", int(d.PlayerUnit.Area), "seed", gr.MapSeed())
+		logger.Info("relogtest: corpse", "found", d.Corpse.Found,
+			"pos", fmt.Sprintf("(%d,%d)", d.Corpse.Position.X, d.Corpse.Position.Y))
 		close(stop)
 		return
 	}
@@ -1414,9 +1510,10 @@ func main() {
 	acts := map[string]activity.Activity{}
 	road := []data.Position{{X: 6020, Y: 4952}, {X: 5992, Y: 4941}, {X: 5963, Y: 5001}, {X: 5962, Y: 4956}, {X: 5952, Y: 4944}}
 	mem.PutJSON("road.town.blood_moor_gate", memory.ScopeSeed, memory.Provenance{Source: "hand-piloted", Evidence: "2026-07-18, seed 466817790"}, road)
-	// Seed the one door already proven: the road's end IS the town→Blood Moor border.
-	if _, have := mem.Get(activity.BorderKey(area.RogueEncampment, area.BloodMoor)); !have {
-		mem.PutJSON(activity.BorderKey(area.RogueEncampment, area.BloodMoor), memory.ScopeSeed,
+	// Seed the one door already proven — under the seed it was MEASURED in (the world
+	// re-rolls per game; other seeds learn their own doors from the live oracle).
+	if _, have := mem.Get(activity.BorderKey(466817790, area.RogueEncampment, area.BloodMoor)); !have {
+		mem.PutJSON(activity.BorderKey(466817790, area.RogueEncampment, area.BloodMoor), memory.ScopeSeed,
 			memory.Provenance{Source: "hand-piloted", Evidence: "road end, seed 466817790"}, road[len(road)-1])
 	}
 	// The goal shapes the itinerary: farm grinds the proven circuit's summit; campaign /
@@ -1426,7 +1523,7 @@ func main() {
 	if *goal == "campaign" || *goal == "rampage" {
 		legs = activity.Act1Itinerary()
 	}
-	for _, a := range []activity.Activity{&activity.Breakout{}, &activity.Flee{}, activity.NewDodge(), &activity.Respawn{}, activity.NewReclaim(), activity.NewFight(), activity.NewLoot(), activity.NewRestock(), activity.NewRepair(), activity.NewAdvance(legs), &activity.Return{}, &activity.Travel{Road: road}, &activity.Explore{}} {
+	for _, a := range []activity.Activity{&activity.Breakout{}, &activity.Flee{}, activity.NewDodge(), &activity.Respawn{}, activity.NewRelog(), activity.NewReclaim(), activity.NewFight(), activity.NewLoot(), activity.NewRestock(), activity.NewRepair(), activity.NewAdvance(legs), &activity.Return{}, &activity.Travel{Road: road}, &activity.Explore{}} {
 		acts[a.Name()] = a
 	}
 
@@ -1442,9 +1539,10 @@ func main() {
 			// Portals teleport (town↔field): only record when the two sides are near
 			// each other — a real walked/clicked door, not a TP jump.
 			if chebyshev(lastPos, s.Me.Pos) <= 40 {
-				prov := memory.Provenance{Source: "measured", Evidence: fmt.Sprintf("crossed %d->%d", int(lastArea), int(s.Me.Area))}
-				mem.PutJSON(activity.BorderKey(lastArea, s.Me.Area), memory.ScopeSeed, prov, lastPos)
-				mem.PutJSON(activity.BorderKey(s.Me.Area, lastArea), memory.ScopeSeed, prov, s.Me.Pos)
+				seed := gr.MapSeed()
+				prov := memory.Provenance{Source: "measured", Evidence: fmt.Sprintf("crossed %d->%d seed %d", int(lastArea), int(s.Me.Area), seed)}
+				mem.PutJSON(activity.BorderKey(seed, lastArea, s.Me.Area), memory.ScopeSeed, prov, lastPos)
+				mem.PutJSON(activity.BorderKey(seed, s.Me.Area, lastArea), memory.ScopeSeed, prov, s.Me.Pos)
 				logger.Info("cartographer: door learned", "from", int(lastArea), "to", int(s.Me.Area),
 					"at", fmt.Sprintf("(%d,%d)", lastPos.X, lastPos.Y))
 			}
@@ -1467,11 +1565,25 @@ func main() {
 	wdCheckAt := time.Time{}
 	deadline := time.Now().Add(time.Duration(*seconds) * time.Second)
 	statusAt := time.Time{}
+	sawInvalid := false
 	for time.Now().Before(deadline) {
 		s := p.Capture()
 		if !s.Valid || !m.Engage.Engaged() {
+			sawInvalid = sawInvalid || !s.Valid
 			time.Sleep(200 * time.Millisecond)
 			continue
+		}
+		// NEW GAME detection: a validity gap (relog, load screen) may mean a fresh
+		// world — the seed re-rolls per game. FetchMapData no-ops when the seed is
+		// unchanged; on a real change it re-fetches and the grid realigns below.
+		if sawInvalid {
+			sawInvalid = false
+			prevSeed := gr.MapSeed()
+			if err := gr.FetchMapData(); err == nil && gr.MapSeed() != prevSeed {
+				logger.Info("executive: NEW WORLD", "seed", gr.MapSeed())
+				gridArea = -1 // force grid realign
+				lastArea = 0  // don't record a phantom crossing over the gap
+			}
 		}
 		recordCrossing(s)
 		// Grid follows the area (the re-align, owned in one place).

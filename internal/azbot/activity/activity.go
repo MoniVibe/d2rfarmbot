@@ -322,6 +322,11 @@ func (f *Fight) Demand(s *percept.Snapshot) *arbiter.Demand {
 	if !s.Valid || s.Me.InTown || s.Me.HPPct < floor {
 		return nil
 	}
+	// Naked with a corpse holding her gear: punching the moor is denial, not combat —
+	// stand down and let Reclaim (higher class) own every moment until the bow is back.
+	if s.Me.WeaponKind == "none" && s.Me.CorpseFound {
+		return nil
+	}
 	best := 46
 	for _, e := range s.Enemies {
 		if until, bl := f.blacklist[e.ID]; bl && time.Now().Before(until) {
@@ -730,13 +735,15 @@ type Travel struct {
 func (t *Travel) Name() string { return "travel" }
 
 func (t *Travel) Demand(s *percept.Snapshot) *arbiter.Demand {
-	if !s.Valid || !s.Me.InTown || s.Me.HPPct < 60 || len(t.Road) == 0 {
+	if !s.Valid || !s.Me.InTown || s.Me.HPPct < 30 || len(t.Road) == 0 {
 		return nil
 	}
 	if ServicesPending(s) {
 		return nil // errands first — Travel outranks Service by class and would starve them
 	}
-	return &arbiter.Demand{Who: t.Name(), Class: arbiter.ClassTravel, Urgency: 0.3,
+	// 0.15: LEGACY fallback below Advance (0.2) — the hand road belongs to one seed;
+	// Advance's live border oracle works in every world.
+	return &arbiter.Demand{Who: t.Name(), Class: arbiter.ClassTravel, Urgency: 0.15,
 		Commit: arbiter.Commitment{MinHold: 5 * time.Second}}
 }
 

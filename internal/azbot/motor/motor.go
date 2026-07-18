@@ -171,6 +171,31 @@ func (m *Motor) ModifierAmnesty() {
 	game.SendModifierUpReal()
 }
 
+// RealMenuClick clicks a SCREENSHOT-pixel position with OS-level real input, game
+// foregrounded — the only input the pause/main menus accept. Screenshot px are physical
+// client px; SendClickRealScreen wants logical screen coords (divide by display scale,
+// add the logical client origin — the relog drill's law, 2026-07-19).
+func (m *Motor) RealMenuClick(shotX, shotY int) {
+	if !m.Engage.Engaged() {
+		return
+	}
+	m.hid.FocusGame()
+	time.Sleep(300 * time.Millisecond)
+	sx := int(float64(shotX)/m.panelScale) + m.hid.WindowLeftX()
+	sy := int(float64(shotY)/m.panelScale) + m.hid.WindowTopY()
+	game.SendClickRealScreen(sx, sy)
+}
+
+// RealEsc presses ESC at the OS level with the game foregrounded (pause menu open/close).
+func (m *Motor) RealEsc() {
+	if !m.Engage.Engaged() {
+		return
+	}
+	m.hid.FocusGame()
+	time.Sleep(200 * time.Millisecond)
+	game.SendKeyReal(0x1B)
+}
+
 // GameFocused reports whether D2R owns the foreground (Sentinel's focus watch).
 func (m *Motor) GameFocused() bool { return m.hid.GameFocused() }
 

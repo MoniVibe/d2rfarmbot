@@ -26,9 +26,13 @@ func NewReclaim() *Reclaim { return &Reclaim{} }
 func (rc *Reclaim) Name() string { return "reclaim" }
 
 func (rc *Reclaim) Demand(s *percept.Snapshot) *arbiter.Demand {
-	// Bid only in the field — Travel owns the walk out of town, and Recover outranks
-	// Travel, so bidding in town would deadlock her at the gate.
-	if !s.Valid || s.Me.InTown || s.Me.HPPct <= 0 || !s.Me.CorpseFound {
+	if !s.Valid || s.Me.HPPct <= 0 || !s.Me.CorpseFound {
+		return nil
+	}
+	// In town, bid only for a body that is HERE (the relog materializes it at the
+	// spawn); a far body from town is Relog's problem — Recover outranks Travel, so
+	// bidding on an unreachable corpse would deadlock her at the gate.
+	if s.Me.InTown && chebyshev(s.Me.Pos, s.Me.CorpsePos) > 150 {
 		return nil
 	}
 	return &arbiter.Demand{Who: rc.Name(), Class: arbiter.ClassRecover,

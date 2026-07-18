@@ -65,6 +65,12 @@ func (hid *HID) GameFocused() bool {
 	return win.GetForegroundWindow() == hid.gr.HWND
 }
 
+// FocusGame brings D2R to the foreground — required before OS-level real input
+// (menus read hardware-level input only).
+func (hid *HID) FocusGame() {
+	win.SetForegroundWindow(hid.gr.HWND)
+}
+
 func (hid *HID) KeySequence(keysToPress ...byte) {
 	for _, key := range keysToPress {
 		hid.PressKey(key)
