@@ -29,6 +29,14 @@ type PlayerState struct {
 	InTown bool
 }
 
+// EnemyRef is a live hostile: identity, position, and Mode (the honest liveness read —
+// the Life stat is frozen on this repack and does not exist here).
+type EnemyRef struct {
+	ID   data.UnitID
+	Pos  data.Position
+	Mode uint32
+}
+
 // Snapshot is one immutable perception frame. Valid=false frames (load screens,
 // zero-position garbage) are published so consumers see the gap, but carry no state.
 type Snapshot struct {
@@ -38,6 +46,7 @@ type Snapshot struct {
 	Me    PlayerState
 	// MenuOpen: the ONE panel oracle — UIBytes wide-window offset 0xF4 (measured 2026-07-18).
 	MenuOpen bool
+	Enemies  []EnemyRef
 }
 
 // AttachReport is the M0 epistemics gate verdict: behavioral probes over the channels
@@ -114,6 +123,12 @@ func (p *Perceptor) Capture() *Snapshot {
 	}
 	if ub := p.gr.UIBytes(); len(ub) > 0xF4 {
 		s.MenuOpen = ub[0xF4] == 1
+	}
+	for _, m := range d.Monsters.Enemies() {
+		if m.Mode == mode.NpcDeath || m.Mode == mode.NpcDead {
+			continue
+		}
+		s.Enemies = append(s.Enemies, EnemyRef{ID: m.UnitID, Pos: m.Position, Mode: uint32(m.Mode)})
 	}
 	p.last.Store(s)
 	return s

@@ -163,6 +163,40 @@ func (m *Motor) StrideEdge(aimX, aimY int) bool {
 	return true
 }
 
+// --- aimed-actuation pass-throughs: the verb layer's only input surface ---
+
+func (m *Motor) AimPhysical(x, y int) {
+	if m.Engage.Engaged() {
+		m.hid.AimPhysical(x, y)
+	}
+}
+
+func (m *Motor) PressKey(k byte) {
+	if m.Engage.Engaged() {
+		m.hid.PressKey(k)
+	}
+}
+
+// ClickRight: world right-click (message path — proven reliable on this build).
+func (m *Motor) ClickRight(x, y int) {
+	if m.Engage.Engaged() {
+		m.hid.Click(game.RightButton, x, y)
+	}
+}
+
+// ClickLeft: the proven world left-click — VK_LBUTTON key-state overrides around the
+// message click (farmbot's interactClick law: left needs the override treatment).
+func (m *Motor) ClickLeft(x, y int) {
+	if !m.Engage.Engaged() {
+		return
+	}
+	_ = m.gi.OverrideGetKeyState(0x01)
+	_ = m.gi.OverrideGetAsyncKeyState(0x01)
+	m.hid.Click(game.LeftButton, x, y)
+	_ = m.gi.RestoreGetKeyState()
+	_ = m.gi.RestoreGetAsyncKeyState()
+}
+
 // KeyLane: cursor-free key presses (belt drinks, TP cast). The Sentinel's channel —
 // survival never contends for the cursor.
 type KeyLane struct{ m *Motor }

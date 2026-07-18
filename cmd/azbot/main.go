@@ -15,6 +15,7 @@ import (
 	"unsafe"
 
 	"github.com/hectorgimenez/d2go/pkg/data"
+	"github.com/hectorgimenez/koolo/internal/azbot/combat"
 	"github.com/hectorgimenez/koolo/internal/azbot/journey"
 	"github.com/hectorgimenez/koolo/internal/azbot/memory"
 	"github.com/hectorgimenez/koolo/internal/azbot/motor"
@@ -108,7 +109,8 @@ func main() {
 	drinkAt := flag.Int("drinkat", 55, "sentinel drinks at or below this HP%")
 	memDir := flag.String("memdir", "logs/azmem", "memory store directory (WAL)")
 	roadTest := flag.Bool("roadtest", false, "M2 soak: walk the measured town road out and back on Stride verbs, print the outcome histogram, exit")
-	jTest := flag.String("jtest", "", "M3 soak: journey to world 'x,y' on the live grid via the Journey authority, print the verdict, exit")
+	jTest := flag.String("jtest", "", "M3 soak: journey to world x,y on the live grid via the Journey authority, print the verdict, exit")
+	fightTest := flag.Bool("fighttest", false, "M4 soak: calibrate capability, cross to Blood Moor, hover-strike nearest enemies with evidence, exit")
 	logger := slog.New(slog.NewTextHandler(os.Stdout, nil))
 
 	flag.Parse()
@@ -193,6 +195,110 @@ func main() {
 	})
 	go sen.Run(stop)
 	logger.Info("sentinel live", "killswitch", *killKey, "drinkAt", *drinkAt)
+
+	// ---- M4 fight test: calibrate capability, cross to Blood Moor, strike with evidence ----
+	if *fightTest {
+		led := verbs.NewLedger(512)
+		led.Sink = func(o verbs.Outcome) {
+			logger.Info("outcome", "verb", o.Verb, "result", o.Result.String(), "ev", o.Evidence)
+		}
+		cap := combat.Calibrate(logger, gr, hid, mem, []string{"f1", "f2", "f3", "f4"})
+		if cap.Melee == nil {
+			logger.Warn("fighttest: no proven melee binding — plain attack only")
+		}
+		// Walk the road out and cross (the corridor + gate strides proven by hand).
+		road := []data.Position{{X: 5992, Y: 4941}, {X: 5963, Y: 5001}, {X: 5962, Y: 4956}, {X: 5952, Y: 4944}}
+		for _, wp := range road {
+			for tries := 0; tries < 15; tries++ {
+				s := p.Capture()
+				if !s.Valid || !m.Engage.Engaged() {
+					time.Sleep(300 * time.Millisecond)
+					continue
+				}
+				if int(s.Me.Area) == 2 {
+					break // crossed already
+				}
+				if chebyshev(s.Me.Pos, wp) <= 6 {
+					break
+				}
+				verbs.Stride{To: wp}.Do(m, gr, p, led, "fighttest/road")
+			}
+			if s := p.Capture(); s.Valid && int(s.Me.Area) == 2 {
+				break
+			}
+		}
+		s := p.Capture()
+		if !s.Valid || int(s.Me.Area) != 2 {
+			logger.Error("fighttest: did not reach Blood Moor", "area", int(s.Me.Area))
+			close(stop)
+			return
+		}
+		logger.Info("fighttest: in Blood Moor — hunting", "pos", fmt.Sprintf("(%d,%d)", s.Me.Pos.X, s.Me.Pos.Y))
+		grid, _, err := gr.BuildLiveGridRooms()
+		if err != nil {
+			logger.Error("fighttest: grid failed", "err", err)
+			close(stop)
+			return
+		}
+		strikes, kills := 0, 0
+		sweep := []data.Position{{X: 5920, Y: 4980}, {X: 5890, Y: 4950}, {X: 5860, Y: 5000}, {X: 5920, Y: 5040}}
+		sweepIdx := 0
+		deadline := time.Now().Add(5 * time.Minute)
+		for time.Now().Before(deadline) && strikes < 10 {
+			if !m.Engage.Engaged() {
+				time.Sleep(500 * time.Millisecond)
+				continue
+			}
+			s = p.Capture()
+			if !s.Valid {
+				continue
+			}
+			if s.Me.HPPct > 0 && s.Me.HPPct < 35 {
+				logger.Warn("fighttest: HP low — ending the test alive", "hp", s.Me.HPPct)
+				break
+			}
+			// nearest live enemy within 40
+			best, bd := percept.EnemyRef{}, 41
+			for _, e := range s.Enemies {
+				if d := chebyshev(s.Me.Pos, e.Pos); d < bd {
+					best, bd = e, d
+				}
+			}
+			if bd > 40 {
+				if sweepIdx >= len(sweep) {
+					logger.Info("fighttest: sweep exhausted — done hunting")
+					break
+				}
+				wp := sweep[sweepIdx]
+				if chebyshev(s.Me.Pos, wp) <= 8 {
+					sweepIdx++
+					continue
+				}
+				verbs.Stride{To: wp}.Do(m, gr, p, led, "fighttest/sweep")
+				continue
+			}
+			if bd > 4 {
+				j := journey.New(gr, grid, best.Pos, "fighttest/approach")
+				st := j.Step(m, p, led)
+				if st.State == journey.Stalled || st.State == journey.NoPath {
+					logger.Info("fighttest: approach verdict", "state", st.State.String())
+				}
+				continue
+			}
+			var key byte
+			if cap.Melee != nil {
+				key = cap.Melee.Key
+			}
+			o := verbs.HoverStrike{Target: best.ID, TargetPos: best.Pos, SelectKey: key}.Do(m, gr, p, led, "fighttest")
+			strikes++
+			if o.Result == verbs.ResDone {
+				kills++ // evidence of damage (mode transition), not necessarily a kill
+			}
+		}
+		logger.Info("fighttest: summary", "strikes", strikes, "evidenced", kills)
+		close(stop)
+		return
+	}
 
 	// ---- M3 journey test: one goal, one authority, honest verdicts ----
 	if *jTest != "" {
