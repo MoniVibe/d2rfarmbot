@@ -85,6 +85,10 @@ func (m *Motor) Disengage() {
 	}
 	m.mu.Unlock()
 	m.MoveStop()
+	// Shift amnesty: hand the game back with NO latched modifiers — the owner's
+	// stuck-shift ("regular clicks become shift-clicks") dies here whoever leaked it.
+	m.hid.ShiftAmnesty()
+	game.SendShiftUpReal()
 	if err := m.gi.Unload(); err != nil {
 		m.log.Error("motor: disengage heal failed", "err", err)
 	}

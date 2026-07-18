@@ -122,6 +122,20 @@ func iSendKey(vk uint16) bool {
 	return true
 }
 
+// iSendKeyUp sends ONLY the up-stroke for a virtual-key to every keyboard slot — the
+// shift-amnesty half: releases a leaked driver-level modifier without ever pressing it.
+func iSendKeyUp(vk uint16) bool {
+	if !interceptionEnabled() {
+		return false
+	}
+	sc, _, _ := procMapVirtualKeyW.Call(uintptr(vk), 0)
+	up := iKeyStroke{code: uint16(sc), state: iKeyUp}
+	for dev := 1; dev <= 10; dev++ {
+		procISend.Call(interceptionCtx, uintptr(dev), uintptr(unsafe.Pointer(&up)), 1)
+	}
+	return true
+}
+
 // iSendClickAbs moves (absolute 0..65535) and left-clicks at the driver level. Returns false if unavailable.
 func iSendClickAbs(nx, ny int32) bool {
 	if !interceptionEnabled() {

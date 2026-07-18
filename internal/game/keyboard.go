@@ -41,6 +41,17 @@ func (hid *HID) RawKeyUp(key byte) {
 	win.PostMessage(hid.gr.HWND, win.WM_KEYUP, uintptr(key), hid.calculatelParam(key, false))
 }
 
+// ShiftAmnesty clears any latched shift state the game may hold. The owner observed
+// stuck shift ("even my regular left clicks are shift clicks until I press shift once")
+// with no intentional shift emitter anywhere in the bot — so whoever the leaker is,
+// this makes the symptom impossible: explicit shift-UP through the window-message
+// channel for every shift VK variant. Called at attach, detach, and engagement toggles.
+func (hid *HID) ShiftAmnesty() {
+	for _, vk := range []byte{0x10, 0xA0, 0xA1} { // VK_SHIFT, VK_LSHIFT, VK_RSHIFT
+		win.PostMessage(hid.gr.HWND, win.WM_KEYUP, uintptr(vk), hid.calculatelParam(vk, false))
+	}
+}
+
 func (hid *HID) KeySequence(keysToPress ...byte) {
 	for _, key := range keysToPress {
 		hid.PressKey(key)

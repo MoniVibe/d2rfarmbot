@@ -59,6 +59,7 @@ func (s *Sentinel) Run(stop <-chan struct{}) {
 	var lastDrink time.Time
 	var killHeld bool
 	var wasDead bool
+	var lastShift bool
 	beltIdx := 0
 	for {
 		select {
@@ -81,10 +82,18 @@ func (s *Sentinel) Run(stop <-chan struct{}) {
 			killHeld = false
 		}
 
+		// Shift forensics: the OS-truth shift state, every tick, into the WAL. When the
+		// owner's stuck-shift recurs, this trace says whether the OS ever saw a phantom
+		// shift-down (driver/SendInput leak) or never did (a D2R-internal message latch).
+		shiftDown := realKeyDown(0x10)
+		if shiftDown != lastShift {
+			s.log.Info("sentinel: OS shift state changed", "down", shiftDown, "engaged", s.m.Engage.Engaged())
+			lastShift = shiftDown
+		}
 		md, hp, _, ar, valid := s.p.SurvivalRead()
 		s.mem.PutJSON("heartbeat", memory.ScopeTick,
 			memory.Provenance{Source: "measured"},
-			map[string]any{"t": time.Now().UnixMilli(), "valid": valid, "hp": hp, "area": int(ar), "engaged": s.m.Engage.Engaged()})
+			map[string]any{"t": time.Now().UnixMilli(), "valid": valid, "hp": hp, "area": int(ar), "engaged": s.m.Engage.Engaged(), "shift": shiftDown})
 		if !valid {
 			continue
 		}

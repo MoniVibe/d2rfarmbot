@@ -94,6 +94,18 @@ func sendInputs(inputs []hwInput) {
 	fmt.Fprintf(os.Stderr, "[sendinput] structSize=%d n=%d injected=%d err=%v\n", unsafe.Sizeof(inputs[0]), len(inputs), r, err)
 }
 
+// SendShiftUpReal releases shift at the OS level (SendInput) AND the driver level
+// (Interception up-strokes only) — the system-wide half of the shift amnesty. A leaked
+// driver/OS-level shift-down sticks for the whole machine until a real shift release
+// arrives; this IS that release, harmless when shift was never down.
+func SendShiftUpReal() {
+	for _, vk := range []uint16{0x10, 0xA0, 0xA1} { // VK_SHIFT, VK_LSHIFT, VK_RSHIFT
+		up := hwInput{inputType: inputKeyboard, a: uint32(vk), b: keyeventfKeyUp}
+		sendInputs([]hwInput{up})
+	}
+	iSendKeyUp(0x10)
+}
+
 // SendKeyReal presses and releases a virtual-key. Prefers driver-level Interception
 // (reaches DirectInput menus); falls back to OS-level SendInput.
 func SendKeyReal(vk uint16) {
