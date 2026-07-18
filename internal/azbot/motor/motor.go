@@ -85,10 +85,9 @@ func (m *Motor) Disengage() {
 	}
 	m.mu.Unlock()
 	m.MoveStop()
-	// Shift amnesty: hand the game back with NO latched modifiers — the owner's
+	// Modifier amnesty: hand the game back with NO latched modifiers — the owner's
 	// stuck-shift ("regular clicks become shift-clicks") dies here whoever leaked it.
-	m.hid.ShiftAmnesty()
-	game.SendShiftUpReal()
+	m.ModifierAmnesty()
 	if err := m.gi.Unload(); err != nil {
 		m.log.Error("motor: disengage heal failed", "err", err)
 	}
@@ -108,6 +107,17 @@ func (m *Motor) Reengage() {
 	}
 	m.log.Warn("MOTOR ENGAGED — azbot has the controls")
 }
+
+// ModifierAmnesty releases every modifier (shift/ctrl/alt) at both the game-window and
+// OS level. Alt-tab eats key releases (they go to the newly focused window), so a
+// modifier held across a focus switch stays latched in D2R until this fresh release.
+func (m *Motor) ModifierAmnesty() {
+	m.hid.ModifierAmnesty()
+	game.SendModifierUpReal()
+}
+
+// GameFocused reports whether D2R owns the foreground (Sentinel's focus watch).
+func (m *Motor) GameFocused() bool { return m.hid.GameFocused() }
 
 // ReserveCursor grants the exclusive cursor lease or refuses.
 func (m *Motor) ReserveCursor(role CursorRole, holder string, d time.Duration) (*CursorLease, bool) {

@@ -41,15 +41,24 @@ func (hid *HID) RawKeyUp(key byte) {
 	win.PostMessage(hid.gr.HWND, win.WM_KEYUP, uintptr(key), hid.calculatelParam(key, false))
 }
 
-// ShiftAmnesty clears any latched shift state the game may hold. The owner observed
-// stuck shift ("even my regular left clicks are shift clicks until I press shift once")
-// with no intentional shift emitter anywhere in the bot — so whoever the leaker is,
-// this makes the symptom impossible: explicit shift-UP through the window-message
-// channel for every shift VK variant. Called at attach, detach, and engagement toggles.
-func (hid *HID) ShiftAmnesty() {
-	for _, vk := range []byte{0x10, 0xA0, 0xA1} { // VK_SHIFT, VK_LSHIFT, VK_RSHIFT
+// ModifierAmnesty clears any latched modifier state the game may hold. Root cause of
+// the owner's stuck shift ("regular clicks become shift-clicks until I press shift
+// once"): ALT-TAB EATS RELEASES — the key-up goes to the newly focused window, so a
+// modifier held across a focus switch stays latched in D2R until a fresh release
+// arrives. This IS that release, for every modifier variant (a latched ctrl would be
+// worse: ctrl+click is quick-sell). Fired at attach, detach, engagement toggles, and
+// every focus return to the game.
+func (hid *HID) ModifierAmnesty() {
+	// VK_SHIFT/CONTROL/MENU + the L/R variants of each.
+	for _, vk := range []byte{0x10, 0x11, 0x12, 0xA0, 0xA1, 0xA2, 0xA3, 0xA4, 0xA5} {
 		win.PostMessage(hid.gr.HWND, win.WM_KEYUP, uintptr(vk), hid.calculatelParam(vk, false))
 	}
+}
+
+// GameFocused reports whether D2R currently owns the foreground — the Sentinel watches
+// transitions of this to fire ModifierAmnesty on every alt-tab back.
+func (hid *HID) GameFocused() bool {
+	return win.GetForegroundWindow() == hid.gr.HWND
 }
 
 func (hid *HID) KeySequence(keysToPress ...byte) {

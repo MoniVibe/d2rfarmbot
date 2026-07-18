@@ -167,11 +167,11 @@ func main() {
 		os.Exit(0)
 	}()
 	hid := game.NewHID(gr, gi)
-	// Shift amnesty at attach AND exit (LIFO: this defer runs before gi.Unload's heal):
-	// clear any latched shift so neither the bot nor the owner inherits a stuck modifier.
-	hid.ShiftAmnesty()
-	game.SendShiftUpReal()
-	defer func() { hid.ShiftAmnesty(); game.SendShiftUpReal() }()
+	// Modifier amnesty at attach AND exit (LIFO: this defer runs before gi.Unload's
+	// heal): clear latched shift/ctrl/alt so nobody inherits a stuck modifier.
+	hid.ModifierAmnesty()
+	game.SendModifierUpReal()
+	defer func() { hid.ModifierAmnesty(); game.SendModifierUpReal() }()
 
 	// ---- M0: epistemics gate ----
 	p := percept.New(gr)

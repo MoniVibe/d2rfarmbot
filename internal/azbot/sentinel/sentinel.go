@@ -60,6 +60,7 @@ func (s *Sentinel) Run(stop <-chan struct{}) {
 	var killHeld bool
 	var wasDead bool
 	var lastShift bool
+	lastFocus := true
 	beltIdx := 0
 	for {
 		select {
@@ -89,6 +90,18 @@ func (s *Sentinel) Run(stop <-chan struct{}) {
 		if shiftDown != lastShift {
 			s.log.Info("sentinel: OS shift state changed", "down", shiftDown, "engaged", s.m.Engage.Engaged())
 			lastShift = shiftDown
+		}
+
+		// FOCUS WATCH: alt-tab eats key releases — a modifier held across the switch
+		// stays latched in D2R until a fresh release arrives. Fire the amnesty on every
+		// return of focus so the owner's alt-tabbing can never leave shift/ctrl/alt stuck.
+		focused := s.m.GameFocused()
+		if focused != lastFocus {
+			if focused {
+				s.m.ModifierAmnesty()
+				s.log.Info("sentinel: game refocused — modifier amnesty fired")
+			}
+			lastFocus = focused
 		}
 		md, hp, _, ar, valid := s.p.SurvivalRead()
 		s.mem.PutJSON("heartbeat", memory.ScopeTick,
