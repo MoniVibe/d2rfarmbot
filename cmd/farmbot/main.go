@@ -3801,6 +3801,7 @@ func main() {
 	// TOWN-TRIP state machine (control command "tp"; -tp key must be bound to the TP tome).
 	// 1=cast, 2=enter field portal, 3=in town (errand hook + return), 0=idle.
 	tpPhase := 0
+	tpParkInTown := false // 'town' control command: stop at phase 3, skip the return
 	tpOrigArea := 0
 	var tpPhaseAt, tpTripStart time.Time
 	tpRecast := false
@@ -4077,7 +4078,16 @@ mainLoop:
 						logger.Warn("control: tp requested but -tp key not set")
 					} else if tpPhase == 0 {
 						logger.Info("control: town round-trip requested")
-						tpPhase, tpTripStart = 1, time.Now()
+						tpPhase, tpTripStart, tpParkInTown = 1, time.Now(), false
+					}
+				case "town":
+					// TP to town and PARK (no auto-return) — the calibration-window maker:
+					// get him to town, then 'exit' for a clean supervised probe session.
+					if *tp == "" {
+						logger.Warn("control: town requested but -tp key not set")
+					} else if tpPhase == 0 {
+						logger.Info("control: town-and-park requested")
+						tpPhase, tpTripStart, tpParkInTown = 1, time.Now(), true
 					}
 				case "":
 				default:
@@ -4137,6 +4147,11 @@ mainLoop:
 					tpPhase = 0
 				}
 			case 3: // in town. (Errand hook lands here later.) Return through our portal.
+				if tpParkInTown {
+					logger.Info("towntrip: PARKED in town per control command")
+					tpPhase, tpParkInTown = 0, false
+					continue
+				}
 				if int(d.PlayerUnit.Area) == tpOrigArea {
 					logger.Info("towntrip: ROUND TRIP COMPLETE",
 						"totalS", int(time.Since(tpTripStart).Seconds()))
