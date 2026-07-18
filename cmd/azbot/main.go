@@ -15,6 +15,7 @@ import (
 	"unsafe"
 
 	"github.com/hectorgimenez/d2go/pkg/data"
+	"github.com/hectorgimenez/koolo/internal/azbot/journey"
 	"github.com/hectorgimenez/koolo/internal/azbot/memory"
 	"github.com/hectorgimenez/koolo/internal/azbot/motor"
 	"github.com/hectorgimenez/koolo/internal/azbot/percept"
@@ -107,6 +108,7 @@ func main() {
 	drinkAt := flag.Int("drinkat", 55, "sentinel drinks at or below this HP%")
 	memDir := flag.String("memdir", "logs/azmem", "memory store directory (WAL)")
 	roadTest := flag.Bool("roadtest", false, "M2 soak: walk the measured town road out and back on Stride verbs, print the outcome histogram, exit")
+	jTest := flag.String("jtest", "", "M3 soak: journey to world 'x,y' on the live grid via the Journey authority, print the verdict, exit")
 	logger := slog.New(slog.NewTextHandler(os.Stdout, nil))
 
 	flag.Parse()
@@ -191,6 +193,42 @@ func main() {
 	})
 	go sen.Run(stop)
 	logger.Info("sentinel live", "killswitch", *killKey, "drinkAt", *drinkAt)
+
+	// ---- M3 journey test: one goal, one authority, honest verdicts ----
+	if *jTest != "" {
+		var tx, ty int
+		if n, _ := fmt.Sscanf(*jTest, "%d,%d", &tx, &ty); n != 2 {
+			logger.Error("jtest: want 'x,y'")
+			return
+		}
+		led := verbs.NewLedger(512)
+		led.Sink = func(o verbs.Outcome) {
+			logger.Info("outcome", "verb", o.Verb, "holder", o.Holder, "result", o.Result.String(), "ev", o.Evidence)
+		}
+		grid, _, err := gr.BuildLiveGridRooms()
+		if err != nil {
+			logger.Error("jtest: live grid failed", "err", err)
+			return
+		}
+		j := journey.New(gr, grid, data.Position{X: tx, Y: ty}, "jtest")
+		deadline := time.Now().Add(3 * time.Minute)
+		for time.Now().Before(deadline) {
+			if !m.Engage.Engaged() {
+				time.Sleep(500 * time.Millisecond)
+				continue
+			}
+			st := j.Step(m, p, led)
+			if st.Note != "" {
+				logger.Info("journey", "state", st.State.String(), "note", st.Note)
+			}
+			if st.State == journey.Arrived || st.State == journey.NoPath || st.State == journey.Stalled {
+				logger.Info("jtest: verdict", "state", st.State.String(), "note", st.Note)
+				break
+			}
+		}
+		close(stop)
+		return
+	}
 
 	// ---- M2 road test: walk the measured town road on Stride verbs, ledger everything ----
 	if *roadTest {
