@@ -4652,6 +4652,13 @@ func main() {
 				me := gr.GetData().PlayerUnit.Position
 				navWalk(me, data.Position{X: a, Y: b})
 			}
+		case "inv":
+			loc := item.LocationType(strings.TrimSpace(arg))
+			for _, it := range gr.GetData().Inventory.ByLocation(loc) {
+				logger.Info("step: item", "loc", string(loc), "name", string(it.Name),
+					"pos", fmt.Sprintf("(%d,%d)", it.Position.X, it.Position.Y),
+					"quality", string(it.Quality), "identified", it.Identified)
+			}
 		default:
 			logger.Warn("step: unknown verb", "verb", verb)
 			return
