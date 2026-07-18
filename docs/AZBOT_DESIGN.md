@@ -194,6 +194,23 @@ func (m *Motor) KeyLane() *KeyLane // belt/skill keys: NO cursor reservation req
 - A `RoleSense` sweep can never be turned into locomotion: the motor releases any held move key before granting `RoleSense` (the moveStop-by-convention becomes moveStop-by-construction).
 - The held-key-with-re-aim model is deleted. The **stride** is the only locomotion verb, built on the measured key-edge law: a held key keeps its key-down direction; direction change requires an edge.
 
+### 4.1b The Kill-Switch (owner requirement: "a hotkey to enable/disable the bot and take control of the diablo")
+
+```go
+// Sentinel polls OUR process's real GetAsyncKeyState (global, focus-free) each 100ms tick.
+// Default key: PAUSE/BREAK (-killswitch pause), 500ms debounce.
+type Engagement struct{ engaged atomic.Bool }
+```
+
+Disengage (one press): motor **releases any held key, restores every input override
+(the -fixinput heal, live and reversible)**, cancels all leases; the Executive stops
+granting; activities receive Pause. The human owns Diablo natively — zero bot input of
+any kind. Perception and Sentinel *reads* continue (harmless), so status stays live.
+Re-engage (press again): overrides re-establish lazily (the pokes are idempotent),
+the arbiter re-grants from fresh demands; HeldClocks excluded the pause. The switch
+lives in the motor because the motor is the only place actuation exists — there is no
+code path that can move the mouse while disengaged.
+
 ### 4.2 The Verb contract
 
 ```go
