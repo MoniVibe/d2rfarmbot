@@ -4339,8 +4339,14 @@ func main() {
 	tpOrigArea := 0
 	var tpPhaseAt, tpTripStart time.Time
 	tpRecast := false
-	lootBlacklist := map[data.UnitID]time.Time{}
+	lootBlacklist := map[data.UnitID]time.Time{} // value = EXPIRY (click-fail 15s, unreachable 45s)
 	lootAttempts := map[data.UnitID]int{}
+	var lastTick time.Time // global tick floor anchor
+	// Loot-approach progress tracking: straight-line aim walked into maze walls forever
+	// (unique ShortBow in the Den, dist=6, 3ms cadence) — unreachable loot must time out.
+	var lootApproachID data.UnitID
+	lootApproachBest := 1 << 30
+	var lootApproachAt, lootApproachLog time.Time
 	objBlacklist := map[data.UnitID]time.Time{} // objects already used (so we don't re-open)
 	wpTouched := map[data.UnitID]bool{}         // waypoints activated (or attempted) this run
 
@@ -5035,6 +5041,16 @@ func main() {
 	var lastControlCheck time.Time
 mainLoop:
 	for time.Now().Before(deadline) {
+		// GLOBAL TICK FLOOR: continuous locomotion made every walk call non-blocking, so
+		// any `walk; continue` branch spins the loop at CPU speed — unstick did 13,807
+		// lines in one pocket, then the loot approach spun at 3ms the moment that was
+		// paced. Whack-a-mole ends here: the loop has no business deciding faster than
+		// the character moves. 80ms floor (~12Hz); the held force-move walks through it,
+		// and slow branches (bites, panels) are unaffected.
+		if dt := time.Since(lastTick); dt < 80*time.Millisecond {
+			time.Sleep(80*time.Millisecond - dt)
+		}
+		lastTick = time.Now()
 		// CONTROL CHANNEL: `echo exit > logs/control.txt` requests a graceful shutdown NOW —
 		// the same atlas-save + deferred input-heal path as the -seconds deadline, so deploys
 		// no longer wait out the clock (force-kill while D2R lives corrupts input patching;
@@ -5450,7 +5466,7 @@ mainLoop:
 					var pot data.Item
 					havePot := false
 					for _, it := range d.Inventory.ByLocation(item.LocationGround) {
-						if bl, ok := lootBlacklist[it.UnitID]; ok && time.Since(bl) < 15*time.Second {
+						if bl, ok := lootBlacklist[it.UnitID]; ok && time.Now().Before(bl) {
 							continue
 						}
 						if !groundHeal(it) {
@@ -5467,10 +5483,9 @@ mainLoop:
 							continue
 						}
 						if bestDist > 5 {
-							sx, sy := screenPointToward(me, pot.Position.X-me.X, pot.Position.Y-me.Y)
 							logger.Info("critloot: belt dry — going for ground heal", "name", string(pot.Name),
 								"dist", bestDist)
-							walkToHold(sx, sy, min(240, max(90, bestDist*9)))
+							navWalk(me, pot.Position)
 							continue
 						}
 						hoverPickClick(pot.Position, pot.UnitID)
@@ -5484,7 +5499,7 @@ mainLoop:
 						if still {
 							lootAttempts[pot.UnitID]++
 							if lootAttempts[pot.UnitID] >= 5 {
-								lootBlacklist[pot.UnitID] = time.Now()
+								lootBlacklist[pot.UnitID] = time.Now().Add(15 * time.Second)
 								delete(lootAttempts, pot.UnitID)
 							}
 						} else {
@@ -6495,7 +6510,7 @@ mainLoop:
 					var lootTarget data.Item
 					haveLoot := false
 					for _, it := range d.Inventory.ByLocation(item.LocationGround) {
-						if bl, ok := lootBlacklist[it.UnitID]; ok && time.Since(bl) < 15*time.Second {
+						if bl, ok := lootBlacklist[it.UnitID]; ok && time.Now().Before(bl) {
 							continue // recently failed to pick up — skip so we don't hump the same item
 						}
 						if !*lootAll && !lootWorthy(d, it) {
@@ -6515,10 +6530,25 @@ mainLoop:
 							continue
 						}
 						if bestDist > 5 {
-							sx, sy := screenPointToward(me, lootTarget.Position.X-me.X, lootTarget.Position.Y-me.Y)
-							logger.Info("loot: approach", "name", string(lootTarget.Name), "dist", bestDist,
-								"pos", fmt.Sprintf("(%d,%d)", me.X, me.Y))
-							walkToHold(sx, sy, min(240, max(90, bestDist*9))) // scale by distance — no overshoot
+							// Ride the NAV GRID, not a straight line — the Den maze proved a
+							// wall-adjacent item pulls the straight aim into rock forever. And
+							// track progress: no closing for 6s = unreachable, 45s blacklist.
+							if lootTarget.UnitID != lootApproachID {
+								lootApproachID, lootApproachBest, lootApproachAt = lootTarget.UnitID, bestDist, time.Now()
+							} else if bestDist < lootApproachBest {
+								lootApproachBest, lootApproachAt = bestDist, time.Now()
+							} else if time.Since(lootApproachAt) > 6*time.Second {
+								lootBlacklist[lootTarget.UnitID] = time.Now().Add(45 * time.Second)
+								lootApproachID = 0
+								logger.Info("loot: unreachable — blacklisting", "name", string(lootTarget.Name), "dist", bestDist)
+								continue
+							}
+							if time.Since(lootApproachLog) > 2*time.Second {
+								logger.Info("loot: approach", "name", string(lootTarget.Name), "dist", bestDist,
+									"pos", fmt.Sprintf("(%d,%d)", me.X, me.Y))
+								lootApproachLog = time.Now()
+							}
+							navWalk(me, lootTarget.Position)
 							continue
 						}
 						// Hover-sweep to the item's label (game-confirmed) and click it.
@@ -6536,7 +6566,7 @@ mainLoop:
 							logger.Info("loot: attempt failed", "name", string(lootTarget.Name),
 								"attempts", lootAttempts[lootTarget.UnitID])
 							if lootAttempts[lootTarget.UnitID] >= 5 {
-								lootBlacklist[lootTarget.UnitID] = time.Now()
+								lootBlacklist[lootTarget.UnitID] = time.Now().Add(15 * time.Second)
 								delete(lootAttempts, lootTarget.UnitID)
 								logger.Info("loot: blacklisting", "name", string(lootTarget.Name))
 							}
