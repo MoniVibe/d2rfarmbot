@@ -227,6 +227,8 @@ func main() {
 	chicken := flag.Int("chicken", 20, "abandon the fight and flee (chicken) at or below this HP percent")
 	potcd := flag.Int("potcd", 1500, "minimum ms between potion quaffs of the same type")
 	tp := flag.String("tp", "", "Tome of Town Portal hotkey; empty disables emergency TP on chicken")
+	idKey := flag.String("idkey", "f4", "Book of Identify hotkey (bind the ID tome's skill in-game like F1-F3). Identify = select the skill, WORLD right-click raises the ID cursor, LEFT-click each item — panel right-clicks are deaf on this build, world right-clicks are not.")
+	tripItems := flag.Int("tripitems", 26, "auto town trip (TP + identify + sell + restock + return) when the inventory holds this many items; 0 = only on demand via `echo tp`")
 	loot := flag.Bool("loot", false, "enable ground-item looting between fights")
 	lootradius := flag.Int("lootradius", 30, "only pick up ground items within this many units")
 	lootAll := flag.Bool("lootall", false, "loot every ground item (old behavior). Default is the filter: unique/set/rare/crafted + gold + potions the belt is short on")
@@ -3038,15 +3040,24 @@ func main() {
 	// identifyErrand: open inventory, right-click the ID tome, click each unidentified item;
 	// closed-loop per item (Identified flag must flip). Panel-space only — no NPC needed.
 	identifyErrand := func() int {
+		// THE DEAF-RIGHT-CLICK PIVOT: panel right-clicks never land on this build (tome
+		// use, shop buy — measured deaf under every override), but WORLD right-clicks work
+		// (every golem cast proves it). So ride the tome's GRANTED SKILL instead: -idkey
+		// selects Book of Identify as the right skill (user-bound, like F1-F3), a world
+		// right-click raises the ID cursor, and the item click is a LEFT panel click —
+		// which works. The tome's inventory position stops mattering entirely (the mod
+		// renames tomes to ""/Jawbone/Eye, so position was always the fragile part).
+		if *idKey == "" {
+			return 0
+		}
 		d := gr.GetData()
-		tome, found := d.Inventory.Find(item.TomeOfIdentify, item.LocationInventory)
-		if !found {
-			logger.Info("identify: no ID tome in inventory")
+		if _, hasBook := d.PlayerUnit.Skills[skill.TomeOfIdentify]; !hasBook {
+			logger.Info("identify: Book of Identify skill absent — no ID tome owned?")
 			return 0
 		}
 		var unid []data.Item
 		for _, it := range d.Inventory.ByLocation(item.LocationInventory) {
-			if !it.Identified && it.Name != item.TomeOfIdentify && it.Name != item.TomeOfTownPortal {
+			if !it.Identified {
 				unid = append(unid, it)
 			}
 		}
@@ -3058,18 +3069,20 @@ func main() {
 		time.Sleep(600 * time.Millisecond)
 		done := 0
 		for i, it := range unid {
-			if i >= 8 { // cap per visit
+			if i >= 12 { // cap per visit
 				break
 			}
-			tx, ty := invPixel(tome.Position.X, tome.Position.Y)
-			uiRightClick(tx, ty)
+			hid.PressKey(hid.GetASCIICode(*idKey))
+			time.Sleep(200 * time.Millisecond)
+			// World right-click on the LEFT half — the inventory panel owns the right.
+			hid.Click(game.RightButton, cx/2, cy)
 			time.Sleep(350 * time.Millisecond)
 			ix, iy := invPixel(it.Position.X, it.Position.Y)
 			uiClick(ix, iy)
 			time.Sleep(450 * time.Millisecond)
 			ok := false
 			for _, it2 := range gr.GetData().Inventory.ByLocation(item.LocationInventory) {
-				if it2.UnitID == it.UnitID && it2.Identified {
+				if it2.Position == it.Position && it2.Identified {
 					ok = true
 					break
 				}
@@ -4331,6 +4344,7 @@ func main() {
 	tpPhase := 0
 	tpParkInTown := false // 'town' control command: stop at phase 3, skip the return
 	tpErrandsDone := false // one errand pass per trip
+	var lastAutoTrip time.Time
 	stepHold := false          // 'hold' control command: freeze all behaviors for step-mode calibration
 	var runStepCommand func(string)
 	var runStepBatch func(string, int)
@@ -4619,20 +4633,45 @@ func main() {
 			base := gr.Screenshot()
 			bx, by := gameToScreen(gr, me.X, me.Y, ak.Position.X, ak.Position.Y)
 			interactClick(bx+off[0], by+off[1])
-			time.Sleep(900 * time.Millisecond)
+			// THE MENU BYTE (UI_base-0xC, wide-window offset 0xF4): the true "menu open"
+			// flag, found by diffing user-produced open/closed snapshots. Poll it instead
+			// of sleeping blind — a miss is known in 1.2s, not guessed from pixels.
+			menuOpen := false
+			for i := 0; i < 12; i++ {
+				if ub := gr.UIBytes(); len(ub) > 0xF4 && ub[0xF4] == 1 {
+					menuOpen = true
+					break
+				}
+				time.Sleep(100 * time.Millisecond)
+			}
+			if !menuOpen {
+				logger.Info("vendor: body click didn't open the menu", "n", attempt,
+					"offset", fmt.Sprintf("(%d,%d)", off[0], off[1]))
+				continue
+			}
 			moveStop()
-			hid.PressKey(hid.GetASCIICode("down"))
-			time.Sleep(350 * time.Millisecond)
+			// MENUS POLL GETKEYSTATE: a message-only Down never moves the highlight — hold
+			// the override around a raw down/up (the force-move lesson applied to menus).
+			_ = gi.OverrideGetKeyState(0x28) // VK_DOWN
+			_ = gi.OverrideGetAsyncKeyState(0x28)
+			hid.RawKeyDown(0x28)
+			time.Sleep(220 * time.Millisecond)
+			hid.RawKeyUp(0x28)
+			_ = gi.RestoreGetKeyState()
+			_ = gi.RestoreGetAsyncKeyState()
+			time.Sleep(200 * time.Millisecond)
 			hid.PressKey(hid.GetASCIICode("enter"))
 			time.Sleep(1000 * time.Millisecond)
 			ch := bigLeftChange(base, gr.Screenshot())
-			logger.Info("vendor: attempt", "n", attempt, "offset", fmt.Sprintf("(%d,%d)", off[0], off[1]), "leftChange", ch)
+			logger.Info("vendor: attempt", "n", attempt, "offset", fmt.Sprintf("(%d,%d)", off[0], off[1]),
+				"menuByte", menuOpen, "leftChange", ch)
 			if ch > 12000 {
 				shopOpen = true
 				break
 			}
-			// If Enter fell into the world, chat may be open — close it before the next try.
-			hid.PressKey(hid.GetASCIICode("enter"))
+			// TRADE didn't take — collapse whatever is open (esc closes the whole menu
+			// stack; safe here because SOMETHING is open, so no pause-menu trap).
+			hid.PressKey(hid.GetASCIICode("esc"))
 			time.Sleep(300 * time.Millisecond)
 		}
 		if !shopOpen {
@@ -4677,17 +4716,42 @@ func main() {
 				break
 			}
 		}
-		// BUY the essentials: TP tome + ID tome from the Misc stock (left column, measured
-		// from akara_shop.png). Right-click = buy. Verified by inventory count. (These were
-		// accidentally sold by the name-blind first sell pass — the mod names tomes
-		// "Jawbone"/"Eye"; the sell filter now runs AFTER this lesson.)
-		invBefore := len(gr.GetData().Inventory.ByLocation(item.LocationInventory))
-		for _, slot := range [][2]int{{178, 240}, {178, 355}} {
-			uiRightClick(slot[0], slot[1])
-			time.Sleep(700 * time.Millisecond)
+		// BUY via LEFT clicks: the right-click buy is deaf under every override tried,
+		// but every LEFT click works on this shop (the sell pass proves it each trip).
+		// D2R buys on pick-from-vendor-grid + place-into-inventory. Experiment target:
+		// one spare TP tome from the measured Misc slot. freeCell shadows every item
+		// 2x3 from its anchor — conservative, so the place never lands on a body.
+		freeCell := func() (int, int, bool) {
+			occ := map[[2]int]bool{}
+			for _, it := range gr.GetData().Inventory.ByLocation(item.LocationInventory) {
+				for dx := 0; dx < 2; dx++ {
+					for dy := 0; dy < 3; dy++ {
+						occ[[2]int{it.Position.X + dx, it.Position.Y + dy}] = true
+					}
+				}
+			}
+			for y := 7; y >= 0; y-- {
+				for x := 0; x < 10; x++ {
+					if !occ[[2]int{x, y}] {
+						return x, y, true
+					}
+				}
+			}
+			return 0, 0, false
 		}
-		invAfter := len(gr.GetData().Inventory.ByLocation(item.LocationInventory))
-		logger.Info("vendor: buyback pass", "itemsGained", invAfter-invBefore)
+		invBefore := len(gr.GetData().Inventory.ByLocation(item.LocationInventory))
+		if fx, fy, okc := freeCell(); okc {
+			uiClick(178, 240) // Misc stock: TP tome slot (measured from akara_shop.png)
+			time.Sleep(500 * time.Millisecond)
+			px, py := invPixel(fx, fy)
+			uiClick(px, py)
+			time.Sleep(500 * time.Millisecond)
+			invAfter := len(gr.GetData().Inventory.ByLocation(item.LocationInventory))
+			logger.Info("vendor: BUY experiment (left-click pick+place)",
+				"before", invBefore, "after", invAfter, "cell", fmt.Sprintf("(%d,%d)", fx, fy))
+		} else {
+			logger.Info("vendor: no free inventory cell — buy skipped")
+		}
 		moveStop()
 		hid.PressKey(hid.GetASCIICode("esc")) // close the shop
 		time.Sleep(400 * time.Millisecond)
@@ -5510,6 +5574,29 @@ mainLoop:
 						continue
 					}
 				}
+			}
+		}
+
+		// AUTO TOWN TRIP (the user's "on full inventory"): backpack pressure sends him
+		// through his own portal for the full errand run — identify, sell, restock — then
+		// back through the same portal. On-demand stays `echo tp > logs/control.txt`.
+		if *tripItems > 0 && *tp != "" && tpPhase == 0 && !d.PlayerUnit.Area.IsTown() &&
+			time.Since(lastAutoTrip) > 15*time.Minute &&
+			len(d.Inventory.ByLocation(item.LocationInventory)) >= *tripItems {
+			enemyNear := false
+			for _, m := range d.Monsters.Enemies() {
+				if m.Stats[stat.Life] > 0 && chebyshev(me, m.Position) <= 20 {
+					enemyNear = true
+					break
+				}
+			}
+			if !enemyNear {
+				logger.Info("towntrip: AUTO — inventory full",
+					"items", len(d.Inventory.ByLocation(item.LocationInventory)))
+				lastAutoTrip = time.Now()
+				tpVendorWanted = true
+				tpPhase, tpTripStart, tpParkInTown, tpErrandsDone = 1, time.Now(), false, false
+				continue
 			}
 		}
 
