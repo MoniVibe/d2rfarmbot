@@ -6483,27 +6483,28 @@ mainLoop:
 								offs := [][2]int{{0, 0}, {0, -32}, {24, -44}, {-24, -32}, {0, -64}, {36, -20}}
 								off := offs[exitClickTry%len(offs)]
 								exitClickTry++
-								if exitClickTry%3 == 0 {
-									// FRESH-APPROACH click (the vendor lesson, stairs edition):
-									// clicking stairs you're STANDING ON may never register —
-									// back off ~9 tiles and click the sprite from outside, so
-									// the game paths him onto it like a human's click would.
-									away := data.Position{X: me.X + 9, Y: me.Y + 9}
-									for i := 0; i < 6; i++ {
-										navWalk(gr.GetData().PlayerUnit.Position, away)
-										time.Sleep(150 * time.Millisecond)
-									}
-									moveStop()
-									time.Sleep(200 * time.Millisecond)
-								}
 								me2 := gr.GetData().PlayerUnit.Position
 								sx, sy := gameToScreen(gr, me2.X, me2.Y, steerTgt.X, steerTgt.Y)
+								realCur := exitClickTry%3 == 0
 								logger.Info("goto: clicking the exit tile", "haveObj", haveObj,
 									"tile", fmt.Sprintf("(%d,%d)", steerTgt.X, steerTgt.Y),
 									"offset", fmt.Sprintf("(%d,%d)", off[0], off[1]),
-									"freshApproach", exitClickTry%3 == 0)
+									"realCursor", realCur)
 								moveStop()
-								interactClick(sx+off[0], sy+off[1])
+								if realCur {
+									// REAL-CURSOR rung: static hit-testing (stairs, NPCs) rides
+									// the HARDWARE cursor via RawInput — the injected exports
+									// never produce hover on statics, so synthetic clicks land
+									// as move orders. Park the real cursor on the sprite (no
+									// focus needed), then send the click message. (The old
+									// fresh-approach backoff lived here — it just amplified the
+									// user-visible back-and-forth and never transitioned.)
+									win.SetCursorPos(int32(gr.WindowLeftX+sx+off[0]), int32(gr.WindowTopY+sy+off[1]))
+									time.Sleep(150 * time.Millisecond)
+									hid.LeftClickNoMove(sx+off[0], sy+off[1])
+								} else {
+									interactClick(sx+off[0], sy+off[1])
+								}
 								time.Sleep(1100 * time.Millisecond)
 								mapPointContactAt = time.Now()
 							}
