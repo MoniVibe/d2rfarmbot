@@ -47,6 +47,10 @@ type Outcome struct {
 	Evidence string    `json:"evidence"`
 	HeldMS   int64     `json:"held_ms"`
 	At       time.Time `json:"at"`
+	// AimDX/AimDY: the sweep offset that confirmed the hover — fed back to the
+	// caller as the next shot's hint (volley aim tracking). Not ledger-worthy.
+	AimDX int `json:"-"`
+	AimDY int `json:"-"`
 }
 
 // Ledger is an in-memory ring + sink hook. The memory store persists what needs

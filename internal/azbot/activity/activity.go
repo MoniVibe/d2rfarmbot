@@ -34,6 +34,8 @@ type Ctx struct {
 	Grid *game.Grid
 	Cap  *combat.Capability
 	Snap *percept.Snapshot
+	// SwapKey: the weapon-swap key (W) — the bowzon dance's hinge.
+	SwapKey byte
 }
 
 type Activity interface {
@@ -209,16 +211,23 @@ func (b *Breakout) Step(ctx *Ctx) Verdict {
 		return Done // broke out and clear
 	}
 
-	// HARD FLOOR: HP critical → the portal is the move. Walk into it if it exists.
+	// HARD FLOOR: HP critical → the portal is the move. A portal must be CLICKED —
+	// standing on one does nothing (the unreliable-entry defect). Approach only until
+	// it's clickable (~20 tiles: the click itself starts a walk-and-enter), then run
+	// the farmbot's proven hover-confirm entry.
 	hardFloor := s.Me.HPPct < 18
 	if hardFloor && len(s.Portals) > 0 {
-		best, bd := s.Portals[0], chebyshev(s.Me.Pos, s.Portals[0])
+		best, bd := s.Portals[0], chebyshev(s.Me.Pos, s.Portals[0].Pos)
 		for _, pt := range s.Portals[1:] {
-			if d := chebyshev(s.Me.Pos, pt); d < bd {
+			if d := chebyshev(s.Me.Pos, pt.Pos); d < bd {
 				best, bd = pt, d
 			}
 		}
-		verbs.Stride{To: best, Hold: 1500 * time.Millisecond, MinGain: 1}.Do(ctx.M, ctx.GR, ctx.P, ctx.Led, b.Name())
+		if bd > 20 {
+			verbs.Stride{To: best.Pos, Hold: 1500 * time.Millisecond, MinGain: 1}.Do(ctx.M, ctx.GR, ctx.P, ctx.Led, b.Name())
+		} else {
+			verbs.EnterPortal{Target: best.ID, TargetPos: best.Pos}.Do(ctx.M, ctx.GR, ctx.P, ctx.Led, b.Name())
+		}
 		return Running
 	}
 
@@ -282,7 +291,15 @@ type Fight struct {
 	targetPos data.Position
 	j         *journey.Journey
 	noEvid    int
+	swapAt    time.Time
 	blacklist map[data.UnitID]time.Time
+	// Volley state: shots are fire-and-track (no per-shot evidence wait — that wait
+	// WAS the pause between shots). Evidence arrives passively: the target's flinch
+	// or death shows up in the snapshot stream the Executive already captures.
+	volleys      int       // shots at the current target since the last observed flinch
+	aimDX, aimDY int       // sweep offset that confirmed hover last shot (next shot's hint)
+	lastKey      byte      // skill key selected by the previous strike
+	lastStrikeAt time.Time // paces the volley to the attack animation (~350ms)
 }
 
 func NewFight() *Fight { return &Fight{blacklist: map[data.UnitID]time.Time{}} }
@@ -322,16 +339,21 @@ func (f *Fight) Step(ctx *Ctx) Verdict {
 		return Running
 	}
 	// (Re)select target: keep the current one while it lives and is un-blacklisted.
+	// A flinch observed here IS the volley's evidence — no strike ever waits for it.
 	alive := false
 	for _, e := range s.Enemies {
 		if e.ID == f.target {
 			alive = true
 			f.targetPos = e.Pos
+			if e.Mode == uint32(mode.NpcGettingHit) {
+				f.volleys, f.noEvid = 0, 0
+			}
 			break
 		}
 	}
 	if !alive || f.target == 0 {
 		f.target, f.j, f.noEvid = 0, nil, 0
+		f.volleys, f.aimDX, f.aimDY = 0, 0, 0
 		best, bd := percept.EnemyRef{}, 46
 		for _, e := range s.Enemies {
 			if until, bl := f.blacklist[e.ID]; bl && time.Now().Before(until) {
@@ -348,41 +370,73 @@ func (f *Fight) Step(ctx *Ctx) Verdict {
 	}
 
 	d := chebyshev(s.Me.Pos, f.targetPos)
-	crowd := 0
+	contact := 1 << 30
+	var contactPos data.Position
 	for _, e := range s.Enemies {
-		if chebyshev(s.Me.Pos, e.Pos) <= 12 {
-			crowd++
+		if dd := chebyshev(s.Me.Pos, e.Pos); dd < contact {
+			contact, contactPos = dd, e.Pos
 		}
 	}
-	canThrow := ctx.Cap != nil && ctx.Cap.Throw != nil
 
-	// HIT-AND-RUN (the amazon's real playstyle; the fists-at-melee death was the opposite):
-	// with a throw weapon and a crowd, KEEP DISTANCE and throw. Only wade into melee when
-	// it's a lone straggler or throwing isn't available.
-	if canThrow && crowd >= 2 {
-		if d < 9 { // too close — back off one stride from the nearest, then throw
-			nx, ny := s.Me.Pos.X, s.Me.Pos.Y
-			near, nd := s.Me.Pos, 1<<30
-			for _, e := range s.Enemies {
-				if dd := chebyshev(s.Me.Pos, e.Pos); dd < nd {
-					near, nd = e.Pos, dd
-				}
-			}
-			away := data.Position{X: nx + (nx - near.X), Y: ny + (ny - near.Y)}
+	// ---- THE BOWZON DANCE (owner's doctrine, verbatim: basic arrow as the workhorse,
+	// don't spam magic arrow dry, W-swap to javelin for contact, and the HIGHER priority
+	// is getting far enough to swap back to the bow and shoot at range). ----
+	switch s.Me.WeaponKind {
+	case "bow":
+		if contact <= 4 {
+			// Something reached her: swap to the javelin set and stab. The swap is
+			// closed-loop — WeaponKind flips on the next capture, or it didn't happen.
+			f.trySwap(ctx)
+			return Running
+		}
+		if d < 8 { // uncomfortably close for archery — open the gap first
+			away := data.Position{X: s.Me.Pos.X + (s.Me.Pos.X - contactPos.X),
+				Y: s.Me.Pos.Y + (s.Me.Pos.Y - contactPos.Y)}
 			verbs.Stride{To: away, Hold: 900 * time.Millisecond, MinGain: 2}.Do(ctx.M, ctx.GR, ctx.P, ctx.Led, f.Name())
 			return Running
 		}
-		if d > 22 { // out of throw range — close a little
+		if d > 25 { // out of bow range — close a little
 			verbs.Stride{To: f.targetPos, Hold: 900 * time.Millisecond}.Do(ctx.M, ctx.GR, ctx.P, ctx.Led, f.Name())
 			return Running
 		}
-		o := verbs.HoverStrike{Target: f.target, TargetPos: f.targetPos, SelectKey: ctx.Cap.Throw.Key}.
-			Do(ctx.M, ctx.GR, ctx.P, ctx.Led, f.Name())
-		f.assess(o)
+		// SHOOT. Basic arrow (plain attack, zero mana) is the workhorse; the bow skill
+		// only while the pool is comfortable — never spammed dry.
+		var key byte
+		if ctx.Cap != nil && ctx.Cap.RangedCast != nil && s.Me.MPPct >= 50 {
+			key = ctx.Cap.RangedCast.Key
+		}
+		f.strike(ctx, f.target, f.targetPos, key)
+		return Running
+
+	case "melee":
+		// Javelin set: stab whatever is in reach — but the HIGHER priority is getting
+		// clear enough to return to the bow.
+		if contact > 7 {
+			f.trySwap(ctx) // clear — back to the bow
+			return Running
+		}
+		if d > 4 {
+			// The chosen target is far but something else is in contact — stab THAT.
+			if contact <= 4 {
+				f.strike(ctx, f.nearestID(s), contactPos, 0)
+				return Running
+			}
+			// Nothing in reach: step back rather than chase — range is the win condition.
+			away := data.Position{X: s.Me.Pos.X + (s.Me.Pos.X - contactPos.X),
+				Y: s.Me.Pos.Y + (s.Me.Pos.Y - contactPos.Y)}
+			verbs.Stride{To: away, Hold: 800 * time.Millisecond}.Do(ctx.M, ctx.GR, ctx.P, ctx.Led, f.Name())
+			return Running
+		}
+		f.strike(ctx, f.target, f.targetPos, 0)
 		return Running
 	}
 
-	// Melee path: close, then strike (throw at a lone target if available, else fists).
+	// ---- No bow in the picture: the pre-bowzon paths (throw kiting, then melee). ----
+	canThrow := ctx.Cap != nil && ctx.Cap.Throw != nil
+	if canThrow && d >= 9 && d <= 22 {
+		f.strike(ctx, f.target, f.targetPos, ctx.Cap.Throw.Key)
+		return Running
+	}
 	if d > 4 {
 		if f.j == nil || chebyshev(f.j.Goal, f.targetPos) > 6 {
 			f.j = journey.New(ctx.GR, ctx.Grid, f.targetPos, f.Name())
@@ -400,10 +454,54 @@ func (f *Fight) Step(ctx *Ctx) Verdict {
 	} else if ctx.Cap != nil && ctx.Cap.Melee != nil {
 		key = ctx.Cap.Melee.Key
 	}
-	o := verbs.HoverStrike{Target: f.target, TargetPos: f.targetPos, SelectKey: key}.
-		Do(ctx.M, ctx.GR, ctx.P, ctx.Led, f.Name())
-	f.assess(o)
+	f.strike(ctx, f.target, f.targetPos, key)
 	return Running
+}
+
+// strike fires one volley shot: paced to the attack animation (~350ms), aim-hinted
+// from the last confirmed sweep offset, selection skipped when the same key was
+// proven moments ago. No evidence wait — Step's snapshot read is the evidence path.
+func (f *Fight) strike(ctx *Ctx, target data.UnitID, pos data.Position, key byte) {
+	if time.Since(f.lastStrikeAt) < 350*time.Millisecond {
+		return // the animation is still playing; clicking now buys nothing
+	}
+	skip := key != 0 && key == f.lastKey && time.Since(f.lastStrikeAt) < 2*time.Second
+	o := verbs.HoverStrike{Target: target, TargetPos: pos, SelectKey: key,
+		Volley: true, HintDX: f.aimDX, HintDY: f.aimDY, SkipSelect: skip}.
+		Do(ctx.M, ctx.GR, ctx.P, ctx.Led, f.Name())
+	f.lastKey, f.lastStrikeAt = key, time.Now()
+	if o.Result != verbs.ResDone {
+		f.assess(o) // whiff/refused: the old no-evidence ladder (4 strikes -> blacklist)
+		return
+	}
+	f.aimDX, f.aimDY = o.AimDX, o.AimDY
+	f.volleys++
+	if f.volleys >= 8 {
+		// Eight landed clicks and the target never once flinched in the stream:
+		// phantom or unhittable — stop feeding it arrows.
+		f.blacklist[target] = time.Now().Add(30 * time.Second)
+		f.target, f.j, f.noEvid, f.volleys = 0, nil, 0, 0
+	}
+}
+
+// trySwap presses the weapon-swap key (rate-limited); verification is the next
+// snapshot's WeaponKind — the closed loop lives in perception, not hope.
+func (f *Fight) trySwap(ctx *Ctx) {
+	if time.Since(f.swapAt) < 1500*time.Millisecond {
+		return
+	}
+	ctx.M.KeyLane().Press(ctx.SwapKey)
+	f.swapAt = time.Now()
+}
+
+func (f *Fight) nearestID(s *percept.Snapshot) data.UnitID {
+	best, bd := data.UnitID(0), 1<<30
+	for _, e := range s.Enemies {
+		if dd := chebyshev(s.Me.Pos, e.Pos); dd < bd {
+			best, bd = e.ID, dd
+		}
+	}
+	return best
 }
 
 func (f *Fight) assess(o verbs.Outcome) {

@@ -35,6 +35,9 @@ type PlayerState struct {
 	// nothing when this is 0 — the bot knows when it cannot heal (the empty-belt
 	// death: 25s bleed from 30% while the drink reflex pressed keys into the void).
 	HealPots int
+	// WeaponKind: what the ACTIVE hands hold — "bow", "melee", or "none". The W swap
+	// flips this next capture; combat reads it as the closed loop on weapon swapping.
+	WeaponKind string
 }
 
 // EnemyRef is a live hostile: identity, position, and Mode (the honest liveness read —
@@ -54,6 +57,14 @@ type ItemRef struct {
 	Quality int
 }
 
+// PortalRef is a live portal object: identity AND position. Entering a portal means
+// CLICKING it (hover-confirmed by UnitID) — walking onto one does nothing, so a
+// bare position is useless to consumers.
+type PortalRef struct {
+	ID  data.UnitID
+	Pos data.Position
+}
+
 // Snapshot is one immutable perception frame. Valid=false frames (load screens,
 // zero-position garbage) are published so consumers see the gap, but carry no state.
 type Snapshot struct {
@@ -65,7 +76,7 @@ type Snapshot struct {
 	MenuOpen bool
 	Enemies  []EnemyRef
 	Items    []ItemRef
-	Portals  []data.Position // town portals (and red portals) in the world
+	Portals  []PortalRef // town portals (and red portals) in the world
 }
 
 // AttachReport is the M0 epistemics gate verdict: behavioral probes over the channels
@@ -152,10 +163,18 @@ func (p *Perceptor) Capture() *Snapshot {
 	for _, it := range d.Inventory.ByLocation(item.LocationGround) {
 		s.Items = append(s.Items, ItemRef{ID: it.UnitID, Pos: it.Position, Name: string(it.Name), Quality: int(it.Quality)})
 	}
+	s.Me.WeaponKind = "none"
 	for _, eq := range d.Inventory.ByLocation(item.LocationEquipped) {
-		if eq.Location.BodyLocation == item.LocLeftArm || eq.Location.BodyLocation == item.LocRightArm {
-			s.Me.Armed = true
-			break
+		if eq.Location.BodyLocation != item.LocLeftArm && eq.Location.BodyLocation != item.LocRightArm {
+			continue
+		}
+		s.Me.Armed = true
+		n := string(eq.Name)
+		if contains(n, "Bow") || contains(n, "Crossbow") {
+			s.Me.WeaponKind = "bow"
+		} else if s.Me.WeaponKind != "bow" && !contains(n, "Quiver") && !contains(n, "Arrow") &&
+			!contains(n, "Bolt") && !contains(n, "Shield") && !contains(n, "Buckler") {
+			s.Me.WeaponKind = "melee"
 		}
 	}
 	for _, bp := range d.Inventory.Belt.Items {
@@ -166,7 +185,7 @@ func (p *Perceptor) Capture() *Snapshot {
 	}
 	for i := range d.Objects {
 		if d.Objects[i].IsPortal() || d.Objects[i].IsRedPortal() {
-			s.Portals = append(s.Portals, d.Objects[i].Position)
+			s.Portals = append(s.Portals, PortalRef{ID: d.Objects[i].ID, Pos: d.Objects[i].Position})
 		}
 	}
 	p.last.Store(s)

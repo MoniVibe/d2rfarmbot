@@ -20,6 +20,17 @@ type HoverStrike struct {
 	TargetPos data.Position // fresh world position from THIS cycle's snapshot
 	SelectKey byte          // 0 = plain left-click attack; else press-then-right-click
 	Evidence  time.Duration // window to observe target Mode change; default 900ms
+	// Volley: fire-and-track. Skip the evidence window — the CALLER observes the
+	// target's Mode from its own snapshot stream. The per-shot evidence block was
+	// the pause between shots: cadence must be bounded by the attack animation,
+	// not by an observation window.
+	Volley bool
+	// HintDX/HintDY: the sweep offset that confirmed hover on the LAST shot at this
+	// target. Targets move smoothly — the same offset usually confirms on probe one.
+	HintDX, HintDY int
+	// SkipSelect: the caller proved this SelectKey is already the live selection
+	// (same key, moments ago) — save the press + 50ms settle.
+	SkipSelect bool
 }
 
 func (h HoverStrike) Do(m *motor.Motor, gr *game.MemoryReader, p *percept.Perceptor, led *Ledger, holder string) Outcome {
@@ -42,24 +53,28 @@ func (h HoverStrike) Do(m *motor.Motor, gr *game.MemoryReader, p *percept.Percep
 	bx := int(float32((h.TargetPos.X-me.X)-(h.TargetPos.Y-me.Y))*19.8) + gr.GameAreaSizeX/2
 	by := int(float32((h.TargetPos.X-me.X)+(h.TargetPos.Y-me.Y))*9.9) + gr.GameAreaSizeY/2
 
-	// Incremental hover sweep: confirm identity or refuse to click.
+	// Incremental hover sweep: confirm identity or refuse to click. The hint offset
+	// probes FIRST — on a tracked target it usually confirms immediately, collapsing
+	// the sweep from up to 25 probes to one.
 	confirmed := false
 	px, py := bx, by
+	probes := [][2]int{{h.HintDX, h.HintDY}}
 	for _, dy := range []int{-12, 0, -24, -36, 8} {
 		for _, dx := range []int{0, -10, 10, -20, 20} {
-			cx, cy := bx+dx, by+dy
-			if cx < 20 || cy < 20 || cx > gr.GameAreaSizeX-20 || cy > gr.GameAreaSizeY-20 {
-				continue
-			}
-			hidAim(m, cx, cy)
-			time.Sleep(45 * time.Millisecond)
-			hd := gr.GetData().HoverData
-			if hd.IsHovered && hd.UnitID == h.Target {
-				confirmed, px, py = true, cx, cy
-				break
-			}
+			probes = append(probes, [2]int{dx, dy})
 		}
-		if confirmed {
+	}
+	for _, pr := range probes {
+		cx, cy := bx+pr[0], by+pr[1]
+		if cx < 20 || cy < 20 || cx > gr.GameAreaSizeX-20 || cy > gr.GameAreaSizeY-20 {
+			continue
+		}
+		hidAim(m, cx, cy)
+		time.Sleep(30 * time.Millisecond)
+		hd := gr.GetData().HoverData
+		if hd.IsHovered && hd.UnitID == h.Target {
+			confirmed, px, py = true, cx, cy
+			o.AimDX, o.AimDY = pr[0], pr[1]
 			break
 		}
 	}
@@ -72,11 +87,22 @@ func (h HoverStrike) Do(m *motor.Motor, gr *game.MemoryReader, p *percept.Percep
 
 	// Strike: skill right-click (selection already proven by Capability) or plain attack.
 	if h.SelectKey != 0 {
-		m.PressKey(h.SelectKey)
-		time.Sleep(50 * time.Millisecond)
+		if !h.SkipSelect {
+			m.PressKey(h.SelectKey)
+			time.Sleep(50 * time.Millisecond)
+		}
 		m.ClickRight(px, py)
 	} else {
 		m.ClickLeft(px, py)
+	}
+
+	// VOLLEY: the click was the verb's whole job. Evidence belongs to the caller's
+	// snapshot stream; the next shot can begin as soon as the animation allows.
+	if h.Volley {
+		o.Result = ResDone
+		o.Evidence = "volley"
+		led.Append(o)
+		return o
 	}
 
 	// Evidence: the target's Mode transitions (hit-recoil/dying/dead) inside the window.

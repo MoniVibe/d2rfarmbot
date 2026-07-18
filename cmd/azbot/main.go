@@ -107,7 +107,8 @@ func main() {
 	seconds := flag.Int("seconds", 3600, "run duration in seconds")
 	dpiScale := flag.Float64("dpiscale", 1.25, "display scale (this laptop: 1.25)")
 	moveKey := flag.String("move", "e", "Force Move key (D2R Options>Controls binding)")
-	killKey := flag.String("killswitch", "f12", "hotkey to toggle bot control (f9..f12|pause|scrolllock|single letter). Disengage heals all input patches — the human owns Diablo instantly.")
+	swapKey := flag.String("swap", "w", "weapon-swap key (the bowzon dance: bow at range, javelin at contact)")
+	killKey := flag.String("killswitch", "f10", "hotkey to toggle bot control (f9|f10|f11|pause|scrolllock — NOT f12, Windows reserves it for debuggers). Disengage heals all input patches — the human owns Diablo instantly.")
 	belt := flag.String("belt", "1,2,3,4", "belt column keys")
 	drinkAt := flag.Int("drinkat", 55, "sentinel drinks at or below this HP%")
 	memDir := flag.String("memdir", "logs/azmem", "memory store directory (WAL)")
@@ -480,7 +481,7 @@ func main() {
 				"urgency", fmt.Sprintf("%.2f", grant.Demand.Urgency))
 		}
 		act := acts[grant.Demand.Who]
-		v := act.Step(&activity.Ctx{M: m, GR: gr, P: p, Led: led, Grid: grid, Cap: &cap, Snap: s})
+		v := act.Step(&activity.Ctx{M: m, GR: gr, P: p, Led: led, Grid: grid, Cap: &cap, Snap: s, SwapKey: hid.GetASCIICode(*swapKey)})
 		if v != activity.Running {
 			logger.Info("verdict", "activity", grant.Demand.Who, "verdict", map[activity.Verdict]string{activity.Done: "done", activity.Abandoned: "abandoned"}[v])
 			arb.Release()

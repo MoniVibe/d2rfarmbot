@@ -22,12 +22,13 @@ type Binding struct {
 
 // Capability is what the character can provably do right now.
 type Capability struct {
-	Known    map[skill.ID]int // skills present in the live Skills map (level; 0 = granted)
-	Proven   []Binding        // key presses that demonstrably flipped RightSkill
-	Melee    *Binding         // preferred melee strike (proven)
-	Throw    *Binding         // proven throw selection
-	TownTP   *Binding         // proven town portal selection
-	Identify *Binding         // proven identify selection
+	Known      map[skill.ID]int // skills present in the live Skills map (level; 0 = granted)
+	Proven     []Binding        // key presses that demonstrably flipped RightSkill
+	Melee      *Binding         // preferred melee strike (proven)
+	Throw      *Binding         // proven throw selection
+	RangedCast *Binding         // proven bow-skill selection (Magic/Fire/Cold Arrow...)
+	TownTP     *Binding         // proven town portal selection
+	Identify   *Binding         // proven identify selection
 }
 
 // Calibrate presses each candidate key once and reads RightSkill back. Run at session
@@ -54,6 +55,11 @@ func Calibrate(log *slog.Logger, gr *game.MemoryReader, hid *game.HID, mem *memo
 				if cap.Melee == nil {
 					v := b
 					cap.Melee = &v
+				}
+			case skill.MagicArrow, skill.FireArrow, skill.ColdArrow, skill.IceArrow, skill.GuidedArrow, skill.MultipleShot:
+				if cap.RangedCast == nil {
+					v := b
+					cap.RangedCast = &v
 				}
 			case skill.Throw:
 				v := b
