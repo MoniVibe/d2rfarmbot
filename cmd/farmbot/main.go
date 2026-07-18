@@ -3865,6 +3865,8 @@ func main() {
 	exploreBestDist := 1 << 30
 	var exploreBestAt time.Time
 	gotoProgressAt := time.Now()
+	var lastGotoTickAt time.Time    // last tick the goto block actually ran (resume-reset)
+	var lastExploreTickAt time.Time // ditto for explore
 	var badDests []data.Position // explore destinations that turned out unreachable (walled off)
 	chickenStreak := 0           // consecutive Chicken ticks, so a one-frame HP dip doesn't spam TP
 	tpDone := false              // emergency TP already fired for the current chicken episode
@@ -4012,7 +4014,13 @@ func main() {
 			wdx := int(math.Cos(r.angle) * 20)
 			wdy := int(math.Sin(r.angle) * 20)
 			sx, sy := screenPointToward(me, wdx, wdy)
-			walkToHold(sx, sy, 280+120*burst)
+			hold := 280 + 120*burst
+			walkToHold(sx, sy, hold)
+			// SYNCHRONOUS on purpose: with the async hold, the next tick's carrot re-aim
+			// overwrote the escape direction within ~10ms and the burst never got a frame
+			// of actual walking (measured: 38 wedge stamps at one cell, position frozen —
+			// the unstick mechanism itself was dead). An escape pulse OWNS its duration.
+			time.Sleep(time.Duration(hold) * time.Millisecond)
 		}
 	}
 
@@ -4858,6 +4866,15 @@ mainLoop:
 		// flow below; travel resumes the tick the pack stops qualifying (dead, fled, or odds
 		// turned). Close packs only — a favorable pack 60 tiles off is not a reason to detour.
 		if curGoto != 0 && !oppFight && navi != nil && navGrid != nil && int(d.PlayerUnit.Area) != curGoto {
+			// RESUME RESET: the stall watchdog's clock keeps aging while combat/loot/recovery
+			// own the ticks — travel resuming after a 10s in-place fight looked like a 10s
+			// wedge and stamped refusals on innocent ground (measured: hatch cleared 32 cells
+			// he then walked straight through). A gap in goto ticks = not a movement stall.
+			if time.Since(lastGotoTickAt) > 1200*time.Millisecond {
+				gotoLastPos, gotoProgressAt = me, time.Now()
+				exitSeekBestAt = time.Now() // same aging bug: a fight is not exit-seek stagnation
+			}
+			lastGotoTickAt = time.Now()
 			// NET-PROGRESS WATCHDOG: the goto path skips the generic unstick (by design), so a
 			// physical wedge the grid can't see (fence pockets the live town collision marks
 			// walkable) would freeze travel forever — measured twice, minutes of bit-identical
@@ -5462,6 +5479,12 @@ mainLoop:
 			// by construction never aimless. Random-far-cell picking and the blind wander circle
 			// generator are DELETED. Execution goes through the Mover (LOS-lookahead executor).
 			if navGrid != nil {
+				// RESUME RESET: same watchdog-aging bug as goto — a combat/loot preemption is
+				// not an explore stall; don't let it drop the destination into badDests.
+				if time.Since(lastExploreTickAt) > 1200*time.Millisecond {
+					exploreBestAt = time.Now()
+				}
+				lastExploreTickAt = time.Now()
 				// COMMITMENT: hold the current destination until arrival or a genuine progress
 				// stall — the old flat 25s re-pick let FrontierNear retarget mid-walk to a frontier
 				// BEHIND us (rooms loading shift the "nearest"), producing the back-and-forth walk
