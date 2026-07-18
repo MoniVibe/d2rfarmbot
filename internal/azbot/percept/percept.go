@@ -12,6 +12,7 @@ import (
 
 	"github.com/hectorgimenez/d2go/pkg/data"
 	"github.com/hectorgimenez/d2go/pkg/data/area"
+	"github.com/hectorgimenez/d2go/pkg/data/item"
 	"github.com/hectorgimenez/d2go/pkg/data/mode"
 	"github.com/hectorgimenez/d2go/pkg/data/stat"
 	"github.com/hectorgimenez/koolo/internal/game"
@@ -27,6 +28,9 @@ type PlayerState struct {
 	Level  int
 	Gold   int
 	InTown bool
+	// Armed: something occupies a weapon-hand slot. Part of the self-model's
+	// "who am I right now" — a lost weapon flips this the same cycle.
+	Armed bool
 }
 
 // EnemyRef is a live hostile: identity, position, and Mode (the honest liveness read —
@@ -35,6 +39,15 @@ type EnemyRef struct {
 	ID   data.UnitID
 	Pos  data.Position
 	Mode uint32
+}
+
+// ItemRef is a ground item: identity, position, name (mod-remapped names resolved by
+// consumers against the self-model's identity facts, not here).
+type ItemRef struct {
+	ID      data.UnitID
+	Pos     data.Position
+	Name    string
+	Quality int
 }
 
 // Snapshot is one immutable perception frame. Valid=false frames (load screens,
@@ -47,6 +60,7 @@ type Snapshot struct {
 	// MenuOpen: the ONE panel oracle — UIBytes wide-window offset 0xF4 (measured 2026-07-18).
 	MenuOpen bool
 	Enemies  []EnemyRef
+	Items    []ItemRef
 }
 
 // AttachReport is the M0 epistemics gate verdict: behavioral probes over the channels
@@ -129,6 +143,15 @@ func (p *Perceptor) Capture() *Snapshot {
 			continue
 		}
 		s.Enemies = append(s.Enemies, EnemyRef{ID: m.UnitID, Pos: m.Position, Mode: uint32(m.Mode)})
+	}
+	for _, it := range d.Inventory.ByLocation(item.LocationGround) {
+		s.Items = append(s.Items, ItemRef{ID: it.UnitID, Pos: it.Position, Name: string(it.Name), Quality: int(it.Quality)})
+	}
+	for _, eq := range d.Inventory.ByLocation(item.LocationEquipped) {
+		if eq.Location.BodyLocation == item.LocLeftArm || eq.Location.BodyLocation == item.LocRightArm {
+			s.Me.Armed = true
+			break
+		}
 	}
 	p.last.Store(s)
 	return s

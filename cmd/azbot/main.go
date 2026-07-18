@@ -15,6 +15,8 @@ import (
 	"unsafe"
 
 	"github.com/hectorgimenez/d2go/pkg/data"
+	"github.com/hectorgimenez/koolo/internal/azbot/activity"
+	"github.com/hectorgimenez/koolo/internal/azbot/arbiter"
 	"github.com/hectorgimenez/koolo/internal/azbot/combat"
 	"github.com/hectorgimenez/koolo/internal/azbot/journey"
 	"github.com/hectorgimenez/koolo/internal/azbot/memory"
@@ -372,22 +374,83 @@ func main() {
 		return
 	}
 
-	// ---- M1 executive skeleton: perceive on cadence, report status. Activities in M2+. ----
+	// ---- THE EXECUTIVE: one arbiter, one activity per cycle, honest grants ----
+	led := verbs.NewLedger(2048)
+	led.Sink = func(o verbs.Outcome) {
+		if o.Result != verbs.ResDone { // done outcomes are the quiet normal; exceptions speak
+			logger.Info("outcome", "verb", o.Verb, "holder", o.Holder, "result", o.Result.String(), "ev", o.Evidence)
+		}
+	}
+	cap := combat.Calibrate(logger, gr, hid, mem, []string{"f1", "f2", "f3", "f4"})
+	arb := &arbiter.Arbiter{}
+	acts := map[string]activity.Activity{}
+	road := []data.Position{{X: 6020, Y: 4952}, {X: 5992, Y: 4941}, {X: 5963, Y: 5001}, {X: 5962, Y: 4956}, {X: 5952, Y: 4944}}
+	mem.PutJSON("road.town.blood_moor_gate", memory.ScopeSeed, memory.Provenance{Source: "hand-piloted", Evidence: "2026-07-18, seed 466817790"}, road)
+	for _, a := range []activity.Activity{&activity.Flee{}, &activity.Respawn{}, activity.NewFight(), activity.NewLoot(), &activity.Travel{Road: road}, &activity.Explore{}} {
+		acts[a.Name()] = a
+	}
+
+	var grid *game.Grid
+	gridArea := -1
+	wasArmed := false
+	wasDead := false
 	deadline := time.Now().Add(time.Duration(*seconds) * time.Second)
 	statusAt := time.Time{}
 	for time.Now().Before(deadline) {
 		s := p.Capture()
-		if time.Since(statusAt) > 5*time.Second {
-			if s.Valid {
-				logger.Info("status", "pos", fmt.Sprintf("(%d,%d)", s.Me.Pos.X, s.Me.Pos.Y),
-					"area", int(s.Me.Area), "hp", s.Me.HPPct, "lvl", s.Me.Level,
-					"gold", s.Me.Gold, "menu", s.MenuOpen, "engaged", m.Engage.Engaged())
-			} else {
-				logger.Warn("status: perception gap (load screen / not in game)")
+		if !s.Valid || !m.Engage.Engaged() {
+			time.Sleep(200 * time.Millisecond)
+			continue
+		}
+		// Grid follows the area (the re-align, owned in one place).
+		if int(s.Me.Area) != gridArea {
+			if g, _, err := gr.BuildLiveGridRooms(); err == nil {
+				grid, gridArea = g, int(s.Me.Area)
+				logger.Info("executive: grid re-aligned", "area", gridArea)
 			}
+		}
+		// Self-model events: armed flip OR back-from-death → recalibrate capability.
+		deadNow := s.Me.HPPct <= 0
+		if (s.Me.Armed != wasArmed || (wasDead && !deadNow)) && !deadNow {
+			logger.Info("executive: self-model event — recalibrating", "armed", s.Me.Armed, "revived", wasDead)
+			c2 := combat.Calibrate(logger, gr, hid, mem, []string{"f1", "f2", "f3", "f4"})
+			cap = c2
+			wasArmed = s.Me.Armed
+		}
+		wasDead = deadNow
+
+		var demands []arbiter.Demand
+		for _, a := range acts {
+			if d := a.Demand(s); d != nil {
+				demands = append(demands, *d)
+			}
+		}
+		grant, changed := arb.Decide(demands)
+		if grant == nil {
+			if time.Since(statusAt) > 5*time.Second {
+				logger.Info("status: idle", "pos", fmt.Sprintf("(%d,%d)", s.Me.Pos.X, s.Me.Pos.Y),
+					"area", int(s.Me.Area), "hp", s.Me.HPPct, "lvl", s.Me.Level)
+				statusAt = time.Now()
+			}
+			time.Sleep(200 * time.Millisecond)
+			continue
+		}
+		if changed {
+			logger.Info("grant", "to", grant.Demand.Who, "class", grant.Demand.Class.String(),
+				"urgency", fmt.Sprintf("%.2f", grant.Demand.Urgency))
+		}
+		act := acts[grant.Demand.Who]
+		v := act.Step(&activity.Ctx{M: m, GR: gr, P: p, Led: led, Grid: grid, Cap: &cap, Snap: s})
+		if v != activity.Running {
+			logger.Info("verdict", "activity", grant.Demand.Who, "verdict", map[activity.Verdict]string{activity.Done: "done", activity.Abandoned: "abandoned"}[v])
+			arb.Release()
+		}
+		if time.Since(statusAt) > 10*time.Second {
+			logger.Info("status", "pos", fmt.Sprintf("(%d,%d)", s.Me.Pos.X, s.Me.Pos.Y),
+				"area", int(s.Me.Area), "hp", s.Me.HPPct, "lvl", s.Me.Level, "gold", s.Me.Gold,
+				"armed", s.Me.Armed, "holder", grant.Demand.Who)
 			statusAt = time.Now()
 		}
-		time.Sleep(80 * time.Millisecond) // Executive cadence; motor owns all other timing
 	}
 	close(stop)
 	logger.Info("azbot done")
