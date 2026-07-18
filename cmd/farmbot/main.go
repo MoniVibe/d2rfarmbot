@@ -4401,6 +4401,7 @@ func main() {
 	var summonDisabledUntil time.Time
 	var golemAt time.Time
 	lastPosture := "engage"
+	var postureHeldAt time.Time // posture hysteresis dwell anchor
 	autoStatAt := time.Time{}
 	var corpseTargetPos data.Position
 	// meleeSwing: a left-click attack that actually CONNECTS. A blind interactClick at the
@@ -6414,9 +6415,19 @@ mainLoop:
 		} else if threat > strength {
 			posture = "kite"
 		}
+		// POSTURE HYSTERESIS: at the boundary the raw comparison flips every tick (run 24:
+		// kite<->engage 12x/s at threat 17-20 vs strength 19 — retreat/advance jitter).
+		// A change must be a BIG swing (margin >= 4) or survive a 1.2s dwell. Regroup is
+		// the flee-for-your-life read and always applies immediately.
+		if posture != lastPosture && posture != "regroup" && lastPosture != "" {
+			if time.Since(postureHeldAt) < 1200*time.Millisecond && abs(threat-strength) < 4 {
+				posture = lastPosture // signal too small to flip on
+			}
+		}
 		if posture != lastPosture {
 			logger.Info("posture", "now", posture, "threat", threat, "strength", strength, "pets", petsAlive)
 			lastPosture = posture
+			postureHeldAt = time.Now()
 		}
 		if posture == "regroup" && packN > 0 {
 			// Away from the pack, not through it. Corpse-raising happens via the summon block
