@@ -4680,6 +4680,7 @@ func main() {
 	var corpseWalkLastPos data.Position
 	corpseWalkMoveAt := time.Now()
 	roadHoldAt := time.Time{}
+	tpBeatAt := time.Time{}
 	var armlootID data.UnitID
 	armlootBest := 1 << 30
 	armlootAt := time.Now()
@@ -5533,6 +5534,15 @@ mainLoop:
 		// TOWN TRIP: cast TP -> enter -> town (errand hook) -> return through the same portal.
 		// Every step verifies by observed area/object change; every phase is time-boxed.
 		if tpPhase != 0 {
+			// HEARTBEAT (the 48-minute silent hang of 2026-07-18 16:07: cast the portal,
+			// then not one log line until the run clock died): any active trip phase now
+			// announces itself every 5s with position and elapsed — silence is never health.
+			if time.Since(tpBeatAt) > 5*time.Second {
+				logger.Info("towntrip: phase heartbeat", "phase", tpPhase,
+					"pos", fmt.Sprintf("(%d,%d)", me.X, me.Y), "area", int(d.PlayerUnit.Area),
+					"elapsed", time.Since(tpPhaseAt).Round(time.Second))
+				tpBeatAt = time.Now()
+			}
 			nearestPortal := func(r int) (data.Object, bool) {
 				best, bd := data.Object{}, r+1
 				for _, o := range d.Objects {
