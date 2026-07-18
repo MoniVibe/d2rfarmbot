@@ -6482,6 +6482,7 @@ mainLoop:
 						logger.Warn("corpse: town-parked — walking the road", "wp", fmt.Sprintf("(%d,%d)", rp.X, rp.Y))
 						walkToHold(bx, by, 2000)
 						roadHoldAt = time.Now()
+						time.Sleep(2100 * time.Millisecond) // commit — see the beeline note
 					}
 				} else {
 					navWalk(me, corpseTargetPos)
@@ -6770,6 +6771,12 @@ mainLoop:
 						logger.Warn("goto: no net movement — TOWN BEELINE force-hold", "pos", fmt.Sprintf("(%d,%d)", me.X, me.Y),
 							"hub", tgt == townHubPos, "sweep", beelineFlip)
 						walkToHold(bx, by, 2000)
+						// COMMIT to the hold: every manual pilot ran under step-hold with the loop
+						// frozen — the bot's version fired the same hold and then 80ms later the
+						// regular goto tick re-aimed the cursor at its own fence-facing carrot,
+						// stomping it. Five runs of "pinned with working holds" were this. Sleep
+						// through the stride; in town nothing else needs the tick.
+						time.Sleep(2100 * time.Millisecond)
 					} else {
 						logger.Warn("goto: no net movement — open burst", "pos", fmt.Sprintf("(%d,%d)", me.X, me.Y))
 						openBurst(me)
