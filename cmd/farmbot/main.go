@@ -4589,7 +4589,30 @@ func main() {
 		slot := t.BodySlot(code)
 		body, ok := gearSlotBody[slot]
 		if !ok {
-			return false
+			// WEAPONLESS EXCEPTION: weapons are normally a human judgment — but a character
+			// with a BARE weapon hand (corpse unrecovered, fists out) upgrades to literally
+			// any weapon she can lift. Shields likewise into a bare off-hand.
+			if slot == "rarm" || slot == "larm" {
+				armBare := true
+				for _, e := range d.Inventory.ByLocation(item.LocationEquipped) {
+					if e.Location.BodyLocation == item.LocLeftArm || e.Location.BodyLocation == item.LocRightArm {
+						armBare = false
+						break
+					}
+				}
+				if !armBare {
+					return false
+				}
+				if slot == "rarm" {
+					body = item.LocLeftArm // D2's weapon hand reads as left_arm in d2go
+				} else {
+					body = item.LocRightArm
+				}
+				ok = true
+			}
+			if !ok {
+				return false
+			}
 		}
 		statVal := func(id stat.ID) int {
 			if s, ok2 := d.PlayerUnit.Stats.FindStat(id, 0); ok2 {
@@ -6581,7 +6604,13 @@ mainLoop:
 									break
 								}
 							}
-							if petNearW {
+							if d.PlayerUnit.Area.IsTown() {
+								// NEVER stamp refusals in town: no combat happens there, only real
+								// walls and the mod's lying decoration (the sparkle field). A stuck
+								// char stamped 40 wedges across her own errand corridor — and they
+								// went into the PERSISTENT atlas. Towns route on geometry alone.
+								logger.Info("goto: refusal NOT stamped — in town (stamps strangle errands)")
+							} else if petNearW {
 								logger.Info("goto: refusal NOT stamped — a pet stands there, not a wall")
 							} else {
 								wedges = append(wedges, w)
