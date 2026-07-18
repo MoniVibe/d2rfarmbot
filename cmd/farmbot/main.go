@@ -6472,51 +6472,49 @@ mainLoop:
 							// object (7649,5152); the "-30 subtiles" lore, Den edition).
 							// Steer and click at the OBJECT's tile whenever one is near.
 							steerTgt := exit
-							haveObj := false
 							bestObjD := 21
 							for _, o := range d.Objects {
 								if dd := chebyshev(o.Position, exit); dd < bestObjD {
-									bestObjD, steerTgt, haveObj = dd, o.Position, true
+									bestObjD, steerTgt = dd, o.Position
 								}
 							}
+							// KOOLO'S ENTRANCE RECIPE (upstream production code,
+							// action/step/interact_entrance.go): aim at (exit-1,-1), SPIRAL
+							// the POINTER a few px per attempt, and click only once
+							// HoverData confirms an entrance-class unit under the cursor
+							// (UnitType 5, or 2+IsHovered). Every blind ladder of the night
+							// lacked this hover contract — and monster bites prove HoverData
+							// reads fine on 3.2. Phases: 5s of contact push (walk-throughs
+							// transition free), then a hover-spiral burst, repeat.
 							if chebyshev(me, steerTgt) > 12 {
 								mapPointContactAt = time.Time{}
+								exitClickTry = 0
 							} else if mapPointContactAt.IsZero() {
 								mapPointContactAt = time.Now()
-							} else if time.Since(mapPointContactAt) > 4*time.Second {
-								// Click the SPRITE, not the feet: five dead-center tile clicks
-								// in run 30 did nothing — a staircase's clickable region rises
-								// up-screen from its tile, the same lesson as the NPC body
-								// offsets. Cycle offsets until one transitions.
-								offs := [][2]int{{0, 0}, {0, -32}, {24, -44}, {-24, -32}, {0, -64}, {36, -20}}
-								off := offs[exitClickTry%len(offs)]
-								exitClickTry++
-								me2 := gr.GetData().PlayerUnit.Position
-								sx, sy := gameToScreen(gr, me2.X, me2.Y, steerTgt.X, steerTgt.Y)
-								realCur := exitClickTry%3 == 0
-								logger.Info("goto: clicking the exit tile", "haveObj", haveObj,
-									"tile", fmt.Sprintf("(%d,%d)", steerTgt.X, steerTgt.Y),
-									"offset", fmt.Sprintf("(%d,%d)", off[0], off[1]),
-									"realCursor", realCur)
+							}
+							phase := 0
+							if !mapPointContactAt.IsZero() {
+								phase = int(time.Since(mapPointContactAt).Seconds()) % 9
+							}
+							if phase >= 5 {
 								moveStop()
-								if realCur {
-									// REAL-INPUT rung: the stairs want genuine RAW INPUT — the
-									// user's manual click works and nothing injectable does
-									// (offset sprite clicks, VK overrides, SetCursorPos+message
-									// all dead; the stairs are id=0 level geometry). SendInput
-									// generates real events. Gated on D2R owning the foreground
-									// so the click can NEVER land in another window (the
-									// always-on-top-terminal lesson).
-									if win.GetForegroundWindow() == gr.HWND {
-										game.SendClickRealScreen(gr.WindowLeftX+sx+off[0], gr.WindowTopY+sy+off[1])
-									} else {
-										logger.Info("goto: real-input click skipped — D2R not foreground")
-									}
-								} else {
-									interactClick(sx+off[0], sy+off[1])
+								me2 := gr.GetData().PlayerUnit.Position
+								lx, ly := gameToScreen(gr, me2.X, me2.Y, steerTgt.X-1, steerTgt.Y-1)
+								// koolo's utils.Spiral, inlined (archimedean, ~3px/turn), /3 like upstream
+								trad := float64(exitClickTry*40) * math.Pi / 180.0
+								hx := lx + int((4.0-2.0*trad)*math.Cos(trad))/3
+								hy := ly + int((4.0-2.0*trad)*math.Sin(trad))/3
+								exitClickTry++
+								hid.MovePointer(hx, hy)
+								time.Sleep(120 * time.Millisecond)
+								hd := gr.GetData().HoverData
+								if hd.IsHovered && (hd.UnitType == 5 || hd.UnitType == 2) {
+									logger.Info("goto: ENTRANCE HOVER confirmed — clicking",
+										"unitType", hd.UnitType, "at", fmt.Sprintf("(%d,%d)", hx, hy))
+									hid.Click(game.LeftButton, hx, hy)
+									time.Sleep(1000 * time.Millisecond)
 								}
-								time.Sleep(1100 * time.Millisecond)
-								mapPointContactAt = time.Now()
+								continue
 							}
 							sx, sy := screenPointToward(me, steerTgt.X-me.X, steerTgt.Y-me.Y)
 							walkToHold(sx, sy, 260)
