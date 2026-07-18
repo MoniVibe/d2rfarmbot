@@ -2970,7 +2970,12 @@ func main() {
 		moveStop()
 		aimPanel(sx, sy)
 		time.Sleep(150 * time.Millisecond)
+		// Shop/inventory right-clicks poll VK_RBUTTON like everything else on this build.
+		_ = gi.OverrideGetKeyState(0x02)
+		_ = gi.OverrideGetAsyncKeyState(0x02)
 		hid.Click(game.RightButton, sx, sy)
+		_ = gi.RestoreGetKeyState()
+		_ = gi.RestoreGetAsyncKeyState()
 		time.Sleep(120 * time.Millisecond)
 	}
 	// invPixel maps an inventory grid cell to raw physical pixels — measured from uisnap
@@ -4588,7 +4593,8 @@ func main() {
 			}
 			n := string(it.Name)
 			if strings.Contains(n, "INVALID") || strings.Contains(n, "Tome") || strings.Contains(n, "Charm") ||
-				strings.Contains(n, "Potion") || strings.Contains(n, "Flag") || strings.Contains(n, "Topaz") {
+				strings.Contains(n, "Potion") || strings.Contains(n, "Flag") || strings.Contains(n, "Topaz") ||
+				n == "" || n == "Jawbone" || n == "Eye" || n == "Scalp" { // mod-remapped tomes/offhands — never again
 				continue
 			}
 			ix, iy := invPixel(it.Position.X, it.Position.Y)
@@ -4612,6 +4618,17 @@ func main() {
 				break
 			}
 		}
+		// BUY the essentials: TP tome + ID tome from the Misc stock (left column, measured
+		// from akara_shop.png). Right-click = buy. Verified by inventory count. (These were
+		// accidentally sold by the name-blind first sell pass — the mod names tomes
+		// "Jawbone"/"Eye"; the sell filter now runs AFTER this lesson.)
+		invBefore := len(gr.GetData().Inventory.ByLocation(item.LocationInventory))
+		for _, slot := range [][2]int{{178, 240}, {178, 355}} {
+			uiRightClick(slot[0], slot[1])
+			time.Sleep(700 * time.Millisecond)
+		}
+		invAfter := len(gr.GetData().Inventory.ByLocation(item.LocationInventory))
+		logger.Info("vendor: buyback pass", "itemsGained", invAfter-invBefore)
 		moveStop()
 		hid.PressKey(hid.GetASCIICode("esc")) // close the shop
 		time.Sleep(400 * time.Millisecond)
@@ -4699,6 +4716,52 @@ func main() {
 				_ = gi.RestoreGetKeyState()
 				_ = gi.RestoreGetAsyncKeyState()
 			}
+		case "ruii":
+			// Right-click with GetCursorInfo aim — the shop may hit-test via the one cursor
+			// export the default panel aim doesn't override.
+			if n, _ := fmt.Sscanf(arg, "%d,%d", &a, &b); n == 2 {
+				moveStop()
+				px := int(float64(gr.WindowLeftX)*(*dpiScale)) + a
+				py := int(float64(gr.WindowTopY)*(*dpiScale)) + b
+				_ = gi.OverrideGetCursorInfo(px, py)
+				_ = gi.OverridePhysicalCursorPos(px, py)
+				time.Sleep(250 * time.Millisecond)
+				_ = gi.OverrideGetKeyState(0x02)
+				_ = gi.OverrideGetAsyncKeyState(0x02)
+				hid.Click(game.RightButton, a, b)
+				_ = gi.RestoreGetKeyState()
+				_ = gi.RestoreGetAsyncKeyState()
+				time.Sleep(200 * time.Millisecond)
+				_ = gi.RestoreGetCursorInfo()
+				_ = gi.RestorePhysicalCursorPos()
+			}
+		case "keyhold":
+			// Hold a key via the GetKeyState OVERRIDE (menus poll key state — synthetic
+			// messages move nothing; this is the force-move lesson applied to menu nav).
+			parts := strings.Fields(arg)
+			if len(parts) >= 1 {
+				ms := 200
+				if len(parts) >= 2 {
+					fmt.Sscanf(parts[1], "%d", &ms)
+				}
+				vk := hid.GetASCIICode(parts[0])
+				moveStop()
+				_ = gi.OverrideGetKeyState(vk)
+				_ = gi.OverrideGetAsyncKeyState(vk)
+				hid.RawKeyDown(vk)
+				time.Sleep(time.Duration(ms) * time.Millisecond)
+				hid.RawKeyUp(vk)
+				_ = gi.RestoreGetKeyState()
+				_ = gi.RestoreGetAsyncKeyState()
+			}
+		case "uibytes":
+			nm := strings.TrimSpace(arg)
+			if nm == "" {
+				nm = "uibytes"
+			}
+			ub := gr.UIBytes()
+			_ = os.WriteFile(filepath.Join("logs", nm+".bin"), ub, 0644)
+			stepResult.WriteString("uibytes saved logs/" + nm + ".bin" + string(rune(10)))
 		case "inv":
 			loc := item.LocationType(strings.TrimSpace(arg))
 			for _, it := range gr.GetData().Inventory.ByLocation(loc) {
