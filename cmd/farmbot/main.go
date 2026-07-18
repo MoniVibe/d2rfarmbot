@@ -5912,6 +5912,27 @@ mainLoop:
 						gotoLastPos, gotoProgressAt = me, time.Now()
 						continue
 					}
+					// PET JAM: with a 6-pet army in a cave corridor the wall is usually OUR OWN
+					// skeletons (screenshot-verified: boxed into a rock pocket in the Den, 40
+					// false wedges stamped at one spot). Minions yield to their owner when he
+					// keeps force-moving into them — so SHOVE toward the aim instead of bursting
+					// away, and record NOTHING: a pet is not a wall, and stamping it poisons the
+					// atlas with refusals the next plan routes around forever.
+					petsAdjacent := 0
+					for i := range d.Monsters {
+						if d.Monsters[i].IsPet() && chebyshev(d.Monsters[i].Position, me) <= 3 {
+							petsAdjacent++
+						}
+					}
+					if petsAdjacent >= 2 && gotoAim.X != 0 {
+						logger.Info("goto: pet jam — shoving through the army", "pets", petsAdjacent)
+						sx, sy := screenPointToward(me, gotoAim.X-me.X, gotoAim.Y-me.Y)
+						walkToHold(sx, sy, 1600)
+						time.Sleep(300 * time.Millisecond)
+						gotoLastPos = gr.GetData().PlayerUnit.Position
+						gotoProgressAt = time.Now()
+						continue
+					}
 					// Record the refusal: the cells just AHEAD (toward the aim) are where the
 					// game said no — poison them so every replan routes around, not through.
 					if gotoAim.X != 0 {
@@ -5919,16 +5940,27 @@ mainLoop:
 						n := max(abs(dx), abs(dy))
 						if n > 0 {
 							w := data.Position{X: me.X + dx*3/n, Y: me.Y + dy*3/n}
-							wedges = append(wedges, w)
-							if len(wedges) > 40 {
-								wedges = wedges[len(wedges)-40:]
+							petNearW := false
+							for i := range d.Monsters {
+								if d.Monsters[i].IsPet() && chebyshev(d.Monsters[i].Position, w) <= 2 {
+									petNearW = true
+									break
+								}
 							}
-							// PERSIST the lesson: runtime wedges die with the run (measured: every
-							// run re-learned the same river bank, 5s of flop per wedge). The atlas
-							// keeps refusals forever, sticky against the lying live merge.
-							atlas.MarkRefused(gr.MapSeed(), int(d.PlayerUnit.Area), w, 2, me)
-							logger.Warn("goto: passage refused — wedge recorded",
-								"at", fmt.Sprintf("(%d,%d)", w.X, w.Y), "wedges", len(wedges))
+							if petNearW {
+								logger.Info("goto: refusal NOT stamped — a pet stands there, not a wall")
+							} else {
+								wedges = append(wedges, w)
+								if len(wedges) > 40 {
+									wedges = wedges[len(wedges)-40:]
+								}
+								// PERSIST the lesson: runtime wedges die with the run (measured: every
+								// run re-learned the same river bank, 5s of flop per wedge). The atlas
+								// keeps refusals forever, sticky against the lying live merge.
+								atlas.MarkRefused(gr.MapSeed(), int(d.PlayerUnit.Area), w, 2, me)
+								logger.Warn("goto: passage refused — wedge recorded",
+									"at", fmt.Sprintf("(%d,%d)", w.X, w.Y), "wedges", len(wedges))
+							}
 						}
 					}
 					logger.Warn("goto: no net movement — open burst", "pos", fmt.Sprintf("(%d,%d)", me.X, me.Y))
@@ -6056,17 +6088,23 @@ mainLoop:
 								continue
 							}
 						}
-						// Stage 2 (or no frontier at all): the area won't yield this exit — abandon
-						// the stop, same policy as the lying-exit ring give-up.
-						logger.Warn("goto: no exit progress after detour — abandoning this stop",
-							"bestDist", exitSeekBestDist)
+						// Stage 2 (or no frontier at all): the area won't yield this exit. Advance
+						// the route ONLY if we genuinely toured the exit's neighborhood — a stall
+						// 60+ tiles away is a LOCOMOTION failure, and skipping the stop for it is
+						// how one pet-jam in the Den marched routeIdx from Den to Black Marsh in
+						// an hour while the character never left the cave.
+						gotNear := exitSeekBestDist <= 40
+						logger.Warn("goto: no exit progress after detour — abandoning this seek",
+							"bestDist", exitSeekBestDist, "gotNear", gotNear)
 						exitSeekExit, exitSeekBestDist = data.Position{}, 1<<30
 						exitDetourDest, exitDetourUntil = data.Position{}, time.Time{}
-						if *autoProgress && curGoto == progressTarget && routeIdx < len(progressRoute)-1 {
+						if *autoProgress && curGoto == progressTarget && routeIdx < len(progressRoute)-1 && gotNear {
 							routeIdx++
 							_ = os.WriteFile(routeStateFile, []byte(fmt.Sprintf("%d", routeIdx)), 0644)
 							logger.Info("autoprogress: skipping to next stop", "area", progressRoute[routeIdx])
 							curGoto, progressTarget = progressRoute[routeIdx], progressRoute[routeIdx]
+						} else if *autoProgress && curGoto == progressTarget {
+							logger.Warn("goto: keeping this stop — the exit was never reached, not proven absent")
 						} else {
 							curGoto = *gotoArea
 						}
@@ -6076,8 +6114,10 @@ mainLoop:
 					// warp, not a walkable border, so the room graph NEVER yields candidates.
 					// The live entrance UNIT can sit ~30 subtiles from the map-data exit point
 					// (measured: mapped (5734,4741) vs clickable mouth (5706,4739)), so match
-					// generously and steer at the ENTRANCE, not the mapped point.
-					if chebyshev(me, exit) <= 60 {
+					// generously and steer at the ENTRANCE, not the mapped point. Radius 140,
+					// not 60: he parked at dist 61-71 in the Den while the entrance code slept
+					// one conditional away.
+					if chebyshev(me, exit) <= 140 {
 						var went *data.Entrance
 						for i := range d.Entrances {
 							if chebyshev(d.Entrances[i].Position, exit) <= 45 {
@@ -6758,10 +6798,17 @@ mainLoop:
 							break
 						}
 					}
+					// Army engaged: never blacklist (the fight is happening, we're just late).
+					// KITE posture holds back — the wall works while Benji stays whole. In a
+					// FAVORABLE fight, keep pushing in to join the kill: hanging back while the
+					// skeletons win alone was the "maintains distance until monsters are dead"
+					// passivity the user called out.
 					if armyOnIt {
 						stuckCount = 0
-						time.Sleep(250 * time.Millisecond)
-						continue
+						if posture == "kite" {
+							time.Sleep(250 * time.Millisecond)
+							continue
+						}
 					}
 				}
 			}
