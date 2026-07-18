@@ -4789,6 +4789,10 @@ mainLoop:
 							if len(wedges) > 40 {
 								wedges = wedges[len(wedges)-40:]
 							}
+							// PERSIST the lesson: runtime wedges die with the run (measured: every
+							// run re-learned the same river bank, 5s of flop per wedge). The atlas
+							// keeps refusals forever, sticky against the lying live merge.
+							atlas.MarkRefused(gr.MapSeed(), int(d.PlayerUnit.Area), w, 2)
 							logger.Warn("goto: passage refused — wedge recorded",
 								"at", fmt.Sprintf("(%d,%d)", w.X, w.Y), "wedges", len(wedges))
 						}

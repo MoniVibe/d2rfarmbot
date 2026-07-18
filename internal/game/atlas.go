@@ -32,6 +32,10 @@ const (
 	atlasUnknown atlasCellState = iota
 	atlasWalkable
 	atlasBlocked
+	// atlasRefused is ACTUATION TRUTH: the game refused passage here while the live grid
+	// claimed walkable (river banks, invisible fence pockets). Sticky — MergeLiveGrid never
+	// overwrites it, so the lie can't scrub the lesson. Persisted like every other state.
+	atlasRefused
 )
 
 const (
@@ -173,6 +177,11 @@ func (a *Atlas) MergeLiveGrid(seed uint, area int, live *Grid, rooms []LiveRoom)
 				// Inside a loaded room every cell is a real observation. NonWalkable = blocked;
 				// anything else (Walkable, and LowPriority which NewGrid derives from Walkable
 				// near walls) is walkable terrain.
+				// Refused cells are sticky: the live grid is exactly the liar that got them
+				// refused in the first place — its "walkable" cannot scrub the lesson.
+				if ov.at(wx, wy) == atlasRefused {
+					continue
+				}
 				s := atlasBlocked
 				if row[wx-live.OffsetX] != CollisionTypeNonWalkable {
 					s = atlasWalkable
@@ -182,6 +191,25 @@ func (a *Atlas) MergeLiveGrid(seed uint, area int, live *Grid, rooms []LiveRoom)
 		}
 		ov.dirty = true
 	}
+}
+
+// MarkRefused stamps a disc of refusals around p (see atlasRefused): the game would not let
+// us pass here regardless of what any grid claims. Persisted with the overlay; sticky against
+// live merges.
+func (a *Atlas) MarkRefused(seed uint, area int, p data.Position, r int) {
+	if a == nil {
+		return
+	}
+	ov := a.overlay(seed, area)
+	if ov == nil || !ov.ensure(p.X-r, p.Y-r, p.X+r+1, p.Y+r+1) {
+		return
+	}
+	for dy := -r; dy <= r; dy++ {
+		for dx := -r; dx <= r; dx++ {
+			ov.set(p.X+dx, p.Y+dy, atlasRefused)
+		}
+	}
+	ov.dirty = true
 }
 
 // Overlay returns the accumulated overlay for (seed, area), loading it from disk on first
@@ -299,7 +327,7 @@ func (ov *AtlasOverlay) OverlayOnto(dst *Grid) {
 				if row[wx-dst.OffsetX] == CollisionTypeNonWalkable {
 					row[wx-dst.OffsetX] = CollisionTypeWalkable
 				}
-			case atlasBlocked:
+			case atlasBlocked, atlasRefused:
 				row[wx-dst.OffsetX] = CollisionTypeNonWalkable
 			}
 		}
@@ -386,11 +414,6 @@ func loadOverlayFile(path string, seed uint, area int) *AtlasOverlay {
 	}
 	for i := range ov.cells {
 		c := atlasCellState(packed[i/4] >> uint((i%4)*2) & 0b11)
-		if c > atlasBlocked {
-			// 0b11 is unused; a set high pair means bit rot — drop the whole file rather than
-			// trust its neighbors.
-			return empty
-		}
 		if c != atlasUnknown {
 			ov.known++
 		}
