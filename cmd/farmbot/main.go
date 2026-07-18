@@ -503,6 +503,52 @@ func main() {
 		hid.Click(game.RightButton, cx, cy)
 		time.Sleep(300 * time.Millisecond)
 	}
+	// COMBAT SELF-AWARENESS: derive HOW to fight from what the character actually HAS,
+	// re-read live every tick — equipped weapon (the user hot-swaps gear mid-run), known
+	// skills, and the game's own skill->key bindings — instead of flags frozen at launch.
+	// The lesson: the bow left with the user, -attackrange 25 stayed, and the bot kept
+	// sniping from 25 tiles with a stick.
+	type combatProf struct {
+		ranged   bool
+		castKB   data.KeyBinding // bound damage spell, best-first
+		hasCast  bool
+		castID   skill.ID
+		curseKB  data.KeyBinding // bound curse
+		hasCurse bool
+		curseID  skill.ID
+	}
+	deriveCombat := func(d game.Data) combatProf {
+		var p combatProf
+		for _, it := range d.Inventory.ByLocation(item.LocationEquipped) {
+			n := string(it.Name)
+			// Name-substring on purpose: the mod remaps SOME item names (tomes read as
+			// "Jawbone"/"Eye"), so an unknown name defaults to NOT-ranged — worst case he
+			// walks up close, which beats shooting a phantom bow.
+			if strings.Contains(n, "Bow") || strings.Contains(n, "Crossbow") ||
+				strings.Contains(n, "Arrow") || strings.Contains(n, "Bolt") {
+				p.ranged = true
+			}
+		}
+		// Trust a binding only when the skill it names is one the char actually KNOWS
+		// (Skills map) — the 3.2 keybinding block is otherwise unverified memory (the
+		// frozen Life stat taught humility about this build's offsets).
+		bound := func(sk skill.ID) (data.KeyBinding, bool) {
+			if pts, known := d.PlayerUnit.Skills[sk]; !known || pts.Level == 0 {
+				return data.KeyBinding{}, false
+			}
+			return d.KeyBindings.KeyBindingForSkill(sk)
+		}
+		for _, sk := range []skill.ID{skill.BoneSpear, skill.Teeth} {
+			if kb, ok := bound(sk); ok {
+				p.castKB, p.hasCast, p.castID = kb, true, sk
+				break
+			}
+		}
+		if kb, ok := bound(skill.AmplifyDamage); ok {
+			p.curseKB, p.hasCurse, p.curseID = kb, true, skill.AmplifyDamage
+		}
+		return p
+	}
 	// CONTINUOUS LOCOMOTION: the force-move key is a STATE, not a pulse. The old walkToHold
 	// blocked the loop for the whole hold then RELEASED the key — so the character stood
 	// still during every read/plan/log between steps (~40% duty cycle, 0% during rebuilds:
@@ -4803,6 +4849,22 @@ func main() {
 			ub := gr.UIBytes()
 			_ = os.WriteFile(filepath.Join("logs", nm+".bin"), ub, 0644)
 			stepResult.WriteString("uibytes saved logs/" + nm + ".bin" + string(rune(10)))
+		case "skills":
+			// Dump the live skill/binding reads — the ground truth for deriveCombat. If the
+			// slot list is garbage on 3.2, the bindings block has the Life-stat disease.
+			dd := gr.GetData()
+			p := dd.PlayerUnit
+			stepResult.WriteString(fmt.Sprintf("class=%v left=%d right=%d mp=%d%%\n",
+				p.Class, int(p.LeftSkill), int(p.RightSkill), p.MPPercent()))
+			for id, pts := range p.Skills {
+				stepResult.WriteString(fmt.Sprintf("skill id=%d lvl=%d\n", int(id), pts.Level))
+			}
+			for i, sb := range dd.KeyBindings.Skills {
+				if sb.SkillID != 0 || sb.Key1[0] != 0 {
+					stepResult.WriteString(fmt.Sprintf("bind slot=%d skill=%d key1=[%d %d] key2=[%d %d]\n",
+						i, int(sb.SkillID), sb.Key1[0], sb.Key1[1], sb.Key2[0], sb.Key2[1]))
+				}
+			}
 		case "inv":
 			loc := item.LocationType(strings.TrimSpace(arg))
 			for _, it := range gr.GetData().Inventory.ByLocation(loc) {
@@ -4890,6 +4952,7 @@ func main() {
 	var engagedID data.UnitID
 	var engagedLife int
 	var engagedAt time.Time
+	var lastCurseAt time.Time // curse cooldown — one Amp cast covers a pack for ~8s
 	var lastTownLog time.Time
 	// packAssess is the combat oracle's arithmetic as a single authority: weighted enemy mass
 	// within judgment range vs the army + our pools. Shared by the farm posture and the
@@ -6461,14 +6524,35 @@ mainLoop:
 
 		dist := chebyshev(me, target.Position)
 		sx, sy := gameToScreen(gr, me.X, me.Y, target.Position.X, target.Position.Y)
-		// Attack mode for THIS tick: cast the right skill only when mana allows AND the target
-		// is inside -castrange (Firestorm's flames crawl — long casts burn mana into nothing).
-		// Below the mana floor, melee instead: -melee hotkey if bound, else a left-click normal
-		// attack (left skill is Attack on a fresh char; interactClick makes the click land).
-		useCast := *rabies != "" && d.PlayerUnit.MPPercent() >= *meleeBelow
+		// Attack mode for THIS tick, derived from live equipment/skills/bindings — see
+		// deriveCombat. Ranged (bow in hand): the legacy flag path, -attackrange engage.
+		// Not ranged: a bound damage spell casts at -castrange when mana allows; otherwise
+		// close to melee reach and swing (left skill is Attack on a fresh char).
+		prof := deriveCombat(d)
+		manaOK := d.PlayerUnit.MPPercent() >= *meleeBelow
+		useCast := *rabies != "" && manaOK
+		spellCast := !prof.ranged && prof.hasCast && manaOK
 		engageRange := *attackRange
-		if useCast {
+		switch {
+		case spellCast:
 			engageRange = *castRange
+		case useCast:
+			engageRange = *castRange
+		case !prof.ranged:
+			engageRange = 4 // stick in hand: walk up and swing, don't snipe air
+		}
+		// CURSE PASS: one Amp Damage on the pack multiplies the whole army's physical
+		// damage — the summoner's actual job. Its own tick, then the next tick attacks.
+		if prof.hasCurse && manaOK && dist <= *castRange &&
+			time.Since(lastCurseAt) > 8*time.Second {
+			moveStop()
+			hid.PressKeyBinding(prof.curseKB)
+			time.Sleep(60 * time.Millisecond)
+			hid.Click(game.RightButton, sx, sy)
+			lastCurseAt = time.Now()
+			logger.Info("curse cast", "skill", int(prof.curseID), "dist", dist)
+			time.Sleep(200 * time.Millisecond)
+			continue
 		}
 		if dist <= engageRange {
 			// Damage watchdog — see engagedID above. Must run BEFORE the bite, because the bite
@@ -6501,6 +6585,12 @@ mainLoop:
 				"pos", fmt.Sprintf("(%d,%d)", me.X, me.Y), "targetUnit", int(target.UnitID),
 				"hover", d.HoverData.IsHovered, "hoverUnit", int(d.HoverData.UnitID), "cast", useCast)
 			switch {
+			case spellCast:
+				// Bound damage spell: select it via the game's own binding, right-click cast.
+				moveStop()
+				hid.PressKeyBinding(prof.castKB)
+				time.Sleep(50 * time.Millisecond)
+				hid.Click(game.RightButton, sx, sy)
 			case useCast:
 				// Right-click cast: select the skill by hotkey, cast at the target. (Message-only
 				// right-clicks are reliable; left needs the VK_LBUTTON treatment below.)
