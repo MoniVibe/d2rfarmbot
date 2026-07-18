@@ -6044,8 +6044,24 @@ mainLoop:
 							continue
 						}
 						if bestDist > 5 {
-							logger.Info("critloot: belt dry — going for ground heal", "name", string(pot.Name),
-								"dist", bestDist)
+							// Approach-progress timeout (the armloot lesson, generalized after
+							// run 12 spent itself on 198 lines chasing one unreachable Herb at
+							// dist 19): no improvement for 10s → blacklist a minute, move on.
+							if pot.UnitID != armlootID {
+								armlootID, armlootBest, armlootAt = pot.UnitID, bestDist, time.Now()
+							} else if bestDist < armlootBest {
+								armlootBest, armlootAt = bestDist, time.Now()
+							} else if time.Since(armlootAt) > 10*time.Second {
+								lootBlacklist[pot.UnitID] = time.Now().Add(60 * time.Second)
+								armlootID = 0
+								logger.Warn("critloot: not closing — blacklisted", "name", string(pot.Name))
+								continue
+							}
+							if time.Since(armlootLogAt) > 2*time.Second {
+								logger.Info("critloot: belt dry — going for ground heal", "name", string(pot.Name),
+									"dist", bestDist)
+								armlootLogAt = time.Now()
+							}
 							navWalk(me, pot.Position)
 							continue
 						}
