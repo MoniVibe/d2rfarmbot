@@ -4249,6 +4249,13 @@ mainLoop:
 				break mainLoop
 			}
 			logger.Info("death: respawned in town", "via", respawnKey)
+			// Rebuild what needs no corpse BEFORE marching out: the golem is free company for
+			// the naked corpse-run (summons died with us; skeletons must wait for field corpses).
+			if *golemKey != "" {
+				time.Sleep(700 * time.Millisecond) // let the town load settle before casting
+				castSelf(*golemKey)
+				logger.Info("death: golem raised for the corpse-run")
+			}
 			_ = os.WriteFile(deathStateFile, []byte(fmt.Sprintf("%d %d %d", deathArea, me.X, me.Y)), 0644)
 			deathHuntArea, deathHuntPos = deathArea, me
 			curGoto = deathArea // ride the goto machinery back to the corpse
@@ -4527,6 +4534,23 @@ mainLoop:
 			autoSkillAt = time.Now()
 		}
 
+		// OPPORTUNITY GATE: a favorable nearby pack claims the tick for the combat flow even
+		// during corpse recovery, death-spot seek, or route travel — kills make corpses,
+		// corpses make skeletons, and a corpse-run behind a growing army succeeds where a
+		// naked sprint dies (measured: 3 deaths at the same shaman camp, golem-only escort,
+		// zero raises the whole way because recovery never let combat run).
+		oppFight := false
+		if !d.PlayerUnit.Area.IsTown() {
+			if thr, str, pn, cen := packAssess(d, me); pn > 0 && thr <= str && chebyshev(me, cen) <= 25 {
+				oppFight = true
+				if time.Since(travelFightLog) > 5*time.Second {
+					logger.Info("opportunity: favorable pack — combat claims the tick",
+						"threat", thr, "strength", str, "packN", pn)
+					travelFightLog = time.Now()
+				}
+			}
+		}
+
 		// CORPSE RECOVERY: preempts combat/loot/explore. Corpses don't move, so once seen the
 		// POSITION is remembered and navigated to unconditionally — the live Corpse.Found flag
 		// flickers as rooms stream in/out at range, so it is only trusted as a "gone" signal when
@@ -4534,7 +4558,7 @@ mainLoop:
 		if d.Corpse.Found && !d.Corpse.StateNotInteractable() {
 			corpseTargetPos = d.Corpse.Position
 		}
-		if corpseTargetPos.X != 0 && time.Since(corpseGiveUp) > 10*time.Minute {
+		if corpseTargetPos.X != 0 && !oppFight && time.Since(corpseGiveUp) > 10*time.Minute {
 			if corpseRecoverStart.IsZero() {
 				corpseRecoverStart = time.Now()
 				logger.Info("corpse: recovery started", "pos", fmt.Sprintf("(%d,%d)", corpseTargetPos.X, corpseTargetPos.Y))
@@ -4556,7 +4580,20 @@ mainLoop:
 			}
 			switch {
 			case cd > 10:
-				navWalk(me, corpseTargetPos)
+				// DON'T FEED THE CAMP: a hopeless pack (regroup-grade) sitting on the approach
+				// is not walked into — back off and let the give-up timer route us elsewhere to
+				// snowball; the 10-min cooldown retry comes back with an army.
+				if thr, str, pn, cen := packAssess(d, me); pn > 0 && thr > str*3 &&
+					cd <= 60 && chebyshev(me, cen) <= 30 {
+					if time.Since(corpseLogAt) > 3*time.Second {
+						logger.Warn("corpse: killer pack too strong for the approach — holding off",
+							"threat", thr, "strength", str)
+					}
+					retreat := data.Position{X: me.X + (me.X-cen.X), Y: me.Y + (me.Y-cen.Y)}
+					navWalk(me, retreat)
+				} else {
+					navWalk(me, corpseTargetPos)
+				}
 			case !d.Corpse.Found:
 				// Close enough that its rooms are loaded — a consistent absence here is REAL.
 				corpseGoneStreak++
@@ -4640,7 +4677,7 @@ mainLoop:
 		// flips, handing off to the recovery block above. TIME-BOXED: an unreachable spot (or a
 		// stale state file from a run that got timer-killed mid-recovery) burned a whole 15-min
 		// run seeking dist~150 inside a 75-tile cave (measured). 2 minutes, then let it go.
-		if !d.Corpse.Found && deathHuntPos.X != 0 && int(d.PlayerUnit.Area) == deathHuntArea {
+		if !d.Corpse.Found && deathHuntPos.X != 0 && int(d.PlayerUnit.Area) == deathHuntArea && !oppFight {
 			if deathSeekStart.IsZero() {
 				deathSeekStart = time.Now()
 			}
@@ -4676,18 +4713,7 @@ mainLoop:
 		// combat oracle calls a nearby pack favorable, yield this tick to the normal combat
 		// flow below; travel resumes the tick the pack stops qualifying (dead, fled, or odds
 		// turned). Close packs only — a favorable pack 60 tiles off is not a reason to detour.
-		travelFight := false
-		if curGoto != 0 && !d.PlayerUnit.Area.IsTown() {
-			if thr, str, pn, cen := packAssess(d, me); pn > 0 && thr <= str && chebyshev(me, cen) <= 25 {
-				travelFight = true
-				if time.Since(travelFightLog) > 5*time.Second {
-					logger.Info("travel: favorable pack on the way — engaging",
-						"threat", thr, "strength", str, "packN", pn)
-					travelFightLog = time.Now()
-				}
-			}
-		}
-		if curGoto != 0 && !travelFight && navi != nil && navGrid != nil && int(d.PlayerUnit.Area) != curGoto {
+		if curGoto != 0 && !oppFight && navi != nil && navGrid != nil && int(d.PlayerUnit.Area) != curGoto {
 			// NET-PROGRESS WATCHDOG: the goto path skips the generic unstick (by design), so a
 			// physical wedge the grid can't see (fence pockets the live town collision marks
 			// walkable) would freeze travel forever — measured twice, minutes of bit-identical
