@@ -255,6 +255,8 @@ func main() {
 	panelFn := flag.String("panelfn", "phys", "which cursor export uiClick patches for panel clicks: phys (GetPhysicalCursorPos — correct, panels read it) | info (GetCursorInfo — the only OTHER distinct export). NOTE: 'pos'/'all' were deleted — GetCursorPos IS GetPhysicalCursorPos on this build (one address), so they switched between identical functions while only varying the coord scale.")
 	wpAim := flag.Bool("wpaim", false, "AIM ORACLE (zero clicks, zero travel): open the WP panel, then sweep the patched cursor down the destination rows and screenshot each — reveals which row highlights at each aim-Y (the export+affine map) without selecting anything. Honors -panelfn. Needs -move e, the character on a CLEARED waypoint.")
 	wpGoto := flag.Int("wpgoto", 0, "travel to this AREA ID via the waypoint panel (uses the calibrated clickY=96+41*row map + area->row table). the character must be near a waypoint. Needs -move e.")
+	idProbe := flag.Bool("identify", false, "PROBE: run the identify errand (ID tome on unidentified inventory items) and exit.")
+	npcClick := flag.String("npcclick", "", "PROBE: 'nameID,dx,dy' — walk to the town NPC and BLIND interactClick at body screen pos + offset, screenshot npcclick.png (hover is dead for NPCs on this build).")
 	npcProbe := flag.Int("npcprobe", 0, "TOWN DISCOVERY: lists nearby units, then walks to + interacts with the NPC whose NAME ID == this value (via interactNPC body-hover), screenshots + reports OpenMenus. Run once to read the unit list, then re-run with a town-NPC name id. Needs -move e.")
 	hoverGrid := flag.Bool("hovergrid", false, "DIAGNOSTIC: sweep the cursor across a screen grid, logging every point where anything becomes hovered (HoverData OR any monster.IsHovered). Reveals whether/where NPC hover fires. Needs -move e.")
 	aimProbe := flag.Bool("aimprobe", false, "AIM SCALE ORACLE (read+aim only, zero clicks): pick the nearest monster, aim at t*gameToScreen prediction for t=0.5..1.7, log where the game reports hover. The t where hover fires IS the world-aim scale factor (1.0 = mapping correct as-is).")
@@ -304,7 +306,7 @@ func main() {
 	// "move", which on this build is unreliable (D2R ignores injected left-clicks) AND spams
 	// left-clicks that desync D2R's in-process mouse state (the flaky-LMB symptom). Refuse to run
 	// the farming/goto loop without it. Read-only probes don't move, so they're exempt.
-	probeOnly := *mapcheck || *mapalign || *levelprobe || *charProbe || *aimProbe || *objProbe != 0 || *interactWith != "" || *dieTest || *uiSnap != "" || *panelTest != "" || *bindSkill != "" || *pressOnly != "" || *gearProbe || *gearOracle || *statSnap || *statAlloc != "" || *moveLab != "" || *collprobe || *roomprobe != 0 || *wpprobe || *hoverProbe || *cursorScan || *cursorAddr != "" || *pathProbe || *pathDrive || *shadowWalk != "" || *findWriter != "" || *inputTest || *clickTest || *wpAt || *fixInput || *resumeThreads || *screenshot != "" || *wpTown || *wpAim || *wpGoto != 0 || *npcProbe != 0 || *hoverGrid
+	probeOnly := *mapcheck || *mapalign || *levelprobe || *charProbe || *aimProbe || *objProbe != 0 || *interactWith != "" || *dieTest || *uiSnap != "" || *panelTest != "" || *bindSkill != "" || *pressOnly != "" || *gearProbe || *gearOracle || *statSnap || *statAlloc != "" || *moveLab != "" || *collprobe || *roomprobe != 0 || *wpprobe || *hoverProbe || *cursorScan || *cursorAddr != "" || *pathProbe || *pathDrive || *shadowWalk != "" || *findWriter != "" || *inputTest || *clickTest || *wpAt || *fixInput || *resumeThreads || *screenshot != "" || *wpTown || *wpAim || *wpGoto != 0 || *npcProbe != 0 || *hoverGrid || *npcClick != "" || *idProbe
 	if !probeOnly && *moveKey == "" {
 		logger.Error("-move is required: bind 'Force Move' in D2R Options>Controls and pass e.g. -move e. " +
 			"Refusing to run without it — the left-click move fallback is unreliable on this build and corrupts D2R's mouse state.")
@@ -1425,7 +1427,9 @@ func main() {
 
 	// Pre-buff in HUMAN form (summons/spirit can't be cast as a werewolf), then shapeshift.
 	// Skipped for -walkto: that mode proves locomotion only and stays combat-free/human-form.
-	if *walkToPt == "" && !*moveTest {
+	// Skipped for the town-UI probes: pre-buff's right-click DISMISSES an open NPC dialogue,
+	// which broke multi-process panel calibration (measured: TRADE click hit a closed menu).
+	if *walkToPt == "" && !*moveTest && *npcClick == "" && *uiClickAt == "" && *uiSnap == "" {
 		logger.Info("pre-buff: summons + spirit, then shapeshift")
 		castSelf(*wolves)
 		castSelf(*wolves)
@@ -2901,8 +2905,40 @@ func main() {
 			}
 		}
 		if !have {
-			logger.Error("npcprobe: no unit with that name id nearby — pick one from the list above", "want", *npcProbe)
-			return
+			// Not in the live unit table — the NPC's rooms aren't loaded. The MAP data knows
+			// every town NPC's home spot: walk there (rooms stream in en route), then re-scan.
+			var home data.Position
+			for _, n := range d.NPCs {
+				if int(n.ID) == *npcProbe && len(n.Positions) > 0 {
+					home = n.Positions[0]
+					break
+				}
+			}
+			if home.X == 0 {
+				logger.Error("npcprobe: not in live units and not in map NPCs — pick from the list above", "want", *npcProbe)
+				return
+			}
+			logger.Info("npcprobe: walking to map-data home", "want", *npcProbe,
+				"home", fmt.Sprintf("(%d,%d)", home.X, home.Y), "dist", chebyshev(me, home))
+			for i := 0; i < 120; i++ {
+				me = gr.GetData().PlayerUnit.Position
+				if chebyshev(me, home) <= 12 {
+					break
+				}
+				sx, sy := screenPointToward(me, home.X-me.X, home.Y-me.Y)
+				walkToHold(sx, sy, 150)
+				time.Sleep(150 * time.Millisecond)
+			}
+			for _, m := range gr.GetData().Monsters {
+				if int(m.Name) == *npcProbe {
+					t, have = cand{m.UnitID, int(m.Name), m.Position, chebyshev(me, m.Position)}, true
+					break
+				}
+			}
+			if !have {
+				logger.Error("npcprobe: walked to home but the unit never materialized", "want", *npcProbe)
+				return
+			}
 		}
 		logger.Info("npcprobe: target", "npcName", t.name, "unitID", t.id, "dist", t.dist,
 			"pos", fmt.Sprintf("(%d,%d)", t.pos.X, t.pos.Y))
@@ -2926,6 +2962,369 @@ func main() {
 			f.Close()
 			logger.Info("npcprobe: screenshot", "path", shot)
 		}
+		return
+	}
+
+	// uiRightClick: right-button twin of uiClick — raw physical panel coords.
+	uiRightClick := func(sx, sy int) {
+		moveStop()
+		aimPanel(sx, sy)
+		time.Sleep(150 * time.Millisecond)
+		hid.Click(game.RightButton, sx, sy)
+		time.Sleep(120 * time.Millisecond)
+	}
+	// invPixel maps an inventory grid cell to raw physical pixels — measured from uisnap
+	// (2026-07-18): grid origin (1292,395), 45px cells, item anchored at its top-left cell.
+	invPixel := func(gx, gy int) (int, int) {
+		return 1292 + gx*45 + 22, 395 + gy*45 + 22
+	}
+	// identifyErrand: open inventory, right-click the ID tome, click each unidentified item;
+	// closed-loop per item (Identified flag must flip). Panel-space only — no NPC needed.
+	identifyErrand := func() int {
+		d := gr.GetData()
+		tome, found := d.Inventory.Find(item.TomeOfIdentify, item.LocationInventory)
+		if !found {
+			logger.Info("identify: no ID tome in inventory")
+			return 0
+		}
+		var unid []data.Item
+		for _, it := range d.Inventory.ByLocation(item.LocationInventory) {
+			if !it.Identified && it.Name != item.TomeOfIdentify && it.Name != item.TomeOfTownPortal {
+				unid = append(unid, it)
+			}
+		}
+		if len(unid) == 0 {
+			return 0
+		}
+		moveStop()
+		hid.PressKey(hid.GetASCIICode("i"))
+		time.Sleep(600 * time.Millisecond)
+		done := 0
+		for i, it := range unid {
+			if i >= 8 { // cap per visit
+				break
+			}
+			tx, ty := invPixel(tome.Position.X, tome.Position.Y)
+			uiRightClick(tx, ty)
+			time.Sleep(350 * time.Millisecond)
+			ix, iy := invPixel(it.Position.X, it.Position.Y)
+			uiClick(ix, iy)
+			time.Sleep(450 * time.Millisecond)
+			ok := false
+			for _, it2 := range gr.GetData().Inventory.ByLocation(item.LocationInventory) {
+				if it2.UnitID == it.UnitID && it2.Identified {
+					ok = true
+					break
+				}
+			}
+			if ok {
+				done++
+				logger.Info("identify: item identified", "name", string(it.Name))
+			} else {
+				logger.Warn("identify: flag did not flip", "name", string(it.Name),
+					"cell", fmt.Sprintf("(%d,%d)", it.Position.X, it.Position.Y))
+			}
+		}
+		hid.PressKey(hid.GetASCIICode("i"))
+		time.Sleep(300 * time.Millisecond)
+		logger.Info("identify: errand done", "identified", done, "candidates", len(unid))
+		return done
+	}
+
+	// findNpcMenu locates the gold-bordered NPC dialogue box (TALK/TRADE/CANCEL) in a
+	// screenshot. The box anchors in WORLD space above the NPC, so its screen position moves
+	// with the camera — measured at (960-1050,128-245) and (860-950,245-355) for the same
+	// dialogue. Returns the box center-x and top-y; rows sit at top+49 (TALK), +73 (TRADE),
+	// +97 (CANCEL) in raw physical pixels.
+	findNpcMenu := func(img image.Image) (int, int, int, bool) {
+		b := img.Bounds()
+		type pt struct{ x, y int }
+		var golds []pt
+		for y := 60; y < b.Dy()*2/3; y++ { // 1px steps: the border lines are ~2px, 2px sampling missed them
+			for x := b.Dx() / 4; x < b.Dx()*3/4; x++ {
+				r, g, bl, _ := img.At(x, y).RGBA()
+				r8, g8, b8 := int(r>>8), int(g>>8), int(bl>>8)
+				if r8 > 140 && g8 > 100 && b8 < 120 && r8 >= g8 && g8 > b8+20 {
+					golds = append(golds, pt{x, y})
+				}
+			}
+		}
+		if len(golds) < 80 {
+			return 0, 0, 0, false
+		}
+		// Median-anchored cluster, then a tight bounding box of members.
+		xs := make([]int, len(golds))
+		ys := make([]int, len(golds))
+		for i, p := range golds {
+			xs[i], ys[i] = p.x, p.y
+		}
+		sort.Ints(xs)
+		sort.Ints(ys)
+		mx, my := xs[len(xs)/2], ys[len(ys)/2]
+		minX, maxX, minY, maxY := 1<<30, 0, 1<<30, 0
+		n := 0
+		for _, p := range golds {
+			if abs(p.x-mx) <= 80 && abs(p.y-my) <= 90 {
+				minX, maxX = min(minX, p.x), max(maxX, p.x)
+				minY, maxY = min(minY, p.y), max(maxY, p.y)
+				n++
+			}
+		}
+		if n < 30 || maxX-minX < 60 || maxX-minX > 160 || maxY-minY < 70 || maxY-minY > 160 {
+			return 0, 0, 0, false
+		}
+		// BORDER TEST: the dialogue is a gold RECTANGLE — its edges must be populated lines,
+		// not a diffuse glow (a torch cluster false-positived here and clicked open ground).
+		topN, botN, leftN, rightN := 0, 0, 0, 0
+		for _, p := range golds {
+			if abs(p.x-mx) > 80 || abs(p.y-my) > 90 {
+				continue
+			}
+			if abs(p.y-minY) <= 4 {
+				topN++
+			}
+			if abs(p.y-maxY) <= 4 {
+				botN++
+			}
+			if abs(p.x-minX) <= 4 {
+				leftN++
+			}
+			if abs(p.x-maxX) <= 4 {
+				rightN++
+			}
+		}
+		if topN+botN+leftN+rightN < 40 {
+			return 0, 0, 0, false
+		}
+		// DARK-INTERIOR test: the menu body is near-black; outdoor scenery behind torch glare
+		// is not. Mean brightness of the inner region must be low.
+		sum, cnt := 0, 0
+		for y := minY + 8; y < maxY-8; y += 3 {
+			for x := minX + 8; x < maxX-8; x += 3 {
+				r, g, bl, _ := img.At(x, y).RGBA()
+				sum += int(r>>8) + int(g>>8) + int(bl>>8)
+				cnt++
+			}
+		}
+		if cnt == 0 || sum/(cnt*3) > 85 {
+			return 0, 0, 0, false
+		}
+		// TEXT-ROW test: the menu has 3-4 bright text bands (AKARA/TALK/TRADE/CANCEL). Count
+		// interior rows holding >=6 bright pixels; pottery/torch clusters can't produce them.
+		bands, inBand := 0, false
+		for y := minY + 6; y < maxY-4; y++ {
+			bright := 0
+			for x := minX + 8; x < maxX-8; x++ {
+				r, g, bl, _ := img.At(x, y).RGBA()
+				if r>>8 > 150 && g>>8 > 140 && bl>>8 > 110 {
+					bright++
+				}
+			}
+			if bright >= 6 {
+				if !inBand {
+					bands++
+					inBand = true
+				}
+			} else {
+				inBand = false
+			}
+		}
+		if bands < 3 {
+			return 0, 0, 0, false
+		}
+		return (minX + maxX) / 2, minY, maxY - minY, true
+	}
+
+	// findAppearedBox diffs two screenshots (camera static while the char stands still) and
+	// returns the bounding box of the largest dense cluster of changed pixels, if it is
+	// menu-sized. Differential detection: an APPEARING dialogue is a big contiguous change;
+	// torch flicker is small and scattered. Kills the pottery-false-positive class entirely.
+	findAppearedBox := func(before, after image.Image) (int, int, int, bool) {
+		b := after.Bounds()
+		const cell = 40
+		cw, ch := b.Dx()/cell+1, b.Dy()/cell+1
+		density := make([]int, cw*ch)
+		for y := 40; y < b.Dy()-200; y += 2 {
+			for x := 100; x < b.Dx()-100; x += 2 {
+				r1, g1, b1, _ := before.At(x, y).RGBA()
+				r2, g2, b2, _ := after.At(x, y).RGBA()
+				d := abs(int(r1>>8)-int(r2>>8)) + abs(int(g1>>8)-int(g2>>8)) + abs(int(b1>>8)-int(b2>>8))
+				if d > 90 {
+					density[(y/cell)*cw+x/cell]++
+				}
+			}
+		}
+		bi, bv := -1, 0
+		for i, v := range density {
+			if v > bv {
+				bi, bv = i, v
+			}
+		}
+		if bi < 0 || bv < 60 { // a menu cell holds ~400 changed samples; flicker ~tens
+			return 0, 0, 0, false
+		}
+		// Flood adjacent dense cells into a bounding box.
+		cx0, cy0 := bi%cw, bi/cw
+		minCX, maxCX, minCY, maxCY := cx0, cx0, cy0, cy0
+		for expand := 0; expand < 6; expand++ {
+			grew := false
+			for _, c := range [][2]int{{minCX - 1, cy0}, {maxCX + 1, cy0}, {cx0, minCY - 1}, {cx0, maxCY + 1}} {
+				x, y := c[0], c[1]
+				if x >= 0 && y >= 0 && x < cw && y < ch && density[y*cw+x] > 40 {
+					minCX, maxCX = min(minCX, x), max(maxCX, x)
+					minCY, maxCY = min(minCY, y), max(maxCY, y)
+					grew = true
+				}
+			}
+			if !grew {
+				break
+			}
+		}
+		w := (maxCX - minCX + 1) * cell
+		h := (maxCY - minCY + 1) * cell
+		if w < 60 || w > 220 || h < 70 || h > 220 {
+			return 0, 0, 0, false
+		}
+		return minCX*cell + w/2, minCY * cell, h, true
+	}
+
+	// -identify: exercise the identify errand standalone.
+	if *idProbe {
+		n := identifyErrand()
+		logger.Info("identify probe done", "identified", n)
+		if f, err := os.Create(shotPath("identify.png")); err == nil {
+			_ = png.Encode(f, gr.Screenshot())
+			f.Close()
+		}
+		return
+	}
+
+	// -npcclick "nameID,dx,dy": NPC BLIND-CLICK calibration. Hover never fires for town NPCs on
+	// this build (hovergrid: zero hits over any townsfolk), so interaction must be a blind
+	// interactClick at the body's screen position + a calibrated offset, verified by SCREENSHOT
+	// (OpenMenus is stable garbage). Walks to the NPC first; the shot is npcclick.png.
+	if *npcClick != "" {
+		var wantID, cdx, cdy, rowX, rowY int
+		nParsed, _ := fmt.Sscanf(*npcClick, "%d,%d,%d,%d,%d", &wantID, &cdx, &cdy, &rowX, &rowY)
+		if nParsed < 3 {
+			logger.Error("-npcclick wants 'nameID,dx,dy[,rowX,rowY]'", "got", *npcClick)
+			return
+		}
+		_ = gr.FetchMapData()
+		var t data.Monster
+		have := false
+		for i := 0; i < 100; i++ {
+			d := gr.GetData()
+			me := d.PlayerUnit.Position
+			for _, m := range d.Monsters {
+				if int(m.Name) == wantID {
+					t, have = m, true
+					break
+				}
+			}
+			if !have {
+				logger.Error("npcclick: unit not in live table", "want", wantID)
+				return
+			}
+			if chebyshev(me, t.Position) <= 8 {
+				break
+			}
+			sx, sy := screenPointToward(me, t.Position.X-me.X, t.Position.Y-me.Y)
+			walkToHold(sx, sy, 150)
+			time.Sleep(150 * time.Millisecond)
+		}
+		d := gr.GetData()
+		me := d.PlayerUnit.Position
+		bx, by := gameToScreen(gr, me.X, me.Y, t.Position.X, t.Position.Y)
+		logger.Info("npcclick: clicking", "name", wantID, "unitID", t.UnitID,
+			"bodyScreen", fmt.Sprintf("(%d,%d)", bx, by), "offset", fmt.Sprintf("(%d,%d)", cdx, cdy),
+			"npcPos", fmt.Sprintf("(%d,%d)", t.Position.X, t.Position.Y), "myPos", fmt.Sprintf("(%d,%d)", me.X, me.Y))
+		// CLOSED LOOP: try offsets until the menu VERIFIABLY opens (finder with border test);
+		// only then click the requested row. Every miss walks the char a little, so re-read
+		// positions fresh each attempt.
+		menuCx, menuTop, menuH, menuOpen := findNpcMenu(gr.Screenshot())
+		if !menuOpen && cdx != 99 {
+			anchor := gr.GetData().PlayerUnit.Position // stable geometry: return here after any miss-walk
+			// Aim bias measured from failure screenshots: predicted feet land ~20px LEFT of the
+			// sprite; the hitbox is the torso (over feet, not legs). Bias right and up.
+			offs := [][2]int{{cdx, cdy}, {28, -44}, {16, -44}, {40, -44}, {28, -28}, {16, -60}, {40, -60}, {28, -60}, {16, -28}, {40, -28}}
+			// STILLNESS GATE: a click issued while the character is still moving is only a new
+			// move order — it never hit-tests the NPC. Both successful opens tonight were
+			// first-click-while-idle; every failure clicked mid-walk. Wait for three stable
+			// position reads before each attempt.
+			waitStill := func() data.Position {
+				moveStop()
+				last := gr.GetData().PlayerUnit.Position
+				stable := 0
+				for i := 0; i < 30 && stable < 3; i++ {
+					time.Sleep(150 * time.Millisecond)
+					cur := gr.GetData().PlayerUnit.Position
+					if cur == last {
+						stable++
+					} else {
+						stable = 0
+					}
+					last = cur
+				}
+				return last
+			}
+			for _, off := range offs {
+				mee := waitStill()
+				if chebyshev(mee, anchor) > 2 { // a previous miss walked us — restore the vantage
+					for i := 0; i < 12 && chebyshev(gr.GetData().PlayerUnit.Position, anchor) > 2; i++ {
+						mv := gr.GetData().PlayerUnit.Position
+						sx2, sy2 := screenPointToward(mv, anchor.X-mv.X, anchor.Y-mv.Y)
+						walkToHold(sx2, sy2, 120)
+						time.Sleep(160 * time.Millisecond)
+					}
+					mee = waitStill()
+				}
+				var cur data.Monster
+				for _, m := range gr.GetData().Monsters {
+					if int(m.Name) == wantID {
+						cur = m
+						break
+					}
+				}
+				bx2, by2 := gameToScreen(gr, mee.X, mee.Y, cur.Position.X, cur.Position.Y)
+				logger.Info("npcclick: try", "offset", fmt.Sprintf("(%d,%d)", off[0], off[1]),
+					"click", fmt.Sprintf("(%d,%d)", bx2+off[0], by2+off[1]))
+				beforeImg := gr.Screenshot()
+				interactClick(bx2+off[0], by2+off[1])
+				time.Sleep(600 * time.Millisecond)
+				if menuCx, menuTop, menuH, menuOpen = findAppearedBox(beforeImg, gr.Screenshot()); menuOpen {
+					break
+				}
+			}
+		}
+		logger.Info("npcclick: menu state", "open", menuOpen, "center", menuCx, "top", menuTop, "h", menuH)
+		if nParsed >= 5 && rowY == 999 { // magic: keyboard path — Down to TRADE, Enter to select
+			logger.Info("npcclick: keyboard row select (Down, Enter)")
+			hid.PressKey(hid.GetASCIICode("down"))
+			time.Sleep(350 * time.Millisecond)
+			hid.PressKey(hid.GetASCIICode("enter"))
+			time.Sleep(1200 * time.Millisecond)
+		} else if nParsed >= 5 && menuOpen {
+			// Rows scale with the box: title/TALK/TRADE/CANCEL sit at ~19/40/60/81% of height.
+			// rowY is now a PERCENT (40=TALK, 60=TRADE, 81=CANCEL).
+			ry := menuTop + menuH*rowY/100
+			preP := gr.GetData().PlayerUnit.Position
+			logger.Info("npcclick: clicking row", "pct", rowY, "clickY", ry)
+			uiClick(menuCx, ry)
+			time.Sleep(400 * time.Millisecond)
+			postP := gr.GetData().PlayerUnit.Position
+			logger.Info("npcclick: row result", "walked", chebyshev(preP, postP) > 1,
+				"myPos", fmt.Sprintf("(%d,%d)", postP.X, postP.Y))
+			time.Sleep(900 * time.Millisecond)
+		}
+		if f, err := os.Create(shotPath("npcclick.png")); err == nil {
+			_ = png.Encode(f, gr.Screenshot())
+			f.Close()
+		}
+		d2 := gr.GetData()
+		logger.Info("npcclick: after", "area", int(d2.PlayerUnit.Area),
+			"myPos", fmt.Sprintf("(%d,%d)", d2.PlayerUnit.Position.X, d2.PlayerUnit.Position.Y),
+			"shot", shotPath("npcclick.png"))
 		return
 	}
 
@@ -3874,6 +4273,7 @@ func main() {
 	// 1=cast, 2=enter field portal, 3=in town (errand hook + return), 0=idle.
 	tpPhase := 0
 	tpParkInTown := false // 'town' control command: stop at phase 3, skip the return
+	tpErrandsDone := false // one errand pass per trip
 	tpOrigArea := 0
 	var tpPhaseAt, tpTripStart time.Time
 	tpRecast := false
@@ -4179,7 +4579,7 @@ mainLoop:
 						logger.Warn("control: tp requested but -tp key not set")
 					} else if tpPhase == 0 {
 						logger.Info("control: town round-trip requested")
-						tpPhase, tpTripStart, tpParkInTown = 1, time.Now(), false
+						tpPhase, tpTripStart, tpParkInTown, tpErrandsDone = 1, time.Now(), false, false
 					}
 				case "town":
 					// TP to town and PARK (no auto-return) — the calibration-window maker:
@@ -4188,7 +4588,7 @@ mainLoop:
 						logger.Warn("control: town requested but -tp key not set")
 					} else if tpPhase == 0 {
 						logger.Info("control: town-and-park requested")
-						tpPhase, tpTripStart, tpParkInTown = 1, time.Now(), true
+						tpPhase, tpTripStart, tpParkInTown, tpErrandsDone = 1, time.Now(), true, false
 					}
 				case "":
 				default:
@@ -4247,11 +4647,17 @@ mainLoop:
 					logger.Warn("towntrip: portal entry failed — aborting")
 					tpPhase = 0
 				}
-			case 3: // in town. (Errand hook lands here later.) Return through our portal.
+			case 3: // in town: run the errands, then return through our portal.
 				if tpParkInTown {
 					logger.Info("towntrip: PARKED in town per control command")
 					tpPhase, tpParkInTown = 0, false
 					continue
+				}
+				if !tpErrandsDone {
+					tpErrandsDone = true
+					if n := identifyErrand(); n > 0 {
+						logger.Info("towntrip: errands", "identified", n)
+					}
 				}
 				if int(d.PlayerUnit.Area) == tpOrigArea {
 					logger.Info("towntrip: ROUND TRIP COMPLETE",
