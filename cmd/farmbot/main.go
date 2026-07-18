@@ -4317,6 +4317,7 @@ func main() {
 	var gotoLastPos data.Position
 	var entranceContactStart time.Time
 	var mapPointContactAt time.Time // map-point steering: time standing AT an exit that won't fire
+	exitClickTry := 0               // offset cycle for exit-tile clicks (sprite, not feet)
 	var exitParkStart time.Time
 	exitRingIdx := 0
 	// Exit-seek GOAL-progress watchdog: the 5s/2-tile freeze watchdog misses treadmills — the
@@ -5320,6 +5321,17 @@ mainLoop:
 				// autoprogress block then re-asserts the farm route — which is exactly how
 				// the first walk-to-town died two minutes in (targetArea flipped 1 -> 4).
 				curGoto = 1
+				// THE BAN IS PER-AREA: the moment the walk crosses out of the refusing
+				// cave (Den -> Blood Moor), portals are legal again — recast and ride,
+				// instead of hiking the remaining two areas on foot.
+				if !d.PlayerUnit.Area.IsTown() && int(d.PlayerUnit.Area) != tpWalkBack &&
+					time.Since(tpPhaseAt) > 3*time.Second {
+					logger.Info("towntrip: left the TP-banned area — retrying the portal",
+						"area", int(d.PlayerUnit.Area))
+					tpOrigArea, tpWalkBack = int(d.PlayerUnit.Area), 0
+					tpPhaseAt, tpPhase = time.Now(), 1
+					continue
+				}
 				if d.PlayerUnit.Area.IsTown() {
 					logger.Info("towntrip: reached town ON FOOT", "tookS", int(time.Since(tpTripStart).Seconds()))
 					curGoto = 0
@@ -6316,12 +6328,20 @@ mainLoop:
 								mapPointContactAt = time.Time{}
 							} else if mapPointContactAt.IsZero() {
 								mapPointContactAt = time.Now()
-							} else if time.Since(mapPointContactAt) > 6*time.Second {
+							} else if time.Since(mapPointContactAt) > 4*time.Second {
+								// Click the SPRITE, not the feet: five dead-center tile clicks
+								// in run 30 did nothing — a staircase's clickable region rises
+								// up-screen from its tile, the same lesson as the NPC body
+								// offsets. Cycle offsets until one transitions.
+								offs := [][2]int{{0, 0}, {0, -32}, {24, -44}, {-24, -32}, {0, -64}, {36, -20}}
+								off := offs[exitClickTry%len(offs)]
+								exitClickTry++
 								sx, sy := gameToScreen(gr, me.X, me.Y, steerTgt.X, steerTgt.Y)
 								logger.Info("goto: clicking the exit tile", "haveObj", haveObj,
-									"tile", fmt.Sprintf("(%d,%d)", steerTgt.X, steerTgt.Y))
+									"tile", fmt.Sprintf("(%d,%d)", steerTgt.X, steerTgt.Y),
+									"offset", fmt.Sprintf("(%d,%d)", off[0], off[1]))
 								moveStop()
-								interactClick(sx, sy)
+								interactClick(sx+off[0], sy+off[1])
 								time.Sleep(900 * time.Millisecond)
 								mapPointContactAt = time.Now()
 							}
