@@ -387,7 +387,7 @@ func main() {
 	acts := map[string]activity.Activity{}
 	road := []data.Position{{X: 6020, Y: 4952}, {X: 5992, Y: 4941}, {X: 5963, Y: 5001}, {X: 5962, Y: 4956}, {X: 5952, Y: 4944}}
 	mem.PutJSON("road.town.blood_moor_gate", memory.ScopeSeed, memory.Provenance{Source: "hand-piloted", Evidence: "2026-07-18, seed 466817790"}, road)
-	for _, a := range []activity.Activity{&activity.EscapeTP{}, &activity.Flee{}, &activity.Respawn{}, activity.NewFight(), activity.NewLoot(), &activity.Travel{Road: road}, &activity.Explore{}} {
+	for _, a := range []activity.Activity{&activity.Breakout{}, &activity.Flee{}, &activity.Respawn{}, activity.NewFight(), activity.NewLoot(), &activity.Travel{Road: road}, &activity.Explore{}} {
 		acts[a.Name()] = a
 	}
 

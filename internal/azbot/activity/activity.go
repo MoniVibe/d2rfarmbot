@@ -109,19 +109,68 @@ func (f *Flee) Step(ctx *Ctx) Verdict {
 	return Running
 }
 
-// ---------------------------------------------------------------- EscapeTP (ClassSurvive)
+// ---------------------------------------------------------------- Breakout (ClassSurvive)
 
-// EscapeTP is the real chicken: when HP is critical (or low with no potions and enemies
-// near), on-foot fleeing cannot escape a 12x surround — a town portal teleports out of
-// ALL danger at once. The empty-belt 25s-bleed death is exactly what this prevents.
-// It outranks Flee (higher urgency in the same Survive class).
-type EscapeTP struct {
+// Breakout is the owner's "fight for a way out, or TP away — or both": when surrounded
+// or wounded, read the encirclement as a ring of 8 sectors, and choose intelligently:
+//   1. A GAP exists (a sector with ≤1 enemy): fight for it — strike the blocker in the
+//      gap, stride through, done when clear. Purposeful violence, not panic.
+//   2. NO gap, or potions gone: PREPARE THE EXIT — cast the town portal immediately
+//      (it persists), then keep fighting the thinnest sector from throw range.
+//   3. HP hits the hard floor: step into the portal. Escape is a fallback she is
+//      standing next to, never a hope.
+type Breakout struct {
 	castAt time.Time
 }
 
-func (e *EscapeTP) Name() string { return "escape_tp" }
+func (b *Breakout) Name() string { return "breakout" }
 
-func (e *EscapeTP) Demand(s *percept.Snapshot) *arbiter.Demand {
+func (b *Breakout) ringSectors(s *percept.Snapshot) (counts [8]int, nearest [8]percept.EnemyRef, hasNear [8]bool) {
+	for _, en := range s.Enemies {
+		d := chebyshev(s.Me.Pos, en.Pos)
+		if d > 20 {
+			continue
+		}
+		dx, dy := en.Pos.X-s.Me.Pos.X, en.Pos.Y-s.Me.Pos.Y
+		sec := sectorOf(dx, dy)
+		w := 1
+		if d <= 12 {
+			w = 2
+		}
+		counts[sec] += w
+		if !hasNear[sec] || d < chebyshev(s.Me.Pos, nearest[sec].Pos) {
+			nearest[sec], hasNear[sec] = en, true
+		}
+	}
+	return
+}
+
+func sectorOf(dx, dy int) int {
+	// 8 sectors by dominant axis mix — cheap and adequate for ring reading.
+	switch {
+	case dx >= 0 && dy < 0 && -dy >= dx:
+		return 0 // N
+	case dx > 0 && dy < 0:
+		return 1 // NE
+	case dx > 0 && dy >= 0 && dx > dy:
+		return 2 // E
+	case dx > 0:
+		return 3 // SE
+	case dx <= 0 && dy > 0 && dy >= -dx:
+		return 4 // S
+	case dx < 0 && dy > 0:
+		return 5 // SW
+	case dx < 0 && -dx >= -dy:
+		return 6 // W
+	default:
+		return 7 // NW
+	}
+}
+
+var sectorDir = [8]data.Position{{X: 0, Y: -1}, {X: 1, Y: -1}, {X: 1, Y: 0}, {X: 1, Y: 1},
+	{X: 0, Y: 1}, {X: -1, Y: 1}, {X: -1, Y: 0}, {X: -1, Y: -1}}
+
+func (b *Breakout) Demand(s *percept.Snapshot) *arbiter.Demand {
 	if !s.Valid || s.Me.InTown || s.Me.HPPct <= 0 {
 		return nil
 	}
@@ -131,42 +180,97 @@ func (e *EscapeTP) Demand(s *percept.Snapshot) *arbiter.Demand {
 			near++
 		}
 	}
-	critical := s.Me.HPPct < 22
-	trapped := s.Me.HPPct < 42 && s.Me.HealPots == 0 && near >= 3
-	if critical || trapped {
-		return &arbiter.Demand{Who: e.Name(), Class: arbiter.ClassSurvive,
-			Urgency: 2.0 - float64(s.Me.HPPct)/100, // always beats Flee (max ~1.0)
+	critical := s.Me.HPPct < 24
+	surrounded := near >= 4 && s.Me.HPPct < 60
+	trapped := s.Me.HPPct < 45 && s.Me.HealPots == 0 && near >= 3
+	if critical || surrounded || trapped {
+		return &arbiter.Demand{Who: b.Name(), Class: arbiter.ClassSurvive,
+			Urgency: 2.0 - float64(s.Me.HPPct)/100, // outranks Flee (max ~1.0)
 			Commit:  arbiter.Commitment{MinHold: 3 * time.Second}}
 	}
 	return nil
 }
 
-func (e *EscapeTP) Step(ctx *Ctx) Verdict {
+func (b *Breakout) Step(ctx *Ctx) Verdict {
 	s := ctx.Snap
 	if !s.Valid {
 		return Running
 	}
 	if s.Me.InTown {
-		return Done // escaped — town heals; the danger is gone
+		return Done // through the portal — safe
 	}
-	// Portal already down? Walk onto it (transition to town on contact).
-	if len(s.Portals) > 0 {
+	near := 0
+	for _, en := range s.Enemies {
+		if chebyshev(s.Me.Pos, en.Pos) <= 18 {
+			near++
+		}
+	}
+	if near == 0 && s.Me.HPPct >= 40 {
+		return Done // broke out and clear
+	}
+
+	// HARD FLOOR: HP critical → the portal is the move. Walk into it if it exists.
+	hardFloor := s.Me.HPPct < 18
+	if hardFloor && len(s.Portals) > 0 {
 		best, bd := s.Portals[0], chebyshev(s.Me.Pos, s.Portals[0])
 		for _, pt := range s.Portals[1:] {
 			if d := chebyshev(s.Me.Pos, pt); d < bd {
 				best, bd = pt, d
 			}
 		}
-		verbs.Stride{To: best, Hold: 1500 * time.Millisecond, MinGain: 1}.Do(ctx.M, ctx.GR, ctx.P, ctx.Led, e.Name())
+		verbs.Stride{To: best, Hold: 1500 * time.Millisecond, MinGain: 1}.Do(ctx.M, ctx.GR, ctx.P, ctx.Led, b.Name())
 		return Running
 	}
-	// No portal yet: cast one (need the proven TownTP key).
-	if ctx.Cap == nil || ctx.Cap.TownTP == nil {
-		return Abandoned // cannot TP — nothing to do but let Flee try
+
+	// PREPARE THE EXIT: no portal down yet and things look grim → cast one now.
+	// It persists; fighting continues beside it. This is the "both".
+	if len(s.Portals) == 0 && ctx.Cap != nil && ctx.Cap.TownTP != nil &&
+		(hardFloor || s.Me.HealPots == 0 || near >= 5) &&
+		time.Since(b.castAt) > 2500*time.Millisecond {
+		verbs.CastSelf{Key: ctx.Cap.TownTP.Key}.Do(ctx.M, ctx.GR, ctx.P, ctx.Led, b.Name())
+		b.castAt = time.Now()
+		return Running
 	}
-	if time.Since(e.castAt) > 2500*time.Millisecond {
-		verbs.CastSelf{Key: ctx.Cap.TownTP.Key}.Do(ctx.M, ctx.GR, ctx.P, ctx.Led, e.Name())
-		e.castAt = time.Now()
+
+	// RING READ: find the thinnest sector.
+	counts, nearest, hasNear := b.ringSectors(s)
+	gap, gapCount := 0, 1<<30
+	for i, c := range counts {
+		if c < gapCount {
+			gap, gapCount = i, c
+		}
+	}
+
+	if gapCount == 0 {
+		// Open gap: stride through it hard.
+		dir := sectorDir[gap]
+		out := data.Position{X: s.Me.Pos.X + dir.X*22, Y: s.Me.Pos.Y + dir.Y*22}
+		verbs.Stride{To: out, Hold: 2 * time.Second, MinGain: 3}.Do(ctx.M, ctx.GR, ctx.P, ctx.Led, b.Name())
+		return Running
+	}
+	// FIGHT FOR THE WAY OUT: strike the blocker holding the thinnest sector.
+	if hasNear[gap] {
+		blocker := nearest[gap]
+		var key byte
+		if ctx.Cap != nil && ctx.Cap.Throw != nil {
+			key = ctx.Cap.Throw.Key
+		} else if ctx.Cap != nil && ctx.Cap.Melee != nil {
+			key = ctx.Cap.Melee.Key
+		}
+		verbs.HoverStrike{Target: blocker.ID, TargetPos: blocker.Pos, SelectKey: key}.
+			Do(ctx.M, ctx.GR, ctx.P, ctx.Led, b.Name())
+		return Running
+	}
+	// Degenerate: no readable ring — back away from the mass.
+	cx, cy, n := 0, 0, 0
+	for _, e := range s.Enemies {
+		cx += e.Pos.X
+		cy += e.Pos.Y
+		n++
+	}
+	if n > 0 {
+		away := data.Position{X: s.Me.Pos.X + (s.Me.Pos.X - cx/n), Y: s.Me.Pos.Y + (s.Me.Pos.Y - cy/n)}
+		verbs.Stride{To: away, Hold: 1500 * time.Millisecond}.Do(ctx.M, ctx.GR, ctx.P, ctx.Led, b.Name())
 	}
 	return Running
 }
