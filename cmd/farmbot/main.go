@@ -4959,12 +4959,18 @@ mainLoop:
 				// area's coordinates (measured: wandering into the cave mid-route left goto
 				// beelining at the Cold Plains->Stony exit (5600,5840) from INSIDE area 17 —
 				// dist frozen at 464, wedges stamped along the cave wall forever).
-				if exitOK && navGrid != nil {
-					inX := exit.X >= navGrid.OffsetX-50 && exit.X <= navGrid.OffsetX+navGrid.Width+50
-					inY := exit.Y >= navGrid.OffsetY-50 && exit.Y <= navGrid.OffsetY+navGrid.Height+50
+				// Bounds test against the AREA's FULL map grid translated to live coords (the
+				// live grid spans only loaded rooms, so a legit far exit sits outside it — the
+				// first version of this check flagged the real CP->Stony exit as phantom). The
+				// cave's map grid is small, so a foreign-frame coordinate still gets caught.
+				if exitOK && navGrid != nil && d.AreaData.Grid != nil {
+					aw, ah := d.AreaData.Grid.Width, d.AreaData.Grid.Height
+					inX := exit.X >= navGrid.OffsetX-50 && exit.X <= navGrid.OffsetX+aw+50
+					inY := exit.Y >= navGrid.OffsetY-50 && exit.Y <= navGrid.OffsetY+ah+50
 					if !inX || !inY {
 						logger.Warn("goto: exit is outside our area frame — phantom, ignoring",
-							"exit", fmt.Sprintf("(%d,%d)", exit.X, exit.Y), "hop", int(hopTarget))
+							"exit", fmt.Sprintf("(%d,%d)", exit.X, exit.Y), "hop", int(hopTarget),
+							"areaDims", fmt.Sprintf("%dx%d", aw, ah))
 						exitOK = false
 					}
 				}
@@ -4972,11 +4978,15 @@ mainLoop:
 				// cave/den off the route) — leave via the nearest REAL adjacency first.
 				if !exitOK && len(d.AdjacentLevels) > 0 {
 					best := 1 << 30
+					aw, ah := 1<<30, 1<<30
+					if d.AreaData.Grid != nil {
+						aw, ah = d.AreaData.Grid.Width, d.AreaData.Grid.Height
+					}
 					for _, al := range d.AdjacentLevels {
 						if p, ok2 := mapExitTo(d, al.Area); ok2 {
 							if navGrid != nil &&
-								(p.X < navGrid.OffsetX-50 || p.X > navGrid.OffsetX+navGrid.Width+50 ||
-									p.Y < navGrid.OffsetY-50 || p.Y > navGrid.OffsetY+navGrid.Height+50) {
+								(p.X < navGrid.OffsetX-50 || p.X > navGrid.OffsetX+aw+50 ||
+									p.Y < navGrid.OffsetY-50 || p.Y > navGrid.OffsetY+ah+50) {
 								continue // phantom too
 							}
 							if dd := chebyshev(me, p); dd < best {
