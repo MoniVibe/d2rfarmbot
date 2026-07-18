@@ -4954,7 +4954,43 @@ mainLoop:
 				// cell nearest the exit (the exit itself is outside the partial grid — planning
 				// straight at it degenerates into an instant-arrive/replan loop with ZERO movement),
 				// and refresh the live grid as rooms stream in so the frontier advances.
-				if exit, ok := mapExitTo(d, hopTarget); ok {
+				exit, exitOK := mapExitTo(d, hopTarget)
+				// PHANTOM-EXIT SANITY: an exit far outside the current live grid is another
+				// area's coordinates (measured: wandering into the cave mid-route left goto
+				// beelining at the Cold Plains->Stony exit (5600,5840) from INSIDE area 17 —
+				// dist frozen at 464, wedges stamped along the cave wall forever).
+				if exitOK && navGrid != nil {
+					inX := exit.X >= navGrid.OffsetX-50 && exit.X <= navGrid.OffsetX+navGrid.Width+50
+					inY := exit.Y >= navGrid.OffsetY-50 && exit.Y <= navGrid.OffsetY+navGrid.Height+50
+					if !inX || !inY {
+						logger.Warn("goto: exit is outside our area frame — phantom, ignoring",
+							"exit", fmt.Sprintf("(%d,%d)", exit.X, exit.Y), "hop", int(hopTarget))
+						exitOK = false
+					}
+				}
+				// SIDE-AREA ESCAPE: no usable exit toward the hop from here (we wandered into a
+				// cave/den off the route) — leave via the nearest REAL adjacency first.
+				if !exitOK && len(d.AdjacentLevels) > 0 {
+					best := 1 << 30
+					for _, al := range d.AdjacentLevels {
+						if p, ok2 := mapExitTo(d, al.Area); ok2 {
+							if navGrid != nil &&
+								(p.X < navGrid.OffsetX-50 || p.X > navGrid.OffsetX+navGrid.Width+50 ||
+									p.Y < navGrid.OffsetY-50 || p.Y > navGrid.OffsetY+navGrid.Height+50) {
+								continue // phantom too
+							}
+							if dd := chebyshev(me, p); dd < best {
+								best, exit, exitOK = dd, p, true
+								hopTarget = al.Area
+							}
+						}
+					}
+					if exitOK && time.Since(gotoBorderSeekLog) > 5*time.Second {
+						logger.Info("goto: side-area — exiting via nearest adjacency",
+							"via", int(hopTarget), "exit", fmt.Sprintf("(%d,%d)", exit.X, exit.Y))
+					}
+				}
+				if exitOK {
 					gotoAim = exit
 					if time.Since(gotoBorderSeekLog) > 5*time.Second {
 						logger.Info("goto: seeking exit (border rooms not loaded)",
