@@ -195,8 +195,10 @@ func (a *Atlas) MergeLiveGrid(seed uint, area int, live *Grid, rooms []LiveRoom)
 
 // MarkRefused stamps a disc of refusals around p (see atlasRefused): the game would not let
 // us pass here regardless of what any grid claims. Persisted with the overlay; sticky against
-// live merges.
-func (a *Atlas) MarkRefused(seed uint, area int, p data.Position, r int) {
+// live merges. Cells within 2 of `standing` are NEVER stamped — we are provably standing
+// there, and a refusal on our own cell kills planning-from-here forever (measured: 41 wedges
+// cascading in one run once a stamp covered the player's cell).
+func (a *Atlas) MarkRefused(seed uint, area int, p data.Position, r int, standing data.Position) {
 	if a == nil {
 		return
 	}
@@ -206,10 +208,39 @@ func (a *Atlas) MarkRefused(seed uint, area int, p data.Position, r int) {
 	}
 	for dy := -r; dy <= r; dy++ {
 		for dx := -r; dx <= r; dx++ {
-			ov.set(p.X+dx, p.Y+dy, atlasRefused)
+			c := data.Position{X: p.X + dx, Y: p.Y + dy}
+			if max(absInt(c.X-standing.X), absInt(c.Y-standing.Y)) <= 2 {
+				continue
+			}
+			ov.set(c.X, c.Y, atlasRefused)
 		}
 	}
 	ov.dirty = true
+}
+
+// ClearRefusedNear lifts refusals in a disc — the escape hatch for a poisoned stamp. Called
+// when the player is OBSERVED standing on a cell the atlas calls refused: presence is proof.
+func (a *Atlas) ClearRefusedNear(seed uint, area int, p data.Position, r int) int {
+	if a == nil {
+		return 0
+	}
+	ov := a.overlay(seed, area)
+	if ov == nil {
+		return 0
+	}
+	n := 0
+	for dy := -r; dy <= r; dy++ {
+		for dx := -r; dx <= r; dx++ {
+			if ov.at(p.X+dx, p.Y+dy) == atlasRefused {
+				ov.set(p.X+dx, p.Y+dy, atlasWalkable)
+				n++
+			}
+		}
+	}
+	if n > 0 {
+		ov.dirty = true
+	}
+	return n
 }
 
 // Overlay returns the accumulated overlay for (seed, area), loading it from disk on first

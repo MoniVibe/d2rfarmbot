@@ -1609,9 +1609,30 @@ func main() {
 		if *liveGrid {
 			if lg, rooms, err := gr.BuildLiveGridRooms(); err == nil {
 				seed := gr.MapSeed()
-				areaID := int(gr.GetData().PlayerUnit.Area)
+				dd := gr.GetData()
+				areaID := int(dd.PlayerUnit.Area)
 				atlas.MergeLiveGrid(seed, areaID, lg, rooms)
 				atlas.Overlay(seed, areaID).OverlayOnto(lg)
+				// POISON ESCAPE HATCH: if the overlay claims the cell we are STANDING ON is
+				// refused/blocked, presence is proof it's wrong — lift the stamp (atlas + this
+				// grid) or planning-from-here fails forever and the burst cascade re-stamps
+				// more wedges (measured: 41 wedges in 4 minutes, playerWalkable=false).
+				me := dd.PlayerUnit.Position
+				if !lg.IsWalkable(me) {
+					if n := atlas.ClearRefusedNear(seed, areaID, me, 3); n > 0 {
+						logger.Warn("nav: cleared refusals covering our own position", "cells", n)
+						atlas.Overlay(seed, areaID).OverlayOnto(lg) // won't help blocked->blocked, so also lift locally:
+					}
+					rp := lg.RelativePosition(me)
+					for dy := -1; dy <= 1; dy++ {
+						for dx := -1; dx <= 1; dx++ {
+							x, y := rp.X+dx, rp.Y+dy
+							if x >= 0 && y >= 0 && x < lg.Width && y < lg.Height {
+								lg.CollisionGrid[y][x] = game.CollisionTypeWalkable
+							}
+						}
+					}
+				}
 				logger.Info("nav: live grid built", "roomsLoaded", len(rooms),
 					"origin", fmt.Sprintf("(%d,%d)", lg.OffsetX, lg.OffsetY),
 					"atlasKnown", atlas.KnownCells(seed, areaID))
@@ -4869,7 +4890,7 @@ mainLoop:
 							// PERSIST the lesson: runtime wedges die with the run (measured: every
 							// run re-learned the same river bank, 5s of flop per wedge). The atlas
 							// keeps refusals forever, sticky against the lying live merge.
-							atlas.MarkRefused(gr.MapSeed(), int(d.PlayerUnit.Area), w, 2)
+							atlas.MarkRefused(gr.MapSeed(), int(d.PlayerUnit.Area), w, 2, me)
 							logger.Warn("goto: passage refused — wedge recorded",
 								"at", fmt.Sprintf("(%d,%d)", w.X, w.Y), "wedges", len(wedges))
 						}
