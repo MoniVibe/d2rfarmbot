@@ -4680,6 +4680,10 @@ func main() {
 	var corpseWalkLastPos data.Position
 	corpseWalkMoveAt := time.Now()
 	roadHoldAt := time.Time{}
+	var armlootID data.UnitID
+	armlootBest := 1 << 30
+	armlootAt := time.Now()
+	armlootLogAt := time.Time{}
 	// meleeSwing: a left-click attack that actually CONNECTS. A blind interactClick at the
 	// monster's computed feet position reads as "walk here" whenever the sprite isn't exactly
 	// there — the char shuffles in place instead of swinging (observed live). Sweep until the
@@ -6071,8 +6075,24 @@ mainLoop:
 					}
 					if haveW && claim("armloot", 65, 1200*time.Millisecond) {
 						if bestDist > 5 {
-							logger.Info("armloot: weaponless — going for ground gear", "name", string(wit.Name),
-								"dist", bestDist)
+							// APPROACH PROGRESS (run 24: 8,346 log lines chasing one unreachable
+							// Cap for the whole run): no closest-approach improvement for 10s →
+							// blacklist a minute and move on. Same lesson as every other journey.
+							if wit.UnitID != armlootID {
+								armlootID, armlootBest, armlootAt = wit.UnitID, bestDist, time.Now()
+							} else if bestDist < armlootBest {
+								armlootBest, armlootAt = bestDist, time.Now()
+							} else if time.Since(armlootAt) > 10*time.Second {
+								lootBlacklist[wit.UnitID] = time.Now().Add(60 * time.Second)
+								armlootID = 0
+								logger.Warn("armloot: not closing — blacklisted", "name", string(wit.Name))
+								continue
+							}
+							if time.Since(armlootLogAt) > 2*time.Second {
+								logger.Info("armloot: weaponless — going for ground gear", "name", string(wit.Name),
+									"dist", bestDist)
+								armlootLogAt = time.Now()
+							}
 							navWalk(me, wit.Position)
 							continue
 						}
