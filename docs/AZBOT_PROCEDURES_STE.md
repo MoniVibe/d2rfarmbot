@@ -136,7 +136,12 @@ dweller three tiles away "in contact" drew point-blank volleys into
 the logs (the owner: "she tries to attack through walls"); a corpse
 across the town fence read "near" and pinned her in the hub corner.
 The percept stamps Walled once per tick from the live grid; every
-count downstream honors it.
+count downstream honors it. THE OWNER CLOSED THE CABIN DOOR (00:40:
+"make it so monsters behind walls don't exist for pathfinding"): a
+walled enemy does not exist for TARGETING either — the sight-first
+fallback that journeyed at walled targets is DELETED. No path is ever
+planned at what no arrow can reach; the map tour walks the rooms, and
+whatever steps into the line dies.
 
 **WARNING 9 — THE CURSOR ITEM.** An item on the cursor owns every click:
 panel buttons do not press, world clicks DROP it, and the stuck-detector

@@ -1042,6 +1042,9 @@ func (f *Fight) Demand(s *percept.Snapshot) *arbiter.Demand {
 	}
 	best := radius + 1
 	for _, e := range s.Enemies {
+		if e.Walled { // WARNING 10 (owner, 00:40): walled enemies don't exist, period
+			continue
+		}
 		if until, bl := f.blacklist[e.ID]; bl && time.Now().Before(until) {
 			continue
 		}
@@ -1099,10 +1102,17 @@ func (f *Fight) Step(ctx *Ctx) Verdict {
 		// Nearest-first used to elect the CENTER of a 20-stack and she charged it
 		// (the owner: "charging headlong into 20+ stacks"); a straggler at 20 tiles
 		// now beats a horde at 10. Distance still gates on the hunt radius.
-		var best, bestClear percept.EnemyRef
-		bScore, cScore := 1<<30, 1<<30
-		haveAny, haveClear := false, false
+		// WARNING 10 (the owner closed the cabin door, 00:40: "monsters behind
+		// walls don't exist"): only SIGHTED enemies may be targets — no journey
+		// ever chases what no arrow can reach. The map tour walks the rooms;
+		// whatever steps into the line dies.
+		var bestClear percept.EnemyRef
+		cScore := 1 << 30
+		haveClear := false
 		for _, e := range s.Enemies {
+			if e.Walled {
+				continue
+			}
 			if until, bl := f.blacklist[e.ID]; bl && time.Now().Before(until) {
 				continue
 			}
@@ -1124,21 +1134,14 @@ func (f *Fight) Step(ctx *Ctx) Verdict {
 				// the bonus dwarfs every d+pack sum a 45-tile world can make.
 				sc -= 1000
 			}
-			if sc < bScore {
-				best, bScore, haveAny = e, sc, true
-			}
 			if sc < cScore && losClear(ctx.Grid, s.Me.Pos, e.Pos) {
 				bestClear, cScore, haveClear = e, sc, true
 			}
 		}
-		switch {
-		case haveClear:
-			f.target, f.targetPos = bestClear.ID, bestClear.Pos
-		case haveAny:
-			f.target, f.targetPos = best.ID, best.Pos // all walled: the journey decides
-		default:
-			return Done // nothing worth fighting
+		if !haveClear {
+			return Done // nothing SIGHTED worth fighting
 		}
+		f.target, f.targetPos = bestClear.ID, bestClear.Pos
 	}
 
 	d := chebyshev(s.Me.Pos, f.targetPos)

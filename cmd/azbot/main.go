@@ -1731,7 +1731,11 @@ func main() {
 	// eating six straight talks). The successor heals itself blind: in town,
 	// one ESC — the three-bearing stride test then tells whether it closed a
 	// panel or raised the pause menu, and a RealEsc restores the difference.
-	for i := 0; i < 3; i++ {
+	// Trade panels exist only at vendors: the vendor-stock read LINGERS after
+	// leaving town (measured 00:33: a field attach right after a shopping trip
+	// saw "readable stock" and fired three blind ESCs — an odd count leaves
+	// the pause menu STANDING and the world frozen). Town-only, always.
+	for i := 0; gr.GetData().PlayerUnit.Area.IsTown() && i < 3; i++ {
 		if len(gr.GetData().Inventory.ByLocation(item.LocationVendor)) == 0 {
 			break
 		}
