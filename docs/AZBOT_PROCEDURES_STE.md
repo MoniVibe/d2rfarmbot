@@ -368,7 +368,35 @@ procedure may ask "which class is this?" — only "what has she proven?"
 
 ---
 
-## 4. COMPLIANCE
+## 4. PROFILES — THE DESIGN (code follows this section, rule 2)
+
+The owner, 11:30: "class profiles seem unavoidable... bots should be
+aware of what's possible for them, and different classes play
+differently." The resolution is not to abandon the class-agnostic
+engine — it is to finish it. Rule 5 never forbade class knowledge; it
+forbade class knowledge IN CONDITIONALS. A PROFILE is the lawful home:
+
+1. A PROFILE is a DATA FILE, one per class/build, with provenance. It
+   declares: the preferred engagement band (a sorceress opens at 20, a
+   barbarian at 2); the resource model (what fuels the TOOLs, what
+   refills it — steal, potions, warmth); the skill build order (which
+   skills take points, in what sequence, with prerequisites); the kite
+   posture (a javazon backpedals, a bear never does); and what "dry"
+   means for this build.
+2. The ENGINE stays one engine. Conditionals consult the PROFILE's
+   numbers the way they consult the priors table — never a class name.
+3. The profile SEEDS; behavior RULES. Every profile value is a prior
+   the flinch audit, the blood oracle, and the delta checks may
+   overrule live — a profile that lies loses to the evidence, same as
+   any table (P-7.3).
+4. The owner's declarations outrank the profile; the profile outranks
+   the built-in defaults; measurement outranks everything.
+5. Until profiles exist, the built-in constants ARE the amazon profile
+   in disguise — every threshold this document names (bands, bars,
+   floors) is a candidate profile field, and moving them into the
+   profile file is the migration.
+
+## 5. COMPLIANCE
 
 1. Every conditional in an activity cites a procedure step (P-x.y) in its
    comment, or it is doctrine drift and must be deleted or promoted into
