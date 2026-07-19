@@ -57,7 +57,30 @@ func (s Stride) Do(m *motor.Motor, gr *game.MemoryReader, p *percept.Perceptor, 
 		return o
 	}
 	t0 := time.Now()
-	time.Sleep(hold) // motor-owned wait class: bounded by the verb's own budget
+	// WATCHED HOLD (the owner: "why is it sluggish to react?" — the old blind
+	// time.Sleep(hold) made every stride up to 1.6s of total reaction blindness while
+	// monsters outran her). The hold now re-reads the world every 120ms and bails on
+	// death, real damage, or early arrival; the executive gets its reflexes back.
+	abort := ""
+	for time.Since(t0) < hold {
+		time.Sleep(120 * time.Millisecond)
+		cur := p.Capture()
+		if !cur.Valid {
+			continue // load screen / pause: let the postcondition read judge
+		}
+		if cur.Me.HPPct <= 0 {
+			abort = " ABORT:died"
+			break
+		}
+		if start.Me.HPPct-cur.Me.HPPct >= 10 {
+			abort = " ABORT:damage" // reflexes over locomotion — hand the cycle back
+			break
+		}
+		if chebyshev(cur.Me.Pos, s.To) <= 2 {
+			abort = " arrived-early"
+			break
+		}
+	}
 	m.MoveStop()
 	end := p.Capture()
 	held := time.Since(t0).Milliseconds()
@@ -69,11 +92,13 @@ func (s Stride) Do(m *motor.Motor, gr *game.MemoryReader, p *percept.Perceptor, 
 		Verb: "stride", Holder: holder,
 		Target:   fmt.Sprintf("(%d,%d)", s.To.X, s.To.Y),
 		HeldMS:   held,
-		Evidence: fmt.Sprintf("from=(%d,%d) to=(%d,%d) gain=%d", start.Me.Pos.X, start.Me.Pos.Y, end.Me.Pos.X, end.Me.Pos.Y, gain),
+		Evidence: fmt.Sprintf("from=(%d,%d) to=(%d,%d) gain=%d%s", start.Me.Pos.X, start.Me.Pos.Y, end.Me.Pos.X, end.Me.Pos.Y, gain, abort),
 	}
 	switch {
 	case !end.Valid:
 		o.Result = ResTimeout
+	case abort == " ABORT:damage" || abort == " ABORT:died":
+		o.Result = ResDone // yielded to reflexes — NOT a wall; no slide retries wanted
 	case gain >= minGain:
 		o.Result = ResDone
 	default:

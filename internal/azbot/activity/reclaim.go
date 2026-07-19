@@ -56,6 +56,21 @@ func (rc *Reclaim) Step(ctx *Ctx) Verdict {
 	}
 	me := s.Me.Pos
 	d := chebyshev(me, s.Me.CorpsePos)
+	// GUARDED BODY: monsters standing on the corpse eat every click (the owner watched
+	// her "punch things near it" — the blind fallback landing on a monster is a naked
+	// attack). The human move: LURE — run away, the swarm follows HER, not the body;
+	// loop back to a clear corpse.
+	guards := 0
+	for _, e := range s.Enemies {
+		if chebyshev(s.Me.CorpsePos, e.Pos) <= 7 {
+			guards++
+		}
+	}
+	if guards >= 2 && d < 25 {
+		away := data.Position{X: me.X + (me.X-s.Me.CorpsePos.X)*3 + 7, Y: me.Y + (me.Y-s.Me.CorpsePos.Y)*3 - 7}
+		slideStride(ctx, away, 1500*time.Millisecond, 2, rc.Name())
+		return Running
+	}
 	if d < 1 {
 		// Standing ON the body: her own sprite owns the cursor — a corpse under her
 		// feet never hovers (measured: pinned 0x0 sweeping forever). Step off first.
@@ -111,9 +126,10 @@ func (rc *Reclaim) Step(ctx *Ctx) Verdict {
 		rc.tries = 0
 		rc.rounds++
 		switch {
-		case rc.rounds == 2 || rc.rounds == 3:
-			// Hover refuses to confirm — corpses are BIG targets: click the projection
-			// blind. Worst case it's a walk click; best case the gear comes home.
+		case (rc.rounds == 2 || rc.rounds == 3) && guards == 0:
+			// Hover refuses to confirm and NOTHING stands on the body — corpses are
+			// BIG targets: click the projection blind. With any guard present a blind
+			// click is a punch, never a pickup.
 			ctx.M.BareClick(bx, by)
 			rc.clickAt = time.Now()
 		case rc.rounds >= 4:
