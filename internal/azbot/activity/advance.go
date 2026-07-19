@@ -317,15 +317,30 @@ func (a *Advance) Step(ctx *Ctx) Verdict {
 			}
 			if len(wants) > 0 {
 				if padDist > 8 {
-					// Walk to the pad — bounded: 45 s of no arrival hands the
-					// march back to the gate (an unreachable pad owns nothing).
+					// Walk to the pad BY PLANNER (P-5.5 — the bare slide ground
+					// 50 s into the town fence at 00:37): journey first, slide
+					// only as the stall fallback. Bounded: 60 s of no arrival
+					// hands the march back to the gate.
 					if a.wpWalkAt.IsZero() {
 						a.wpWalkAt = time.Now()
 					}
-					if time.Since(a.wpWalkAt) > 45*time.Second {
+					if time.Since(a.wpWalkAt) > 60*time.Second {
 						a.wpAt, a.wpWalkAt = time.Now(), time.Time{}
 					} else {
-						slideStride(ctx, padPos, 1200*time.Millisecond, 1, a.Name())
+						if ctx.Grid != nil {
+							goal := clampToGrid(padPos, ctx.Grid)
+							if a.j == nil || chebyshev(a.j.Goal, goal) > 6 {
+								a.j = journey.New(ctx.GR, ctx.Grid, goal, a.Name())
+								a.j.Arrive = 4
+							}
+							st := a.j.Step(ctx.M, ctx.P, ctx.Led)
+							if st.State == journey.Stalled || st.State == journey.NoPath {
+								slideStride(ctx, padPos, 1200*time.Millisecond, 1, a.Name())
+								a.j = nil
+							}
+						} else {
+							slideStride(ctx, padPos, 1200*time.Millisecond, 1, a.Name())
+						}
 						return Running
 					}
 				} else {
