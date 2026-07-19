@@ -90,6 +90,11 @@ type PlayerState struct {
 	// escape hatch's fuel gauge (P-4.5). -1 = no tome in the bag (nothing to
 	// fill; a loose scroll is not a tome).
 	TPScrolls int
+	// IDScrolls: the ID tome's charge count (mod id 534) — the identify
+	// ritual's fuel. An empty tome's cast FIZZLES and the follow-up click
+	// GRABS the item (the owner watched the loop: "identifying already
+	// identified items, then picking them up and throwing them").
+	IDScrolls int
 	// CursorItem: something rides the cursor (WARNING 9) — every service's
 	// click interlock, and Equip's parking docket.
 	CursorItem bool
@@ -264,6 +269,7 @@ func (p *Perceptor) Capture() *Snapshot {
 		Dex:        dex,
 		StatPoints: statPts,
 		TPScrolls:  -1, // until the tome is seen in the bag
+		IDScrolls:  -1,
 	}
 	if ub := p.gr.UIBytes(); len(ub) > 0xF4 {
 		s.MenuOpen = ub[0xF4] == 1
@@ -448,10 +454,15 @@ func (p *Perceptor) Capture() *Snapshot {
 		}
 		switch {
 		case id == 533 || id == 534 || id == 549: // TP/ID tomes + the HORADRIC CUBE
-			if id == 533 { // the TP tome's charge count is the escape hatch's fuel gauge
-				s.Me.TPScrolls = 0
+			if id == 533 || id == 534 { // tome charge counts: the rituals' fuel gauges
+				n := 0
 				if q, ok := it.FindStat(stat.Quantity, 0); ok {
-					s.Me.TPScrolls = q.Value
+					n = q.Value
+				}
+				if id == 533 {
+					s.Me.TPScrolls = n
+				} else {
+					s.Me.IDScrolls = n
 				}
 			}
 			continue

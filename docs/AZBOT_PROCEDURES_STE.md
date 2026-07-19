@@ -188,7 +188,11 @@ The order is causal, not stylistic. Each step creates the next step's
 precondition.
 
 1. HEAL first. Akara refills for free on TALK. Wounded below 55 pends.
-2. IDENTIFY second. Unknown items cannot be judged.
+2. IDENTIFY second. Unknown items cannot be judged. AN EMPTY TOME
+   IDENTIFIES NOTHING (measured 09:50: the cast fizzles, the follow-up
+   click GRABS the item, the next click throws it — WARNING 9 on
+   repeat): at zero charges the service stands down until Restock
+   refills the tome.
 3. SELL third. Judged non-keepers become gold and LANDING ROOM.
 4. EQUIP fourth (requires LANDING ROOM). Open the panel by the IDENTIFY side
    door. Normalize the cursor with one plain click; put back what it grabs.
@@ -197,13 +201,17 @@ precondition.
    equips onto the ACTIVE hands: swap to its set before the click (a bow
    candidate needs the bow set out, or the gesture benches the javelins).
 5. BUY fifth: potions to doctrine (one row mana, rest HP), from stash-backed
-   gold (pocket + bank is purchasing power). Then TOWN-PORTAL SCROLLS to the
-   tome's floor of 8 — an empty tome un-writes P-2.3's destination (the
-   owner, 2026-07-19: "she's out already"). A scroll BUY is judged by the
-   TOME's quantity delta, never by gold — gold cannot tell a scroll from
-   junk. The scroll cell is LEARNED: probe the misc-tab candidates once,
-   the quantity delta names the true cell, and the fact is kept forever;
-   a wrong probe's junk goes to the fence like any other merchandise.
+   gold (pocket + bank is purchasing power). THE BELT IS THE ONLY PROOF a
+   potion buy landed: a full belt sends the bottle to the bag and the plan
+   never converges (measured 09:50, the mana spray) — two buys with no belt
+   rise end the bottle-buying for the visit. Then SCROLLS to BOTH tomes'
+   floor of 8 — an empty TP tome un-writes P-2.3's destination, an empty ID
+   tome starves P-4.2 (the owner, 2026-07-19: "she's out already"). A
+   scroll BUY is judged by its TOME's quantity delta, never by gold — gold
+   cannot tell a scroll from junk. Each tome's cell is LEARNED: probe the
+   misc-tab candidates once, the delta names the true cell, and the fact
+   is kept forever; a wrong probe's junk goes to the fence like any other
+   merchandise.
 6. REPAIR when worn below a quarter. Durability must rise per click.
 7. Every service obeys its delta check (Lexicon) and its GHOST defense
    (WARNING 2).

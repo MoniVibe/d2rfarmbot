@@ -274,7 +274,7 @@ func ServicesPending(s *percept.Snapshot) bool {
 	if s.Me.EquipCandCount > 0 && equipWorks.Load() && s.Me.InvFree >= 6 {
 		return true
 	}
-	if s.Me.UnidentCount > 0 && identifyWorks.Load() {
+	if s.Me.UnidentCount > 0 && identifyWorks.Load() && s.Me.IDScrolls > 0 {
 		return true
 	}
 	// P-8.1: banked points are an errand — the march waited on every other
@@ -285,8 +285,9 @@ func ServicesPending(s *percept.Snapshot) bool {
 		return true
 	}
 	// P-4.5: a near-empty tome is an errand too — marching out with no escape
-	// hatch is how retreats lose their destination (P-2.3).
-	if s.Me.TPScrolls >= 0 && s.Me.TPScrolls <= 2 && scrollDeficit(s) > 0 {
+	// hatch is how retreats lose their destination (P-2.3), and an empty ID
+	// tome starves the whole judging pipeline.
+	if (s.Me.TPScrolls >= 0 && s.Me.TPScrolls <= 2 || s.Me.IDScrolls == 0) && scrollDeficit(s) > 0 {
 		return true
 	}
 	if s.Me.Gold >= 10 && s.Me.MinDurPct <= 25 {
@@ -312,10 +313,16 @@ func ServicesPending(s *percept.Snapshot) bool {
 // Bids softly in town when the belt has real gaps and she can pay; never bids in
 // the field (travel-to-town for potions is a Goal decision).
 type Restock struct {
-	e        errand
-	bought   int
-	probeIdx int // scroll-cell discovery cursor (P-4.5: the cell is LEARNED)
-	frozen   int // consecutive scroll buys with no tome delta on a LEARNED cell
+	e          errand
+	potBought  int
+	lastBeltHP int
+	lastBeltMN int
+	beltFrozen int // potion buys with no belt rise — a full belt eats nothing
+	scrBought  int
+	probeTP    int // scroll-cell discovery cursors (P-4.5: cells are LEARNED)
+	probeID    int
+	frozenTP   int // learned-cell buys with no tome delta (WARNING 2 family)
+	frozenID   int
 }
 
 // scrollWorks: the live belief that scroll restocking works here — retired when
@@ -326,20 +333,26 @@ func init() { scrollWorks.Store(true) }
 
 const tpScrollFloor = 8
 
-// scrollDeficit is the tome's gap to doctrine — 0 when no tome rides the bag
-// (a loose scroll is not a tome) or the purse cannot pay.
-func scrollDeficit(s *percept.Snapshot) int {
-	if s.Me.TPScrolls < 0 || s.Me.TPScrolls >= tpScrollFloor || s.Me.Gold < 200 || !scrollWorks.Load() {
+// scrollGap is one tome's gap to doctrine — 0 when the tome is absent (a loose
+// scroll is not a tome) or the purse cannot pay.
+func scrollGap(gauge, gold int) int {
+	if gauge < 0 || gauge >= tpScrollFloor || gold < 200 || !scrollWorks.Load() {
 		return 0
 	}
-	return tpScrollFloor - s.Me.TPScrolls
+	return tpScrollFloor - gauge
 }
 
-// tomeCount reads the TP tome's LIVE charge count (mod id 533) — the only
-// truth a scroll BUY is judged by (P-4.5).
-func tomeCount(ctx *Ctx) int {
+// scrollDeficit sums both tomes' gaps (P-4.5: TP for the escape hatch, ID for
+// the judging of the bag).
+func scrollDeficit(s *percept.Snapshot) int {
+	return scrollGap(s.Me.TPScrolls, s.Me.Gold) + scrollGap(s.Me.IDScrolls, s.Me.Gold)
+}
+
+// tomeCount reads a tome's LIVE charge count — the only truth a scroll BUY is
+// judged by (P-4.5).
+func tomeCount(ctx *Ctx, tomeID int) int {
 	for _, it := range ctx.GR.GetData().Inventory.ByLocation(item.LocationInventory) {
-		if int(it.ID) == 533 {
+		if int(it.ID) == tomeID {
 			if q, ok := it.FindStat(stat.Quantity, 0); ok {
 				return q.Value
 			}
@@ -402,7 +415,7 @@ func (r *Restock) Step(ctx *Ctx) Verdict {
 			closeShop(ctx)
 		}
 		r.e.reset()
-		r.bought, r.frozen = 0, 0
+		r.resetCounters()
 		return Done
 	}
 	open, dead := r.e.step(ctx, r.Name())
@@ -413,66 +426,101 @@ func (r *Restock) Step(ctx *Ctx) Verdict {
 	if !open {
 		return Running
 	}
-	// Shop open: ONE purchase per step (instant-buy cells), verified by the next
-	// snapshot's belt counts — the plan() recomputation IS the postcondition.
-	// Potions first, then scrolls (P-4.5): blood before the escape hatch.
-	switch {
-	case buyMana > 0:
-		ctx.M.UIClick(manaCellX, manaCellY)
-	case buyHP > 0:
-		ctx.M.UIClick(hpCellX, hpCellY)
-	default:
-		r.buyScroll(ctx, s)
-	}
-	r.bought++
-	if r.bought > s.Me.BeltSlots+2+tpScrollFloor+6 { // runaway guard: buys that never land (+ probe headroom)
-		closeShop(ctx)
-		r.e.reset()
-		r.bought, r.frozen = 0, 0
-		return Abandoned
+	// Shop open: ONE purchase per step (instant-buy cells). Potions first, then
+	// scrolls (P-4.5): blood before the escape hatch.
+	if buyMana > 0 || buyHP > 0 {
+		// THE BELT IS THE ONLY PROOF a potion buy landed: a full belt sends the
+		// bottle to the bag and plan() never converges — she sprayed Akara with
+		// mana orders until the guard tripped (the owner, 09:50). Two buys with
+		// no belt rise: stop buying bottles this visit.
+		if r.potBought > 0 && s.Me.BeltHP == r.lastBeltHP && s.Me.BeltMana == r.lastBeltMN {
+			if r.beltFrozen++; r.beltFrozen >= 2 {
+				ctx.Led.Append(verbs.Outcome{Verb: "buy", Holder: r.Name(), Result: verbs.ResDeaf,
+					Evidence: fmt.Sprintf("belt frozen at hp=%d mana=%d after %d buys — full belt or ghost window", s.Me.BeltHP, s.Me.BeltMana, r.potBought)})
+				closeShop(ctx)
+				r.e.reset()
+				r.resetCounters()
+				return Abandoned
+			}
+		} else {
+			r.beltFrozen = 0
+		}
+		r.lastBeltHP, r.lastBeltMN = s.Me.BeltHP, s.Me.BeltMana
+		if buyMana > 0 {
+			ctx.M.UIClick(manaCellX, manaCellY)
+		} else {
+			ctx.M.UIClick(hpCellX, hpCellY)
+		}
+		r.potBought++
+		if r.potBought > s.Me.BeltSlots+2 { // runaway guard: buys that never land
+			closeShop(ctx)
+			r.e.reset()
+			r.resetCounters()
+			return Abandoned
+		}
+	} else {
+		// Scrolls: the TP tome first (the escape hatch), then the ID tome.
+		if scrollGap(s.Me.TPScrolls, s.Me.Gold) > 0 {
+			r.buyScroll(ctx, 533, "shop.akara.cell.tpscroll", &r.probeTP, &r.frozenTP)
+		} else {
+			r.buyScroll(ctx, 534, "shop.akara.cell.idscroll", &r.probeID, &r.frozenID)
+		}
+		r.scrBought++
+		if r.scrBought > 2*tpScrollFloor+12 { // probes + refills, generously bounded
+			closeShop(ctx)
+			r.e.reset()
+			r.resetCounters()
+			return Abandoned
+		}
 	}
 	time.Sleep(400 * time.Millisecond)
 	return Running
 }
 
+func (r *Restock) resetCounters() {
+	r.potBought, r.beltFrozen, r.scrBought = 0, 0, 0
+	r.lastBeltHP, r.lastBeltMN = 0, 0
+	r.frozenTP, r.frozenID = 0, 0
+}
+
 // buyScroll — P-4.5: one scroll purchase, judged by the TOME's quantity delta
-// (gold cannot tell a scroll from junk). The cell is LEARNED once and kept
-// forever; until learned, probe the misc-tab candidates — a wrong probe's junk
-// goes to the fence like any other merchandise.
-func (r *Restock) buyScroll(ctx *Ctx, s *percept.Snapshot) {
+// (gold cannot tell a scroll from junk). The cell is LEARNED once per tome and
+// kept forever; until learned, probe the misc-tab candidates — a wrong probe's
+// junk goes to the fence like any other merchandise.
+func (r *Restock) buyScroll(ctx *Ctx, tomeID int, memKey string, probeIdx, frozen *int) {
 	candidates := [][2]int{{612, 431}, {612, 384}, {612, 337}, {664, 478}, {664, 431}, {664, 384}}
 	var cell [2]int
-	learned := ctx.Mem != nil && ctx.Mem.GetJSON("shop.akara.cell.tpscroll", &cell)
+	learned := ctx.Mem != nil && ctx.Mem.GetJSON(memKey, &cell)
 	if !learned {
-		if r.probeIdx >= len(candidates) {
+		if *probeIdx >= len(candidates) {
 			scrollWorks.Store(false)
 			ctx.Led.Append(verbs.Outcome{Verb: "buy", Holder: r.Name(), Result: verbs.ResDeaf,
-				Evidence: "no misc-tab candidate raised the tome count — scroll belief retired"})
+				Evidence: fmt.Sprintf("no misc-tab candidate raised tome %d — scroll belief retired", tomeID)})
 			return
 		}
-		cell = candidates[r.probeIdx]
+		cell = candidates[*probeIdx]
 	}
-	before := tomeCount(ctx)
+	before := tomeCount(ctx, tomeID)
 	ctx.M.UIClick(cell[0], cell[1])
 	time.Sleep(450 * time.Millisecond)
-	after := tomeCount(ctx)
+	after := tomeCount(ctx, tomeID)
 	switch {
 	case after > before:
-		r.frozen = 0
+		*frozen = 0
 		if !learned && ctx.Mem != nil {
-			ctx.Mem.PutJSON("shop.akara.cell.tpscroll", memory.ScopeForever,
-				memory.Provenance{Source: "measured", Evidence: fmt.Sprintf("probe: tome %d→%d at (%d,%d)", before, after, cell[0], cell[1])}, cell)
+			ctx.Mem.PutJSON(memKey, memory.ScopeForever,
+				memory.Provenance{Source: "measured", Evidence: fmt.Sprintf("probe: tome %d %d→%d at (%d,%d)", tomeID, before, after, cell[0], cell[1])}, cell)
 			ctx.Led.Append(verbs.Outcome{Verb: "buy", Holder: r.Name(), Result: verbs.ResDone,
-				Evidence: fmt.Sprintf("tpscroll cell LEARNED at (%d,%d)", cell[0], cell[1])})
+				Evidence: fmt.Sprintf("%s LEARNED at (%d,%d)", memKey, cell[0], cell[1])})
 		}
 	case !learned:
-		r.probeIdx++ // wrong cell: whatever it bought is the fence's problem
+		*probeIdx++ // wrong cell: whatever it bought is the fence's problem
 	default:
 		// A learned cell with a frozen delta twice is a GHOST WINDOW (WARNING 2).
-		if r.frozen++; r.frozen >= 2 {
+		if *frozen++; *frozen >= 2 {
 			scrollWorks.Store(false)
 			ctx.Led.Append(verbs.Outcome{Verb: "buy", Holder: r.Name(), Result: verbs.ResDeaf,
-				Evidence: fmt.Sprintf("tome count frozen at %d twice on the learned cell — scroll belief retired", before)})
+				Evidence: fmt.Sprintf("tome %d frozen at %d twice on the learned cell — scroll belief retired", tomeID, before)})
 		}
 	}
 }
@@ -730,6 +778,13 @@ func (idn *Identify) Name() string { return "identify" }
 
 func (idn *Identify) Demand(s *percept.Snapshot) *arbiter.Demand {
 	if !s.Valid || !s.Me.InTown || s.Me.UnidentCount == 0 || !identifyWorks.Load() {
+		return nil
+	}
+	// AN EMPTY TOME IDENTIFIES NOTHING (the owner watched the loop, 09:50:
+	// the cast fizzles, the follow-up click GRABS the item, the next click
+	// throws it — WARNING 9's mess on repeat). Zero charges: stand down until
+	// Restock refills the tome (P-4.5).
+	if s.Me.IDScrolls <= 0 {
 		return nil
 	}
 	return &arbiter.Demand{Who: idn.Name(), Class: arbiter.ClassService,
