@@ -52,6 +52,10 @@ type PlayerState struct {
 	// activity's whole world.
 	CorpseFound bool
 	CorpsePos   data.Position
+	// JunkCount: sellable inventory items (dup tomes, plain gear) — the Fence
+	// service's reason to exist. The classic bots' law: loot → sell → gold →
+	// repair/potions; a bot with an empty purse cannot take care of itself.
+	JunkCount int
 }
 
 // EnemyRef is a live hostile: identity, position, and Mode (the honest liveness read —
@@ -88,6 +92,14 @@ type MissileRef struct {
 	Pos data.Position
 }
 
+// InvItem is an inventory item with its GRID slot — the Fence service's sell targets.
+type InvItem struct {
+	ID   int // numeric item ID (the mod scrambles names; IDs cannot lie)
+	GX   int
+	GY   int
+	Qual int
+}
+
 // Snapshot is one immutable perception frame. Valid=false frames (load screens,
 // zero-position garbage) are published so consumers see the gap, but carry no state.
 type Snapshot struct {
@@ -101,6 +113,7 @@ type Snapshot struct {
 	Items    []ItemRef
 	Portals  []PortalRef  // town portals (and red portals) in the world
 	Missiles []MissileRef // projectiles in flight — the dodge reflex's raw feed
+	Junk     []InvItem    // sellable inventory items, grid slots (the Fence's list)
 }
 
 // AttachReport is the M0 epistemics gate verdict: behavioral probes over the channels
@@ -232,6 +245,31 @@ func (p *Perceptor) Capture() *Snapshot {
 			s.Me.BeltMana++
 		}
 	}
+	// Sellable junk audit: inventory items that are neither her one TP tome, one ID
+	// tome, nor potions. Plain gear and DUPLICATE tomes (two 300g spares ride along
+	// from the probe-click era) are the Fence's stock.
+	seenTP, seenID := false, false
+	for _, it := range d.Inventory.ByLocation(item.LocationInventory) {
+		id := int(it.ID)
+		switch {
+		case id == 533: // TP tome: keep exactly one
+			if !seenTP {
+				seenTP = true
+				continue
+			}
+		case id == 534: // ID tome: keep exactly one
+			if !seenID {
+				seenID = true
+				continue
+			}
+		case id == 602 || id == 607: // potions are fuel, not stock
+			continue
+		case int(it.Quality) >= 4: // magic+ might be gear-oracle food later — hold
+			continue
+		}
+		s.Junk = append(s.Junk, InvItem{ID: id, GX: it.Position.X, GY: it.Position.Y, Qual: int(it.Quality)})
+	}
+	s.Me.JunkCount = len(s.Junk)
 	if d.Corpse.Found {
 		s.Me.CorpseFound = true
 		s.Me.CorpsePos = d.Corpse.Position

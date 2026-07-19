@@ -163,6 +163,31 @@ func (m *Motor) UIClick(sx, sy int) {
 	_ = m.gi.RestoreGetCursorPosAddr()
 }
 
+// SellClick is UIClick with CTRL held in the override — the quick-sell gesture on an
+// inventory cell while a vendor trade is open. The ctrl override is restored in the
+// same call; the amnesty machinery guards against any latch.
+func (m *Motor) SellClick(sx, sy int) {
+	if !m.Engage.Engaged() {
+		return
+	}
+	m.MoveStop()
+	px := int(float64(m.hid.WindowLeftX())*m.panelScale) + sx
+	py := int(float64(m.hid.WindowTopY())*m.panelScale) + sy
+	_ = m.gi.OverridePhysicalCursorPos(px, py)
+	m.hid.MouseMoveClient(sx, sy)
+	time.Sleep(150 * time.Millisecond)
+	_ = m.gi.OverrideGetKeyState(0x11) // CTRL: the quick-sell modifier
+	_ = m.gi.OverrideGetAsyncKeyState(0x11)
+	m.hid.LeftClickNoMoveClient(sx, sy)
+	_ = m.gi.RestoreGetKeyState()
+	_ = m.gi.RestoreGetAsyncKeyState()
+	time.Sleep(120 * time.Millisecond)
+	_ = m.gi.RestorePhysicalCursorPos()
+	_ = m.gi.RestoreGetCursorInfo()
+	_ = m.gi.RestoreGetCursorPosAddr()
+	m.ModifierAmnesty() // a latched ctrl is quick-sell on every later click — never risk it
+}
+
 // ModifierAmnesty releases every modifier (shift/ctrl/alt) at both the game-window and
 // OS level. Alt-tab eats key releases (they go to the newly focused window), so a
 // modifier held across a focus switch stays latched in D2R until this fresh release.

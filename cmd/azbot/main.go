@@ -118,7 +118,9 @@ func main() {
 	belt := flag.String("belt", "1,2,3,4", "belt column keys")
 	drinkAt := flag.Int("drinkat", 55, "sentinel drinks at or below this HP%")
 	memDir := flag.String("memdir", "logs/azmem", "memory store directory (WAL)")
-	goal := flag.String("goal", "farm", "the Director's current goal: farm (routes+explore+loot) | campaign (quest progression, M8) | gamble (Gheed errand when bankrolled). Goals shape WHICH activities bid; the arbiter still owns every moment.")
+	goal := flag.String("goal", "farm", "the Director's current goal: farm (routes+explore+loot) | campaign/rampage (Act 1 march) | gamble (Gheed errand when bankrolled). Goals shape WHICH activities bid; the arbiter still owns every moment.")
+	meleeKeyF := flag.String("meleekey", "", "OWNER-DECLARED melee skill key (e.g. f1 for Jab) — config beats inference on a scrambled mod; overrides calibration")
+	rangedKeyF := flag.String("rangedkey", "", "OWNER-DECLARED bow skill key — overrides calibration (the flinch audit still verifies)")
 	roadTest := flag.Bool("roadtest", false, "M2 soak: walk the measured town road out and back on Stride verbs, print the outcome histogram, exit")
 	jTest := flag.String("jtest", "", "M3 soak: journey to world x,y on the live grid via the Journey authority, print the verdict, exit")
 	fightTest := flag.Bool("fighttest", false, "M4 soak: calibrate capability, cross to Blood Moor, hover-strike nearest enemies with evidence, exit")
@@ -1506,7 +1508,29 @@ func main() {
 			logger.Info("outcome", "verb", o.Verb, "holder", o.Holder, "result", o.Result.String(), "ev", o.Evidence)
 		}
 	}
-	cap := combat.Calibrate(logger, gr, hid, mem, []string{"f1", "f2", "f3", "f4"})
+	// calibrate wraps probing + the owner's declared build: the owner KNOWS the char
+	// (classic-bot law — kolbot/koolo configs declared skills; nobody inferred them).
+	calibrate := func() combat.Capability {
+		c := combat.Calibrate(logger, gr, hid, mem, []string{"f1", "f2", "f3", "f4"})
+		if *meleeKeyF != "" {
+			c.Melee = &combat.Binding{Key: hid.GetASCIICode(*meleeKeyF)}
+			logger.Info("capability: owner-declared melee key", "key", *meleeKeyF)
+		}
+		if *rangedKeyF != "" {
+			c.RangedCast = &combat.Binding{Key: hid.GetASCIICode(*rangedKeyF)}
+			logger.Info("capability: owner-declared ranged key", "key", *rangedKeyF)
+		}
+		// UNARM THE TOME: probing leaves the LAST flipped skill selected — F3 is the
+		// Identify tome, so she stood around visibly armed with Identify (the owner
+		// kept catching it). End calibration on a combat selection.
+		if c.RangedCast != nil {
+			hid.PressKey(c.RangedCast.Key)
+		} else if c.Melee != nil {
+			hid.PressKey(c.Melee.Key)
+		}
+		return c
+	}
+	cap := calibrate()
 	arb := &arbiter.Arbiter{}
 	acts := map[string]activity.Activity{}
 	road := []data.Position{{X: 6020, Y: 4952}, {X: 5992, Y: 4941}, {X: 5963, Y: 5001}, {X: 5962, Y: 4956}, {X: 5952, Y: 4944}}
@@ -1524,7 +1548,7 @@ func main() {
 	if *goal == "campaign" || *goal == "rampage" {
 		legs = activity.Act1Itinerary()
 	}
-	for _, a := range []activity.Activity{&activity.Breakout{}, &activity.Flee{}, activity.NewDodge(), &activity.Respawn{}, activity.NewRelog(), activity.NewReclaim(), activity.NewFight(), activity.NewLoot(), activity.NewRestock(), activity.NewRepair(), activity.NewAdvance(legs), &activity.Return{}, &activity.Travel{Road: road}, &activity.Explore{}} {
+	for _, a := range []activity.Activity{&activity.Breakout{}, &activity.Flee{}, activity.NewDodge(), &activity.Respawn{}, activity.NewRelog(), activity.NewReclaim(), activity.NewFight(), activity.NewLoot(), activity.NewFence(), activity.NewRestock(), activity.NewRepair(), activity.NewAdvance(legs), &activity.Return{}, &activity.Travel{Road: road}, &activity.Explore{}} {
 		acts[a.Name()] = a
 	}
 
@@ -1647,8 +1671,7 @@ func main() {
 		}
 		if (s.Me.Armed != wasArmed || (wasDead && !deadNow)) && !deadNow {
 			logger.Info("executive: self-model event — recalibrating", "armed", s.Me.Armed, "revived", wasDead)
-			c2 := combat.Calibrate(logger, gr, hid, mem, []string{"f1", "f2", "f3", "f4"})
-			cap = c2
+			cap = calibrate()
 			wasArmed = s.Me.Armed
 		}
 		wasDead = deadNow

@@ -178,6 +178,10 @@ func ServicesPending(s *percept.Snapshot) bool {
 			return true
 		}
 	}
+	// The Fence's docket: broke with junk to sell, or a heavy bag either way.
+	if s.Me.JunkCount > 0 && (s.Me.Gold < 500 || s.Me.JunkCount >= 4) {
+		return true
+	}
 	return false
 }
 
@@ -262,6 +266,77 @@ func (r *Restock) Step(ctx *Ctx) Verdict {
 		closeShop(ctx)
 		r.e.reset()
 		r.bought = 0
+		return Abandoned
+	}
+	time.Sleep(400 * time.Millisecond)
+	return Running
+}
+
+// ---------------------------------------------------------------- Fence (ClassService)
+
+// Fence sells inventory junk to Akara — the classic bots' economy law: loot → sell →
+// gold → repair/potions. A bot with an empty purse cannot take care of itself (the
+// owner, 03:08: "she doesn't repair either but she's out of gold i guess?"). One
+// ctrl-click quick-sell per Step, gold delta as the postcondition.
+type Fence struct {
+	e     errand
+	sold  int
+	gold0 int
+}
+
+func NewFence() *Fence {
+	return &Fence{e: errand{npcID: npc.Akara,
+		ring: []data.Position{{X: 6023, Y: 4933}, {X: 6070, Y: 4960}, {X: 6100, Y: 4990}, {X: 6050, Y: 5010}, {X: 6110, Y: 4930}}}}
+}
+
+func (fc *Fence) Name() string { return "fence" }
+
+func (fc *Fence) Demand(s *percept.Snapshot) *arbiter.Demand {
+	if !s.Valid || !s.Me.InTown || s.Me.JunkCount == 0 {
+		return nil
+	}
+	if s.Me.Gold >= 500 && s.Me.JunkCount < 4 {
+		return nil // solvent and light: selling can wait for a fuller bag
+	}
+	return &arbiter.Demand{Who: fc.Name(), Class: arbiter.ClassService,
+		Urgency: 0.45 + float64(minInt(s.Me.JunkCount, 8))/20, // poverty + full bags push it up
+		Commit:  arbiter.Commitment{MinHold: 5 * time.Second}}
+}
+
+// invCell converts an inventory GRID slot to the proven panel pixel formula.
+func invCell(gx, gy int) (int, int) { return 1292 + gx*45 + 22, 395 + gy*45 + 22 }
+
+func (fc *Fence) Step(ctx *Ctx) Verdict {
+	s := ctx.Snap
+	if !s.Valid {
+		return Running
+	}
+	if len(s.Junk) == 0 {
+		if fc.e.phase >= 3 {
+			closeShop(ctx)
+		}
+		fc.e.reset()
+		fc.sold = 0
+		return Done // the bag is honest merchandise no more
+	}
+	open, dead := fc.e.step(ctx, fc.Name())
+	if dead {
+		fc.e.reset()
+		return Abandoned
+	}
+	if !open {
+		return Running
+	}
+	// Shop open: quick-sell ONE junk item per step; the next snapshot's Junk list and
+	// gold are the postcondition.
+	it := s.Junk[0]
+	cx, cy := invCell(it.GX, it.GY)
+	ctx.M.SellClick(cx, cy)
+	fc.sold++
+	if fc.sold > 40 { // runaway guard
+		closeShop(ctx)
+		fc.e.reset()
+		fc.sold = 0
 		return Abandoned
 	}
 	time.Sleep(400 * time.Millisecond)

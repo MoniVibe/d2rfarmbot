@@ -484,7 +484,12 @@ func (f *Fight) Step(ctx *Ctx) Verdict {
 
 	case "melee":
 		// Javelin set: stab whatever is in reach — but the HIGHER priority is getting
-		// clear enough to return to the bow.
+		// clear enough to return to the bow. The strike key is the OWNER-DECLARED
+		// melee skill when given (Jab — config beats inference on a scrambled mod).
+		var mk byte
+		if ctx.Cap != nil && ctx.Cap.Melee != nil {
+			mk = ctx.Cap.Melee.Key
+		}
 		if contact > 7 {
 			f.trySwap(ctx) // clear — back to the bow
 			return Running
@@ -492,7 +497,7 @@ func (f *Fight) Step(ctx *Ctx) Verdict {
 		if d > 4 {
 			// The chosen target is far but something else is in contact — stab THAT.
 			if contact <= 4 {
-				f.strike(ctx, f.nearestID(s), contactPos, 0)
+				f.strike(ctx, f.nearestID(s), contactPos, mk)
 				return Running
 			}
 			// Nothing in reach: step back rather than chase — range is the win condition.
@@ -501,7 +506,7 @@ func (f *Fight) Step(ctx *Ctx) Verdict {
 			verbs.Stride{To: away, Hold: 800 * time.Millisecond}.Do(ctx.M, ctx.GR, ctx.P, ctx.Led, f.Name())
 			return Running
 		}
-		f.strike(ctx, f.target, f.targetPos, 0)
+		f.strike(ctx, f.target, f.targetPos, mk)
 		return Running
 	}
 
