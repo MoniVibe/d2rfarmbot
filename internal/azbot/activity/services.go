@@ -99,6 +99,8 @@ func (e *errand) step(ctx *Ctx, who string) (shopOpen bool, dead bool) {
 			return false, false
 		}
 		if e.ringIdx >= len(e.ring) {
+			ctx.Led.Append(verbs.Outcome{Verb: "errand", Holder: who, Result: verbs.ResWhiff,
+				Evidence: fmt.Sprintf("npc=%d never loaded on the whole ring (P-6.2)", int(e.npcID))})
 			return false, true // walked the whole ring, no NPC — give up this trip
 		}
 		wp := e.ring[e.ringIdx]
@@ -139,6 +141,8 @@ func (e *errand) step(ctx *Ctx, who string) (shopOpen bool, dead bool) {
 		// stretch is local footwork around camp furniture the grids can't see.
 		if dist > 12 {
 			if e.walkTo(ctx, target.Position, who) {
+				ctx.Led.Append(verbs.Outcome{Verb: "errand", Holder: who, Result: verbs.ResBlocked,
+					Evidence: fmt.Sprintf("npc=%d: planner found no route from (%d,%d) at dist %d (P-6.2)", int(e.npcID), s.Me.Pos.X, s.Me.Pos.Y, dist)})
 				return false, true // no route to the NPC at all — give up this trip
 			}
 			return false, false
@@ -184,6 +188,8 @@ func (e *errand) step(ctx *Ctx, who string) (shopOpen bool, dead bool) {
 			return false, false // the click starts a WALK-to-talk; let it play out
 		}
 		if e.tries >= 6 {
+			ctx.Led.Append(verbs.Outcome{Verb: "errand", Holder: who, Result: verbs.ResDeaf,
+				Evidence: fmt.Sprintf("npc=%d: 6 talk attempts, menu never opened (hover or click deaf — P-6.2)", int(e.npcID))})
 			return false, true
 		}
 		me := d.PlayerUnit.Position
