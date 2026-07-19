@@ -219,6 +219,9 @@ func (e *errand) step(ctx *Ctx, who string) (shopOpen bool, dead bool) {
 			}
 		}
 		e.tries++
+		if e.tries == 3 {
+			snapPNG(ctx, "logs/talk_fail.png") // P-6.2: the third deaf talk photographs itself
+		}
 		if !confirmed {
 			// The same bearing that failed hover will fail it again — the torch
 			// owns this line of sight, not the town. Two hover misses walk the
@@ -362,6 +365,82 @@ type Restock struct {
 	frozenID   int
 	nextAt     time.Time // ghost-abort cooldown: a dead window stays dead for minutes,
 	// not seconds — eight identical aborts in eight minutes taught the churn (12:07)
+	probeHP  int // potion-cell discovery cursors (the shop layout SHIFTS with level —
+	probeMN  int // the level-5 cells died at level 9, measured 12:15)
+	frozenHP int
+	frozenMN int
+}
+
+// potCount: total bottles of one kind she owns, belt AND bag — the only honest
+// BUY check. A bottle that landed in the bag still landed; the belt-only read
+// misread bag-landings as ghosts (12:15).
+func potCount(ctx *Ctx, id int) int {
+	n := 0
+	d := ctx.GR.GetData()
+	for _, it := range d.Inventory.ByLocation(item.LocationInventory) {
+		if int(it.ID) == id {
+			n++
+		}
+	}
+	for _, bp := range d.Inventory.Belt.Items {
+		if int(bp.ID) == id {
+			n++
+		}
+	}
+	return n
+}
+
+// buyPotion — one potion purchase with the scroll machinery's discipline:
+// judged by the OWNED-count delta, the cell LEARNED per kind (ScopeGame —
+// the shop restocks per level), and a learned cell that freezes twice is
+// FORGOTTEN and re-probed rather than trusted into a ghost. Returns false
+// when probing exhausts every candidate this trip.
+func (r *Restock) buyPotion(ctx *Ctx, id int, memKey string, probeIdx, frozen *int) bool {
+	var candidates [][2]int
+	if id == modHPPotionID {
+		candidates = [][2]int{{hpCellX, hpCellY}, {612, 431}, {612, 384}, {664, 478}, {664, 525}, {612, 337}}
+	} else {
+		candidates = [][2]int{{manaCellX, manaCellY}, {612, 478}, {664, 525}, {664, 478}, {612, 431}, {664, 384}}
+	}
+	var cell [2]int
+	learned := ctx.Mem != nil && ctx.Mem.GetJSON(memKey, &cell) && cell != [2]int{0, 0}
+	if !learned {
+		if *probeIdx >= len(candidates) {
+			ctx.Led.Append(verbs.Outcome{Verb: "buy", Holder: r.Name(), Result: verbs.ResDeaf,
+				Evidence: fmt.Sprintf("potion %d: no candidate cell raised the owned count — trip abandoned", id)})
+			return false
+		}
+		cell = candidates[*probeIdx]
+	}
+	before := potCount(ctx, id)
+	ctx.M.UIClick(cell[0], cell[1])
+	time.Sleep(450 * time.Millisecond)
+	after := potCount(ctx, id)
+	switch {
+	case after > before:
+		*frozen = 0
+		if !learned && ctx.Mem != nil {
+			ctx.Mem.PutJSON(memKey, memory.ScopeGame,
+				memory.Provenance{Source: "measured", Evidence: fmt.Sprintf("probe: potion %d count %d→%d at (%d,%d)", id, before, after, cell[0], cell[1])}, cell)
+			ctx.Led.Append(verbs.Outcome{Verb: "buy", Holder: r.Name(), Result: verbs.ResDone,
+				Evidence: fmt.Sprintf("%s LEARNED at (%d,%d)", memKey, cell[0], cell[1])})
+		}
+	case !learned:
+		*probeIdx++ // wrong cell: whatever it bought, the fence sorts it out
+	default:
+		if *frozen++; *frozen >= 2 {
+			// The learned cell died — the shop restocked over it (level-up).
+			// Forget and re-probe next pass rather than trust it into a ghost.
+			if ctx.Mem != nil {
+				ctx.Mem.PutJSON(memKey, memory.ScopeGame,
+					memory.Provenance{Source: "proven-negative", Evidence: "cell froze twice — forgotten for reprobe"}, [2]int{0, 0})
+			}
+			ctx.Led.Append(verbs.Outcome{Verb: "buy", Holder: r.Name(), Result: verbs.ResDeaf,
+				Evidence: fmt.Sprintf("potion %d: learned cell froze twice — forgotten, reprobing", id)})
+			*probeIdx, *frozen = 0, 0
+		}
+	}
+	return true
 }
 
 // scrollWorks: the live belief that scroll restocking works here — retired when
@@ -483,31 +562,22 @@ func (r *Restock) Step(ctx *Ctx) Verdict {
 	// Shop open: ONE purchase per step (instant-buy cells). Potions first, then
 	// scrolls (P-4.5): blood before the escape hatch.
 	if buyMana > 0 || buyHP > 0 {
-		// THE BELT IS THE ONLY PROOF a potion buy landed: a full belt sends the
-		// bottle to the bag and plan() never converges — she sprayed Akara with
-		// mana orders until the guard tripped (the owner, 09:50). Two buys with
-		// no belt rise: stop buying bottles this visit.
-		if r.potBought > 0 && s.Me.BeltHP == r.lastBeltHP && s.Me.BeltMana == r.lastBeltMN {
-			if r.beltFrozen++; r.beltFrozen >= 2 {
-				ctx.Led.Append(verbs.Outcome{Verb: "buy", Holder: r.Name(), Result: verbs.ResDeaf,
-					Evidence: fmt.Sprintf("belt frozen at hp=%d mana=%d after %d buys — full belt or ghost window", s.Me.BeltHP, s.Me.BeltMana, r.potBought)})
-				closeShop(ctx)
-				r.e.reset()
-				r.resetCounters()
-				r.nextAt = time.Now().Add(4 * time.Minute) // a dead window stays dead (12:07's churn)
-				return Abandoned
-			}
-		} else {
-			r.beltFrozen = 0
+		// Potion buys carry the scroll machinery's discipline (12:15): probed,
+		// learned, judged by the OWNED-count delta — the shop layout shifts
+		// with level and the belt-only check misread bag-landings as ghosts.
+		id, memKey, pi, fz := modManaPotionID, "shop.akara.cell.manapotion", &r.probeMN, &r.frozenMN
+		if buyMana == 0 {
+			id, memKey, pi, fz = modHPPotionID, "shop.akara.cell.hppotion", &r.probeHP, &r.frozenHP
 		}
-		r.lastBeltHP, r.lastBeltMN = s.Me.BeltHP, s.Me.BeltMana
-		if buyMana > 0 {
-			ctx.M.UIClick(manaCellX, manaCellY)
-		} else {
-			ctx.M.UIClick(hpCellX, hpCellY)
+		if !r.buyPotion(ctx, id, memKey, pi, fz) {
+			closeShop(ctx)
+			r.e.reset()
+			r.resetCounters()
+			r.nextAt = time.Now().Add(4 * time.Minute) // a dead window stays dead (12:07's churn)
+			return Abandoned
 		}
 		r.potBought++
-		if r.potBought > s.Me.BeltSlots+2 { // runaway guard: buys that never land
+		if r.potBought > s.Me.BeltSlots+2+8 { // runaway guard, probe headroom included
 			closeShop(ctx)
 			r.e.reset()
 			r.resetCounters()
@@ -536,6 +606,7 @@ func (r *Restock) resetCounters() {
 	r.potBought, r.beltFrozen, r.scrBought = 0, 0, 0
 	r.lastBeltHP, r.lastBeltMN = 0, 0
 	r.frozenTP, r.frozenID = 0, 0
+	r.probeHP, r.probeMN, r.frozenHP, r.frozenMN = 0, 0, 0, 0
 }
 
 // buyScroll — P-4.5: one scroll purchase, judged by the TOME's quantity delta

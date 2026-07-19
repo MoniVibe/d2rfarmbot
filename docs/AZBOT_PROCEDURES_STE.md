@@ -265,10 +265,12 @@ precondition.
    floor of 8 — an empty TP tome un-writes P-2.3's destination, an empty ID
    tome starves P-4.2 (the owner, 2026-07-19: "she's out already"). A
    scroll BUY is judged by its TOME's quantity delta, never by gold — gold
-   cannot tell a scroll from junk. Each tome's cell is LEARNED: probe the
-   misc-tab candidates once, the delta names the true cell, and the fact
-   is kept forever; a wrong probe's junk goes to the fence like any other
-   merchandise. THE BAG IS NOT A CELLAR: bag potions beyond a reserve of
+   cannot tell a scroll from junk. POTION buys carry the same discipline
+   (measured 12:15: the shop restocks over its own layout as she levels —
+   the level-5 cells died at level 9): judged by the OWNED count, belt AND
+   bag; cells LEARNED per kind per game; a learned cell that freezes twice
+   is FORGOTTEN and re-probed, never trusted into a ghost. Wrong-probe
+   junk goes to the fence like any other merchandise. THE BAG IS NOT A CELLAR: bag potions beyond a reserve of
    4 per kind are merchandise (the junky's dozen strangled the landing
    room, 10:01) — the belt is the tank.
 6. REPAIR when worn below a quarter. Durability must rise per click.
