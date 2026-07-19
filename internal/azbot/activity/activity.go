@@ -416,8 +416,8 @@ func (b *Breakout) Step(ctx *Ctx) Verdict {
 					var key byte
 					if ctx.Cap != nil && ctx.Cap.Throw != nil {
 						key = ctx.Cap.Throw.Key
-					} else if ctx.Cap != nil && ctx.Cap.Melee != nil {
-						key = ctx.Cap.Melee.Key
+					} else if ctx.Cap != nil && ctx.Cap.Contact != nil {
+						key = ctx.Cap.Contact.Key
 					}
 					volleyAt(ctx, doorman.Pos, key, false) // walk-proof, sweep-free
 					b.lastStrikeAt = time.Now()
@@ -474,8 +474,8 @@ func (b *Breakout) Step(ctx *Ctx) Verdict {
 			var key byte
 			if ctx.Cap != nil && ctx.Cap.Throw != nil {
 				key = ctx.Cap.Throw.Key
-			} else if ctx.Cap != nil && ctx.Cap.Melee != nil {
-				key = ctx.Cap.Melee.Key
+			} else if ctx.Cap != nil && ctx.Cap.Contact != nil {
+				key = ctx.Cap.Contact.Key
 			}
 			volleyAt(ctx, blocker.Pos, key, false)
 			b.lastStrikeAt = time.Now()
@@ -665,8 +665,8 @@ func (f *Fight) Step(ctx *Ctx) Verdict {
 			manaBar = 15
 		}
 		var key byte
-		if !f.rangedDead && ctx.Cap != nil && ctx.Cap.RangedCast != nil && s.Me.MPPct >= manaBar {
-			key = ctx.Cap.RangedCast.Key
+		if !f.rangedDead && ctx.Cap != nil && ctx.Cap.Reach != nil && s.Me.MPPct >= manaBar {
+			key = ctx.Cap.Reach.Key
 		}
 		if contact <= 3 {
 			// In the clinch the javelin is still the better tool — ask for the swap —
@@ -739,8 +739,8 @@ func (f *Fight) Step(ctx *Ctx) Verdict {
 		// clear enough to return to the bow. The strike key is the OWNER-DECLARED
 		// melee skill when given (Jab — config beats inference on a scrambled mod).
 		var mk byte
-		if ctx.Cap != nil && ctx.Cap.Melee != nil {
-			mk = ctx.Cap.Melee.Key
+		if ctx.Cap != nil && ctx.Cap.Contact != nil {
+			mk = ctx.Cap.Contact.Key
 		}
 		// A dry bow set is no bow at all: while Arrows==0 the javelins ARE the build —
 		// chase and stab instead of kiting toward a weapon that whiffs at air.
@@ -797,8 +797,8 @@ func (f *Fight) Step(ctx *Ctx) Verdict {
 	var key byte
 	if canThrow {
 		key = ctx.Cap.Throw.Key
-	} else if ctx.Cap != nil && ctx.Cap.Melee != nil {
-		key = ctx.Cap.Melee.Key
+	} else if ctx.Cap != nil && ctx.Cap.Contact != nil {
+		key = ctx.Cap.Contact.Key
 	}
 	f.strike(ctx, f.target, f.targetPos, key)
 	return Running

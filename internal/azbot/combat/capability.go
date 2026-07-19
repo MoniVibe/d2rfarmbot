@@ -20,15 +20,17 @@ type Binding struct {
 	Skill skill.ID `json:"skill"`
 }
 
-// Capability is what the character can provably do right now.
+// Capability is what the character can provably do right now. Role fields
+// speak the Lexicon (P-7.5): CONTACT and REACH are roles seeded by priors,
+// not weapon names — the wardrobe defines the class, not the reverse.
 type Capability struct {
-	Known      map[skill.ID]int // skills present in the live Skills map (level; 0 = granted)
-	Proven     []Binding        // key presses that demonstrably flipped RightSkill
-	Melee      *Binding         // preferred melee strike (proven)
-	Throw      *Binding         // proven throw selection
-	RangedCast *Binding         // proven bow-skill selection (Magic/Fire/Cold Arrow...)
-	TownTP     *Binding         // proven town portal selection
-	Identify   *Binding         // proven identify selection
+	Known    map[skill.ID]int // skills present in the live Skills map (level; 0 = granted)
+	Proven   []Binding        // key presses that demonstrably flipped RightSkill
+	Contact  *Binding         // CONTACT TOOL seed: proven strike selection
+	Throw    *Binding         // proven throw selection (reach with an ammo gauge)
+	Reach    *Binding         // REACH TOOL seed: proven projected shot/cast selection
+	TownTP   *Binding         // proven town portal selection
+	Identify *Binding         // proven identify selection
 }
 
 // Calibrate presses each candidate key once and reads RightSkill back. Run at session
@@ -54,24 +56,25 @@ func Calibrate(log *slog.Logger, gr *game.MemoryReader, hid *game.HID, mem *memo
 			// grants some at level 0 — a points requirement wrongly disarmed Magic
 			// Arrow, measured 03:14). Fight's flinch audit is the guard against a
 			// scrambled table: a "skill" that never hurts anyone gets demoted live.
-			switch after {
-			case skill.Jab, skill.PowerStrike, skill.AttackSkill:
-				if cap.Melee == nil {
+			// P-7.2/P-7.3: the prior table seeds the role; no skill ID is named here.
+			switch Prior(after) {
+			case RoleContact:
+				if cap.Contact == nil {
 					v := b
-					cap.Melee = &v
+					cap.Contact = &v
 				}
-			case skill.MagicArrow, skill.FireArrow, skill.ColdArrow, skill.IceArrow, skill.GuidedArrow, skill.MultipleShot:
-				if cap.RangedCast == nil {
+			case RoleReach:
+				if cap.Reach == nil {
 					v := b
-					cap.RangedCast = &v
+					cap.Reach = &v
 				}
-			case skill.Throw:
+			case RoleThrow:
 				v := b
 				cap.Throw = &v
-			case skill.TomeOfTownPortal, skill.ScrollOfTownPortal:
+			case RoleTownTP:
 				v := b
 				cap.TownTP = &v
-			case skill.TomeOfIdentify, skill.ScrollOfIdentify:
+			case RoleIdentify:
 				v := b
 				cap.Identify = &v
 			}
