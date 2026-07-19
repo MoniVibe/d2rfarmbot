@@ -166,7 +166,9 @@ precondition.
 4. EQUIP fourth (requires LANDING ROOM). Open the panel by the IDENTIFY side
    door. Normalize the cursor with one plain click; put back what it grabs.
    Shift-click the candidate. Rotate the DOCKET. Respect level and stat
-   requirements before the click; the game's refusal is silent.
+   requirements before the click; the game's refusal is silent. A candidate
+   equips onto the ACTIVE hands: swap to its set before the click (a bow
+   candidate needs the bow set out, or the gesture benches the javelins).
 5. BUY fifth: potions to doctrine (one row mana, rest HP), from stash-backed
    gold (pocket + bank is purchasing power).
 6. REPAIR when worn below a quarter. Durability must rise per click.
@@ -199,6 +201,11 @@ precondition.
    and the volley fires point-blank — the funnel rewards the pierce,
    not the poke. Holding the CONTACT TOOL there, she swaps back to the
    REACH TOOL at once. A dry or dead REACH TOOL still yields (P-1.11).
+9. THE MARCH CARRIES THE REACH TOOL (the owner, 2026-07-19, at the
+   corner: "she's not pulling her bow out"): walking with no enemy
+   within 8, a REACH set that exists and is not dry is the set in hand.
+   The swap is rate-limited and verified by the next snapshot; contact
+   arriving mid-swap hands the moment back to P-1.
 
 ### P-6 TELEMETRY (controlled language for the log)
 

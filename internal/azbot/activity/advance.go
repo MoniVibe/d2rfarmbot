@@ -196,6 +196,7 @@ func (a *Advance) Step(ctx *Ctx) Verdict {
 	if !s.Valid {
 		return Running
 	}
+	CarryReach(ctx) // P-5.9: the march walks with the bow out
 	if a.lastArea == 0 {
 		a.lastArea = s.Me.Area
 	}

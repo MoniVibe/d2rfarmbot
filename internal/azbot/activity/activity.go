@@ -155,6 +155,32 @@ func absInt(v int) int {
 	return v
 }
 
+// carryReachAt rate-limits the march's swap-back (shared across holders: the
+// walk is one walk whoever holds it).
+var carryReachAt time.Time
+
+// CarryReach — P-5.9 THE MARCH CARRIES THE REACH TOOL (the owner, at the
+// corner: "she's not pulling her bow out"): walking with no enemy within 8,
+// a REACH set that exists and is not dry is the set in hand. One rate-limited
+// swap press; the next snapshot's WeaponKind is the verification (a deaf or
+// wrong swap self-corrects on the following call — perception, not hope).
+func CarryReach(ctx *Ctx) {
+	s := ctx.Snap
+	if s == nil || !s.Valid || s.Me.WeaponKind != "melee" || !s.Me.HasBow || s.Me.Arrows == 0 {
+		return
+	}
+	for _, e := range s.Enemies {
+		if chebyshev(s.Me.Pos, e.Pos) <= 8 {
+			return // contact is P-1's moment, not the march's
+		}
+	}
+	if time.Since(carryReachAt) < 2*time.Second {
+		return
+	}
+	ctx.M.KeyLane().Press(ctx.SwapKey)
+	carryReachAt = time.Now()
+}
+
 func maxInt(a, b int) int {
 	if a > b {
 		return a
@@ -1175,6 +1201,7 @@ func (x *Explore) Step(ctx *Ctx) Verdict {
 	if !s.Valid {
 		return Running
 	}
+	CarryReach(ctx) // P-5.9: the wander walks with the bow out too
 	if !x.set {
 		x.heading, x.set = 5, true // southwest-ish: away from the town gate into the moor
 	}

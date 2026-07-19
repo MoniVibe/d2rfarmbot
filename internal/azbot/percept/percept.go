@@ -50,6 +50,10 @@ type PlayerState struct {
 	// MinDurPct: the worst equipped item's durability percent (100 when nothing
 	// tracks durability) — what the Repair service bids on.
 	MinDurPct int
+	// HasBow: a bow rides SOME set (active or secondary) — the march's swap-back
+	// (P-5.9) and the equip oracle's bow judgment key off this, never off which
+	// set happens to be in her hands this tick.
+	HasBow bool
 	// WeaponKind: what the ACTIVE hands hold — "bow", "melee", or "none". The W swap
 	// flips this next capture; combat reads it as the closed loop on weapon swapping.
 	WeaponKind string
@@ -116,6 +120,9 @@ type InvItem struct {
 	GX   int
 	GY   int
 	Qual int
+	// IsBow: the candidate equips onto the bow set — Equip must have the bow set
+	// ACTIVE before the shift-click (P-4.4; the click lands on the active hands).
+	IsBow bool
 }
 
 // Snapshot is one immutable perception frame. Valid=false frames (load screens,
@@ -266,10 +273,11 @@ func (p *Perceptor) Capture() *Snapshot {
 		if !active && !secondary {
 			continue
 		}
-		if active {
-			if n := string(eq.Name); contains(n, "Bow") || contains(n, "Crossbow") {
-				bowQual = int(eq.Quality)
-			}
+		// The bow set is the bow set wherever it rides: bowQual reads the equipped
+		// bow on EITHER set (P-9.3 — the owner's unique sat undocketed for a night
+		// because the judgment only ran while the bow was in her active hands).
+		if n := string(eq.Name); contains(n, "Bow") || contains(n, "Crossbow") {
+			bowQual = int(eq.Quality)
 		}
 		n := string(eq.Name)
 		isQuiver := contains(n, "Quiver") || contains(n, "Arrow") || contains(n, "Bolt")
@@ -312,6 +320,7 @@ func (p *Perceptor) Capture() *Snapshot {
 	default:
 		s.Me.Arrows = -1 // no measurable quiver: unknown, assume stocked
 	}
+	s.Me.HasBow = bowActive || bowSecondary
 	// Belt potions count by NUMERIC ID first — the mod scrambles the name table
 	// (its HP potion reads "Herb" id 602, its mana potion id 607 = the old INVALID607
 	// mystery; both proven by vendor purchase deltas 2026-07-19). Name matching stays
@@ -363,7 +372,11 @@ func (p *Perceptor) Capture() *Snapshot {
 		}
 		switch it.Desc().Type {
 		case "bow":
-			return s.Me.WeaponKind == "bow" && int(it.Quality) > bowQual
+			// P-9.3: judged against the bow set WHEREVER it rides. The Equip
+			// service swaps to the bow set before the click (P-4.4) — the
+			// shift-click lands on the active hands, and benching the javelin
+			// set into the bag was the old reason this gate existed.
+			return s.Me.HasBow && int(it.Quality) > bowQual
 		case "tors":
 			q, worn := slotQual[item.LocTorso]
 			return !worn || int(it.Quality) > q
@@ -388,7 +401,7 @@ func (p *Perceptor) Capture() *Snapshot {
 			occupied++ // unknown footprint: count one cell rather than none
 		}
 		if isUpgrade(it) {
-			s.Upgrades = append(s.Upgrades, InvItem{ID: id, GX: it.Position.X, GY: it.Position.Y, Qual: int(it.Quality)})
+			s.Upgrades = append(s.Upgrades, InvItem{ID: id, GX: it.Position.X, GY: it.Position.Y, Qual: int(it.Quality), IsBow: it.Desc().Type == "bow"})
 			continue // an upgrade is never merchandise
 		}
 		switch {

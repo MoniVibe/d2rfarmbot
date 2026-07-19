@@ -784,6 +784,14 @@ func (eq *Equip) Step(ctx *Ctx) Verdict {
 	// ROTATE the docket — hammering Upgrades[0] let one stubborn piece starve the
 	// wearable ones behind it.
 	it := s.Upgrades[(eq.fails-1)%len(s.Upgrades)]
+	// P-4.4: a candidate equips onto the ACTIVE hands — a bow needs the bow set
+	// out before the click, or the gesture benches the javelins instead of the
+	// white bow. The count audit still judges; a deaf swap burns one rotation.
+	if it.IsBow && s.Me.WeaponKind != "bow" {
+		ctx.M.KeyLane().Press(ctx.SwapKey)
+		eq.clickAt = time.Now()
+		return Running
+	}
 	cx, cy := invCell(it.GX, it.GY)
 	if eq.fails == 1 {
 		snapPNG(ctx, "logs/equip_open.png") // is the panel even up? the photo answers
