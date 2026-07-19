@@ -86,8 +86,14 @@ IDENTIFY side door. Do not add a fifth attempt.
 town, dead, or the owner holds the controls. A field swap freezes her inside
 whatever is chasing her. (Run 41: eighty-four monsters, seventeen seconds.)
 
-**WARNING 7 — THE FOCUS LAW.** The world stops when D2R loses focus. A
-paused world takes no input and gives no evidence. Stand by; do not act.
+**WARNING 7 — THE FOCUS LAW.** An unfocused world is UNKNOWN. It may
+freeze (measured: zero-gain strides, 2026-07-19 before dawn), or it may keep
+running (measured: 131→55 blood across an 11-minute "pause", 2026-07-19
+07:26–07:38 — the sentinel's drink landed; the executive stood by while
+she was eaten). Do not aim input at an unfocused window. DO request the
+window back — the foreground trick, rate-limited, only while the bot
+holds the controls. Standing by without a refocus request is paralysis
+under fire, the same death class as the field swap (WARNING 6).
 
 **WARNING 8 — SEED NAMESPACE.** The world re-rolls per game. Geometry facts
 from one seed must never steer another.

@@ -1409,7 +1409,7 @@ func main() {
 			logger.Info("outcome", "verb", o.Verb, "result", o.Result.String(), "ev", o.Evidence)
 		}
 		cap := combat.Calibrate(logger, gr, hid, mem, []string{"f1", "f2", "f3", "f4"})
-		if cap.Melee == nil {
+		if cap.Contact == nil {
 			logger.Warn("fighttest: no proven melee binding — plain attack only")
 		}
 		// Walk the road out and cross (the corridor + gate strides proven by hand).
@@ -1492,8 +1492,8 @@ func main() {
 				continue
 			}
 			var key byte
-			if cap.Melee != nil {
-				key = cap.Melee.Key
+			if cap.Contact != nil {
+				key = cap.Contact.Key
 			}
 			o := verbs.HoverStrike{Target: best.ID, TargetPos: best.Pos, SelectKey: key}.Do(m, gr, p, led, "fighttest")
 			strikes++
@@ -1590,20 +1590,20 @@ func main() {
 	calibrate := func() combat.Capability {
 		c := combat.Calibrate(logger, gr, hid, mem, []string{"f1", "f2", "f3", "f4", "f5", "f6", "f7", "f8"})
 		if *meleeKeyF != "" {
-			c.Melee = &combat.Binding{Key: hid.GetASCIICode(*meleeKeyF)}
+			c.Contact = &combat.Binding{Key: hid.GetASCIICode(*meleeKeyF)}
 			logger.Info("capability: owner-declared melee key", "key", *meleeKeyF)
 		}
 		if *rangedKeyF != "" {
-			c.RangedCast = &combat.Binding{Key: hid.GetASCIICode(*rangedKeyF)}
+			c.Reach = &combat.Binding{Key: hid.GetASCIICode(*rangedKeyF)}
 			logger.Info("capability: owner-declared ranged key", "key", *rangedKeyF)
 		}
 		// UNARM THE TOME: probing leaves the LAST flipped skill selected — F3 is the
 		// Identify tome, so she stood around visibly armed with Identify (the owner
 		// kept catching it). End calibration on a combat selection.
-		if c.RangedCast != nil {
-			hid.PressKey(c.RangedCast.Key)
-		} else if c.Melee != nil {
-			hid.PressKey(c.Melee.Key)
+		if c.Reach != nil {
+			hid.PressKey(c.Reach.Key)
+		} else if c.Contact != nil {
+			hid.PressKey(c.Contact.Key)
 		}
 		return c
 	}
@@ -1690,15 +1690,22 @@ func main() {
 		}
 		return "-"
 	}
+	lastRefocus := time.Time{}
 	for time.Now().Before(deadline) {
-		// OFFLINE D2R PAUSES WHEN UNFOCUSED (measured 2026-07-19: every stride gained 0
-		// while the owner read the chat window — the world was frozen, not walled). A
-		// paused world takes no input and yields no evidence: idle politely, and keep
-		// the watchdog's clocks from counting a pause as a pathology.
+		// WARNING 7: an unfocused world is UNKNOWN — it froze before dawn (zero-gain
+		// strides) and it RAN at 07:26 (131→55 blood across an 11-minute "pause"
+		// while the executive stood by). Never aim input at an unfocused window;
+		// instead REQUEST THE WINDOW BACK, rate-limited, only while the bot holds
+		// the controls (the owner's F10 and their alt-tab are respected).
 		if !m.GameFocused() {
 			if wasFocused {
-				logger.Info("executive: game unfocused — world paused, standing by")
+				logger.Info("executive: game unfocused — world state UNKNOWN, requesting focus back")
 				wasFocused = false
+			}
+			if m.Engage.Engaged() && time.Since(lastRefocus) > 10*time.Second {
+				game.ForceForegroundHWND(gr.HWND)
+				lastRefocus = time.Now()
+				logger.Info("executive: refocus requested", "verdict", m.GameFocused())
 			}
 			time.Sleep(400 * time.Millisecond)
 			continue
