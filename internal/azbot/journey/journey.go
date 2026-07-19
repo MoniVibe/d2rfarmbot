@@ -127,7 +127,18 @@ func (j *Journey) Step(m *motor.Motor, p *percept.Perceptor, led *verbs.Ledger) 
 		return Status{State: Moving, Note: fmt.Sprintf("escape %d to (%d,%d)", j.escapes, esc.X, esc.Y)}
 	}
 
-	o := verbs.Stride{To: target}.Do(m, j.gr, p, led, j.holder)
+	// HONOR THE NAVIGATOR'S PULSE: it computes 100-300ms holds by clearance (short taps
+	// in tight rooms, longer in the open). The old default-1.6s stride committed a
+	// straight line far past the carrot — cutting corners into walls, dragging along
+	// fences, replanning — the "walks around when trying to reach places" disease.
+	// MinGain drops to 1: a 150ms pulse covers ~1-2 tiles; demanding 4 branded every
+	// honest tap ResBlocked. The navigator's own along-path stall detection judges
+	// real blockage now.
+	hold := time.Duration(step.HoldMs) * time.Millisecond
+	if hold <= 0 {
+		hold = 600 * time.Millisecond
+	}
+	o := verbs.Stride{To: target, Hold: hold, MinGain: 1}.Do(m, j.gr, p, led, j.holder)
 	if o.Result == verbs.ResBlocked {
 		// One blocked stride is information, not a crisis: the navigator's own stall
 		// detection plus our ladder decide; we just avoid replanning storms here.

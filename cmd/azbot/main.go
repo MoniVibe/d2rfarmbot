@@ -1548,12 +1548,13 @@ func main() {
 	if *goal == "campaign" || *goal == "rampage" {
 		legs = activity.Act1Itinerary()
 	}
-	for _, a := range []activity.Activity{&activity.Breakout{}, &activity.Flee{}, activity.NewDodge(), &activity.Respawn{}, activity.NewRelog(), activity.NewReclaim(), activity.NewFight(), activity.NewLoot(), activity.NewFence(), activity.NewRestock(), activity.NewRepair(), activity.NewAdvance(legs), &activity.Return{}, &activity.Travel{Road: road}, &activity.Explore{}} {
+	for _, a := range []activity.Activity{&activity.Breakout{}, &activity.Flee{}, activity.NewDodge(), &activity.Respawn{}, activity.NewRelog(), activity.NewReclaim(), activity.NewFight(), activity.NewLoot(), activity.NewFence(), activity.NewRestock(), activity.NewRepair(), activity.NewAdvance(legs), activity.NewWithdraw(), &activity.Return{}, &activity.Travel{Road: road}, &activity.Explore{}} {
 		acts[a.Name()] = a
 	}
 
 	var grid *game.Grid
 	gridArea := -1
+	var gridAt time.Time
 	// THE CARTOGRAPHER: every area crossing she ever makes — by march, by wander, by
 	// portal — records BOTH sides of the door as seed facts. Advance consumes them as
 	// layer-1 border knowledge; the world's doors accumulate from use.
@@ -1637,11 +1638,21 @@ func main() {
 			}
 		}
 		recordCrossing(s)
-		// Grid follows the area (the re-align, owned in one place).
+		// Grid follows the area (the re-align, owned in one place) — and REGROWS on a
+		// clock in the field: rooms stream in as she walks, and a grid built at the
+		// border brands every unloaded room a wall. Loot/Reclaim/Fight journeys were
+		// planning against that stale truth (Advance was the only one regridding);
+		// fresh journeys now always start on current rooms.
 		if int(s.Me.Area) != gridArea {
 			if g, _, err := gr.BuildLiveGridRooms(); err == nil {
 				grid, gridArea = g, int(s.Me.Area)
+				gridAt = time.Now()
 				logger.Info("executive: grid re-aligned", "area", gridArea)
+			}
+		} else if !s.Me.InTown && time.Since(gridAt) > 6*time.Second {
+			if g, _, err := gr.BuildLiveGridRooms(); err == nil {
+				grid = g
+				gridAt = time.Now()
 			}
 		}
 		// DEATH REPORT for the owner ("i didnt even know how it died"): the last

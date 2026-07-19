@@ -6,10 +6,22 @@ import (
 
 	"github.com/hectorgimenez/d2go/pkg/data"
 	"github.com/hectorgimenez/d2go/pkg/data/mode"
+	"github.com/hectorgimenez/d2go/pkg/data/skill"
 	"github.com/hectorgimenez/koolo/internal/azbot/motor"
 	"github.com/hectorgimenez/koolo/internal/azbot/percept"
 	"github.com/hectorgimenez/koolo/internal/game"
 )
+
+// tomeSkill: right-clicking one of these at a monster is a book, not a weapon —
+// the right-skill is PER WEAPON SET on this build, so a stale Identify can sit
+// armed on the set we just swapped to no matter what key we pressed moments ago.
+func tomeSkill(id skill.ID) bool {
+	switch id {
+	case skill.TomeOfIdentify, skill.ScrollOfIdentify, skill.TomeOfTownPortal, skill.ScrollOfTownPortal:
+		return true
+	}
+	return false
+}
 
 // HoverStrike is THE aimed attack: select the skill (readback-verified by the caller's
 // Capability), sweep the cursor until the GAME confirms the hover is on the target's
@@ -86,12 +98,27 @@ func (h HoverStrike) Do(m *motor.Motor, gr *game.MemoryReader, p *percept.Percep
 	}
 
 	// Strike: skill right-click (selection already proven by Capability) or plain attack.
+	// THE READBACK GUARD (the owner: "it uses identify instead of jab in close combat"):
+	// pressing the key is a hope; the game's RightSkill is the truth. A tome armed on
+	// this weapon set gets one corrective re-press; still a tome → plain attack instead.
+	// A right-click never fires without knowing what it will cast.
 	if h.SelectKey != 0 {
 		if !h.SkipSelect {
 			m.PressKey(h.SelectKey)
 			time.Sleep(50 * time.Millisecond)
 		}
-		m.ClickRight(px, py)
+		rs := gr.GetData().PlayerUnit.RightSkill
+		if tomeSkill(rs) {
+			m.PressKey(h.SelectKey)
+			time.Sleep(80 * time.Millisecond)
+			rs = gr.GetData().PlayerUnit.RightSkill
+		}
+		if tomeSkill(rs) {
+			o.Evidence = fmt.Sprintf("tome armed (skill=%d) — plain attack instead", int(rs))
+			m.ClickLeft(px, py)
+		} else {
+			m.ClickRight(px, py)
+		}
 	} else {
 		m.ClickLeft(px, py)
 	}

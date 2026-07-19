@@ -35,10 +35,11 @@ func realKeyTapped(vk int) bool {
 }
 
 type Config struct {
-	KillVK    int    // virtual key of the kill-switch (default VK_PAUSE 0x13)
-	BeltKeys  []byte // belt column keys, left to right
-	DrinkAtHP int    // drink at or below this HP%
-	DrinkCD   time.Duration
+	KillVK      int    // virtual key of the kill-switch (default VK_PAUSE 0x13)
+	BeltKeys    []byte // belt column keys, left to right
+	DrinkAtHP   int    // drink at or below this HP%
+	DrinkAtMana int    // drink a blue at or below this mana% (0 = default 25)
+	DrinkCD     time.Duration
 }
 
 type Sentinel struct {
@@ -56,6 +57,9 @@ func New(log *slog.Logger, p *percept.Perceptor, m *motor.Motor, mem *memory.Sto
 	}
 	if cfg.DrinkCD == 0 {
 		cfg.DrinkCD = 1500 * time.Millisecond
+	}
+	if cfg.DrinkAtMana == 0 {
+		cfg.DrinkAtMana = 25
 	}
 	return &Sentinel{log: log, p: p, m: m, mem: mem, cfg: cfg, Dead: make(chan struct{}, 1)}
 }
@@ -112,7 +116,7 @@ func (s *Sentinel) Run(stop <-chan struct{}) {
 			}
 			lastFocus = focused
 		}
-		md, hp, _, ar, valid := s.p.SurvivalRead()
+		md, hp, mp, ar, valid := s.p.SurvivalRead()
 		s.mem.PutJSON("heartbeat", memory.ScopeTick,
 			memory.Provenance{Source: "measured"},
 			map[string]any{"t": time.Now().UnixMilli(), "valid": valid, "hp": hp, "area": int(ar), "engaged": s.m.Engage.Engaged(), "shift": shiftDown})
@@ -133,19 +137,29 @@ func (s *Sentinel) Run(stop <-chan struct{}) {
 		}
 		wasDead = dead
 
-		// Belt drinking: key lane only; rotates columns so an emptied slot doesn't
-		// starve the reflex. Gated on the self-model KNOWING it has potions — pressing
-		// keys into an empty belt was the 25s-bleed death's accomplice; when HealPots==0
-		// the Executive's EscapeTP handles survival instead.
+		// Belt drinking: key lane only, COLUMN-AWARE (the old blind rotation gulped
+		// mana while bleeding and never found the blue when the pool was dry). The
+		// snapshot names which columns hold red and which hold blue; the reflex presses
+		// exactly the right one. Gated on the self-model KNOWING it has potions —
+		// pressing keys into an empty belt was the 25s-bleed death's accomplice.
 		last := s.p.Last()
-		hasPots := last != nil && last.Me.HealPots > 0
-		if !dead && hp > 0 && hp <= s.cfg.DrinkAtHP && hasPots && time.Since(lastDrink) > s.cfg.DrinkCD &&
+		if !dead && hp > 0 && last != nil && time.Since(lastDrink) > s.cfg.DrinkCD &&
 			len(s.cfg.BeltKeys) > 0 && s.m.Engage.Engaged() {
-			key := s.cfg.BeltKeys[beltIdx%len(s.cfg.BeltKeys)]
-			beltIdx++
-			if s.m.KeyLane().Press(key) {
-				lastDrink = time.Now()
-				s.log.Info("sentinel: drink", "hp", hp, "col", beltIdx%len(s.cfg.BeltKeys))
+			var cols []int
+			label := ""
+			if hp <= s.cfg.DrinkAtHP && len(last.Me.HPCols) > 0 {
+				cols, label = last.Me.HPCols, "hp"
+			} else if mp <= s.cfg.DrinkAtMana && len(last.Me.ManaCols) > 0 {
+				// Blood before blue: mana drinks only when HP needs nothing this tick.
+				cols, label = last.Me.ManaCols, "mana"
+			}
+			if len(cols) > 0 {
+				col := cols[beltIdx%len(cols)]
+				beltIdx++
+				if col < len(s.cfg.BeltKeys) && s.m.KeyLane().Press(s.cfg.BeltKeys[col]) {
+					lastDrink = time.Now()
+					s.log.Info("sentinel: drink", "what", label, "hp", hp, "mp", mp, "col", col)
+				}
 			}
 		}
 	}

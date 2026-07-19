@@ -123,13 +123,22 @@ func (f *Flee) Demand(s *percept.Snapshot) *arbiter.Demand {
 	if !s.Valid || s.Me.InTown || s.Me.HPPct <= 0 {
 		return nil
 	}
+	// The trigger ALIGNS with Fight's stand-down floor (35, or 50 dry): below it Fight
+	// refuses to bid, and the old narrow Flee (HP<32, contact≤14) left a dead band
+	// where NOTHING bid — she stood mid-moor eating archer fire (the owner: "it stands
+	// idle despite monsters being nearby"). If she's too hurt to fight and teeth are
+	// within 25 tiles, she leaves. Range counts: archers at 20 are pressure too.
+	floor := 35
+	if s.Me.HealPots == 0 {
+		floor = 50
+	}
 	near := 0
 	for _, e := range s.Enemies {
-		if chebyshev(s.Me.Pos, e.Pos) <= 14 {
+		if chebyshev(s.Me.Pos, e.Pos) <= 25 {
 			near++
 		}
 	}
-	if s.Me.HPPct < 32 && near > 0 {
+	if s.Me.HPPct < floor && near > 0 {
 		return &arbiter.Demand{Who: f.Name(), Class: arbiter.ClassSurvive,
 			Urgency: 1.0 - float64(s.Me.HPPct)/100,
 			Commit:  arbiter.Commitment{MinHold: 2 * time.Second}}
@@ -142,7 +151,13 @@ func (f *Flee) Step(ctx *Ctx) Verdict {
 	if !s.Valid {
 		return Running
 	}
-	if s.Me.HPPct > 45 {
+	// Done only above the SAME floor that triggers the bid (plus margin) — an exit bar
+	// below the entry bar re-bids the moment it releases: the thrash generator.
+	clear := 45
+	if s.Me.HealPots == 0 {
+		clear = 55
+	}
+	if s.Me.HPPct > clear {
 		return Done
 	}
 	cx, cy, n := 0, 0, 0
@@ -471,6 +486,12 @@ func (f *Fight) Step(ctx *Ctx) Verdict {
 	// is getting far enough to swap back to the bow and shoot at range). ----
 	switch s.Me.WeaponKind {
 	case "bow":
+		if s.Me.Arrows == 0 {
+			// The quiver ran dry and vanished: every "shot" from here is a whiff at
+			// air. The javelin set is a real weapon — swap and fight with the truth.
+			f.trySwap(ctx)
+			return Running
+		}
 		if contact <= 4 {
 			// Something reached her: swap to the javelin set and stab. The swap is
 			// closed-loop — WeaponKind flips on the next capture, or it didn't happen.
@@ -494,10 +515,16 @@ func (f *Fight) Step(ctx *Ctx) Verdict {
 			return Running
 		}
 		// SHOOT. Basic arrow (plain attack, zero mana) is the workhorse; the bow skill
-		// only while the pool is comfortable — never spammed dry, and never after the
-		// evidence audit demoted it.
+		// whenever the pool can afford a cast — never spammed bone-dry, and never after
+		// the evidence audit demoted it. (The old 50% bar left a level-5 pool "saving"
+		// mana that nothing else would ever spend — the owner: "it doesn't use mana
+		// often". With blues in the belt the bar drops further: the Sentinel refills.)
+		manaBar := 25
+		if s.Me.ManaPots > 0 {
+			manaBar = 15
+		}
 		var key byte
-		if !f.rangedDead && ctx.Cap != nil && ctx.Cap.RangedCast != nil && s.Me.MPPct >= 50 {
+		if !f.rangedDead && ctx.Cap != nil && ctx.Cap.RangedCast != nil && s.Me.MPPct >= manaBar {
 			key = ctx.Cap.RangedCast.Key
 		}
 		f.strike(ctx, f.target, f.targetPos, key)
@@ -517,14 +544,25 @@ func (f *Fight) Step(ctx *Ctx) Verdict {
 		if ctx.Cap != nil && ctx.Cap.Melee != nil {
 			mk = ctx.Cap.Melee.Key
 		}
+		// A dry bow set is no bow at all: while Arrows==0 the javelins ARE the build —
+		// chase and stab instead of kiting toward a weapon that whiffs at air.
+		dryBow := s.Me.Arrows == 0
 		if contact > 7 {
-			f.trySwap(ctx) // clear — back to the bow
+			if !dryBow {
+				f.trySwap(ctx) // clear — back to the bow
+				return Running
+			}
+			verbs.Stride{To: f.targetPos, Hold: 900 * time.Millisecond}.Do(ctx.M, ctx.GR, ctx.P, ctx.Led, f.Name())
 			return Running
 		}
 		if d > 4 {
 			// The chosen target is far but something else is in contact — stab THAT.
 			if contact <= 4 {
 				f.strike(ctx, f.nearestID(s), contactPos, mk)
+				return Running
+			}
+			if dryBow { // melee is all she has: close the gap
+				verbs.Stride{To: f.targetPos, Hold: 700 * time.Millisecond}.Do(ctx.M, ctx.GR, ctx.P, ctx.Led, f.Name())
 				return Running
 			}
 			// Nothing in reach: step back rather than chase — range is the win condition.
@@ -598,6 +636,9 @@ func (f *Fight) trySwap(ctx *Ctx) {
 	}
 	ctx.M.KeyLane().Press(ctx.SwapKey)
 	f.swapAt = time.Now()
+	// The right-skill is PER WEAPON SET: a key proven seconds ago on the old set
+	// proves nothing about the new one — SkipSelect must never span a swap.
+	f.lastKey = 0
 }
 
 func (f *Fight) nearestID(s *percept.Snapshot) data.UnitID {
@@ -636,7 +677,8 @@ func NewLoot() *Loot { return &Loot{failures: map[data.UnitID]int{}, ban: map[da
 func (l *Loot) Name() string { return "loot" }
 
 // wanted scores a ground item for THIS character's needs (the self-model speaking):
-// weapons dominate while weaponless; potions and gold always matter a little.
+// weapons dominate while weaponless; a bowzon running dry hungers for arrows;
+// potions and gold always matter a little.
 func (l *Loot) wanted(s *percept.Snapshot, it percept.ItemRef) float64 {
 	n := it.Name
 	switch {
@@ -644,6 +686,12 @@ func (l *Loot) wanted(s *percept.Snapshot, it percept.ItemRef) float64 {
 		contains(n, "Club") || contains(n, "Javelin") || contains(n, "Spear") || contains(n, "Wand") ||
 		contains(n, "Mace") || contains(n, "Scepter")):
 		return 0.95
+	case s.Me.Arrows >= 0 && s.Me.Arrows < 80 && (contains(n, "Arrow") || contains(n, "Quiver")):
+		// Ammo is the bow build's blood: hungrier the emptier the quiver runs.
+		if s.Me.Arrows < 20 {
+			return 0.9
+		}
+		return 0.6
 	case contains(n, "Potion") || contains(n, "Herb"):
 		return 0.55
 	case n == "Gold":
@@ -776,7 +824,13 @@ var bearings = []data.Position{{X: 35, Y: 0}, {X: 25, Y: 25}, {X: 0, Y: 35}, {X:
 func (x *Explore) Name() string { return "explore" }
 
 func (x *Explore) Demand(s *percept.Snapshot) *arbiter.Demand {
-	if !s.Valid || s.Me.InTown || s.Me.HPPct < 50 {
+	if !s.Valid || s.Me.InTown {
+		return nil
+	}
+	// HP never regenerates: with potions the 50% bar waits for a drink, but with a dry
+	// belt AND a dead tome (Withdraw cooling) waiting is FOREVER — keep hunting
+	// carefully above 25% rather than standing in a field that will never heal her.
+	if s.Me.HPPct < 50 && !(s.Me.HealPots == 0 && s.Me.HPPct >= 25) {
 		return nil
 	}
 	return &arbiter.Demand{Who: x.Name(), Class: arbiter.ClassExplore, Urgency: 0.1,

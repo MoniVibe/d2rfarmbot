@@ -60,8 +60,12 @@ func (s Stride) Do(m *motor.Motor, gr *game.MemoryReader, p *percept.Perceptor, 
 	// WATCHED HOLD (the owner: "why is it sluggish to react?" — the old blind
 	// time.Sleep(hold) made every stride up to 1.6s of total reaction blindness while
 	// monsters outran her). The hold now re-reads the world every 120ms and bails on
-	// death, real damage, or early arrival; the executive gets its reflexes back.
+	// death, real damage, incoming fire, or early arrival.
 	abort := ""
+	missDist := map[data.UnitID]int{} // per-missile distance last read — the closing detector
+	for _, ms := range start.Missiles {
+		missDist[ms.ID] = chebyshev(start.Me.Pos, ms.Pos)
+	}
 	for time.Since(t0) < hold {
 		time.Sleep(120 * time.Millisecond)
 		cur := p.Capture()
@@ -75,6 +79,27 @@ func (s Stride) Do(m *motor.Motor, gr *game.MemoryReader, p *percept.Perceptor, 
 		if start.Me.HPPct-cur.Me.HPPct >= 10 {
 			abort = " ABORT:damage" // reflexes over locomotion — hand the cycle back
 			break
+		}
+		// INCOMING FIRE mid-stride: a missile that closed ≥2 tiles in one 120ms read
+		// (~16+ tiles/s inbound) and is inside 20 tiles will land before this hold ends —
+		// the arrow used to win because Dodge could not bid until the stride was over.
+		// Yield now; the executive's next cycle hands the reflex the actuator. Short
+		// pulses (≤400ms — Dodge's own sidesteps, the navigator's tight-space taps)
+		// are exempt: they end quickly anyway, and a sidestep must not abort on the
+		// very arrow it is escaping.
+		if hold > 400*time.Millisecond {
+			next := map[data.UnitID]int{}
+			for _, ms := range cur.Missiles {
+				d := chebyshev(cur.Me.Pos, ms.Pos)
+				next[ms.ID] = d
+				if prev, seen := missDist[ms.ID]; seen && prev-d >= 2 && d <= 20 {
+					abort = " ABORT:missile"
+				}
+			}
+			missDist = next
+			if abort != "" {
+				break
+			}
 		}
 		if chebyshev(cur.Me.Pos, s.To) <= 2 {
 			abort = " arrived-early"
@@ -97,7 +122,7 @@ func (s Stride) Do(m *motor.Motor, gr *game.MemoryReader, p *percept.Perceptor, 
 	switch {
 	case !end.Valid:
 		o.Result = ResTimeout
-	case abort == " ABORT:damage" || abort == " ABORT:died":
+	case abort == " ABORT:damage" || abort == " ABORT:died" || abort == " ABORT:missile":
 		o.Result = ResDone // yielded to reflexes — NOT a wall; no slide retries wanted
 	case gain >= minGain:
 		o.Result = ResDone

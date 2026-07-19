@@ -37,6 +37,11 @@ type PlayerState struct {
 	HealPots int
 	// ManaPots: mana potions in the belt (mod id 607) — the bow skill's fuel gauge.
 	ManaPots int
+	// HPCols/ManaCols: WHICH bottom-row belt columns hold each potion type. The belt
+	// keys drink by column — a drink reflex that presses columns blindly gulps mana
+	// while bleeding and never finds the blue when the pool is dry.
+	HPCols   []int
+	ManaCols []int
 	// Belt self-model totals (whole belt, not just the drinkable bottom row) — what
 	// the Restock service bids on. BeltSlots = rows*4 from the equipped belt's name.
 	BeltSlots int
@@ -48,6 +53,10 @@ type PlayerState struct {
 	// WeaponKind: what the ACTIVE hands hold — "bow", "melee", or "none". The W swap
 	// flips this next capture; combat reads it as the closed loop on weapon swapping.
 	WeaponKind string
+	// Arrows: the equipped quiver's ammo count. -1 = quiver present but quantity
+	// unreadable (assume fine); 0 with a bow = the quiver ran dry and VANISHED (D2R
+	// removes it) — every basic attack is a whiff and nobody used to notice.
+	Arrows int
 	// Corpse: her own body, holding the gear and gold a death took. The Reclaim
 	// activity's whole world.
 	CorpseFound bool
@@ -207,19 +216,61 @@ func (p *Perceptor) Capture() *Snapshot {
 	for _, it := range d.Inventory.ByLocation(item.LocationGround) {
 		s.Items = append(s.Items, ItemRef{ID: it.UnitID, Pos: it.Position, Name: string(it.Name), Quality: int(it.Quality)})
 	}
+	// Weapon self-model across BOTH sets: the active hands (LocLeftArm/RightArm) name
+	// WeaponKind; the secondary slots are readable too, so the bow set's ammo is known
+	// even while she holds javelins — the swap-back decision needs that truth.
 	s.Me.WeaponKind = "none"
+	bowActive, bowSecondary := false, false
+	quivActive, quivSecondary := -2, -2 // -2 = no quiver seen on that set
 	for _, eq := range d.Inventory.ByLocation(item.LocationEquipped) {
-		if eq.Location.BodyLocation != item.LocLeftArm && eq.Location.BodyLocation != item.LocRightArm {
+		bl := eq.Location.BodyLocation
+		active := bl == item.LocLeftArm || bl == item.LocRightArm
+		secondary := bl == item.LocLeftArmSecondary || bl == item.LocRightArmSecondary
+		if !active && !secondary {
+			continue
+		}
+		n := string(eq.Name)
+		isQuiver := contains(n, "Quiver") || contains(n, "Arrow") || contains(n, "Bolt")
+		if isQuiver {
+			qty := -1 // present but quantity unreadable: assume stocked
+			if q, ok := eq.FindStat(stat.Quantity, 0); ok {
+				qty = q.Value
+			}
+			if active {
+				quivActive = qty
+			} else {
+				quivSecondary = qty
+			}
+		}
+		if !active {
+			if contains(n, "Bow") || contains(n, "Crossbow") {
+				bowSecondary = true
+			}
 			continue
 		}
 		s.Me.Armed = true
-		n := string(eq.Name)
 		if contains(n, "Bow") || contains(n, "Crossbow") {
 			s.Me.WeaponKind = "bow"
-		} else if s.Me.WeaponKind != "bow" && !contains(n, "Quiver") && !contains(n, "Arrow") &&
-			!contains(n, "Bolt") && !contains(n, "Shield") && !contains(n, "Buckler") {
+			bowActive = true
+		} else if s.Me.WeaponKind != "bow" && !isQuiver && !contains(n, "Shield") && !contains(n, "Buckler") {
 			s.Me.WeaponKind = "melee"
 		}
+	}
+	// Arrows = the ammo wherever the bow lives (a dry quiver VANISHES from its slot,
+	// so bow-without-quiver reads as 0 — every basic attack would whiff at air).
+	switch {
+	case bowActive:
+		s.Me.Arrows = maxInt(quivActive, 0)
+		if quivActive == -1 {
+			s.Me.Arrows = -1
+		}
+	case bowSecondary:
+		s.Me.Arrows = maxInt(quivSecondary, 0)
+		if quivSecondary == -1 {
+			s.Me.Arrows = -1
+		}
+	default:
+		s.Me.Arrows = -1 // no bow anywhere: ammo is nobody's problem
 	}
 	// Belt potions count by NUMERIC ID first — the mod scrambles the name table
 	// (its HP potion reads "Herb" id 602, its mana potion id 607 = the old INVALID607
@@ -232,8 +283,10 @@ func (p *Perceptor) Capture() *Snapshot {
 		n := string(bp.Name)
 		if bp.ID == 602 || contains(n, "Healing") || contains(n, "Rejuvenation") {
 			s.Me.HealPots++
+			s.Me.HPCols = append(s.Me.HPCols, bp.Position.X)
 		} else if bp.ID == 607 || contains(n, "Mana") {
 			s.Me.ManaPots++
+			s.Me.ManaCols = append(s.Me.ManaCols, bp.Position.X)
 		}
 	}
 	s.Me.BeltSlots = d.Inventory.Belt.Rows() * 4
@@ -317,6 +370,13 @@ func contains(s, sub string) bool {
 		}
 	}
 	return false
+}
+
+func maxInt(a, b int) int {
+	if a > b {
+		return a
+	}
+	return b
 }
 
 // SurvivalRead is the Sentinel's minimal bounded read: mode + pools + area, nothing else.
