@@ -232,6 +232,17 @@ func (a *Advance) Step(ctx *Ctx) Verdict {
 			a.pendArea, a.pendN = s.Me.Area, 1
 		}
 		if a.pendN < 3 {
+			// THE SEAM IS PUSHED, NEVER STOOD ON (00:56: pend ticks did
+			// nothing — on the flickering seam half her ticks were stands,
+			// the push never sustained, and the orbit circled the door fact
+			// she was standing on). Keep driving at the far-side fact while
+			// the reads settle; believe nothing, but never stop moving.
+			if ctx.Mem != nil {
+				var far data.Position
+				if ctx.Mem.GetJSON(BorderKey(ctx.GR.MapSeed(), s.Me.Area, a.lastArea), &far) && far.X != 0 {
+					slideStride(ctx, far, 700*time.Millisecond, 1, a.Name())
+				}
+			}
 			return Running // hold the grant; believe nothing yet
 		}
 		prev := a.lastArea
@@ -612,7 +623,20 @@ func (a *Advance) cross(ctx *Ctx, d game.Data, me data.Position, tgt data.Positi
 		verbs.Stride{To: through, Hold: 300 * time.Millisecond, MinGain: 1}.Do(ctx.M, ctx.GR, ctx.P, ctx.Led, a.Name())
 		return
 	}
-	// SPIRAL HOVER-CLICK for the rare click-to-open stairs.
+	// SPIRAL HOVER-CLICK for the rare click-to-open stairs — STAIRS ONLY: a
+	// walkable border has nothing to click, and the spiral's ground clicks
+	// were walking her in circles at the seam (the orbit's second engine).
+	hasEnt := false
+	for i := range d.Entrances {
+		if chebyshev(d.Entrances[i].Position, tgt) <= 15 {
+			hasEnt = true
+			break
+		}
+	}
+	if !hasEnt {
+		a.contactAt = time.Time{} // re-arm the contact push instead
+		return
+	}
 	ctx.M.MoveStop()
 	me2 := ctx.GR.GetData().PlayerUnit.Position
 	bx := int(float32((tgt.X-1-me2.X)-(tgt.Y-1-me2.Y))*19.8) + ctx.GR.GameAreaSizeX/2
