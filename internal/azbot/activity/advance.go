@@ -474,8 +474,17 @@ func (a *Advance) Step(ctx *Ctx) Verdict {
 	// (the unstreamed far side reads as wall), each regrid shifts the clamped
 	// goal, and every re-plan walks a fresh circle. The mouth is strode at
 	// directly — cross() owns the band; the wall-slide handles the posts.
-	if ed > 25 {
-		if a.grid == nil {
+	if ed > 12 {
+		// P-5.5b THE MAP GRID MARCHES (01:05, the screenshot: a bending,
+		// fence-channeled road no straight drive can walk): the live grid
+		// lies wherever rooms are unstreamed, but the seed server's area grid
+		// is COMPLETE and STATIC — bent roads path cleanly and the goal never
+		// jumps, so the regrid-shift oscillator dies by construction. The
+		// live grid is the fallback only.
+		usingMap := false
+		if ad, ok := d.Areas[s.Me.Area]; ok && ad.Grid != nil {
+			a.grid, usingMap = ad.Grid, true
+		} else if a.grid == nil {
 			a.grid = ctx.Grid
 		}
 		if a.grid == nil { // no grid at all (build failed): walk by dead reckoning
@@ -489,10 +498,12 @@ func (a *Advance) Step(ctx *Ctx) Verdict {
 		}
 		st := a.j.Step(ctx.M, ctx.P, ctx.Led)
 		if st.State == journey.NoPath || st.State == journey.Stalled {
-			if time.Since(a.regridAt) > 8*time.Second && ctx.Regrid != nil {
+			if !usingMap && time.Since(a.regridAt) > 8*time.Second && ctx.Regrid != nil {
 				a.grid = ctx.Regrid()
 				a.regridAt = time.Now()
 				a.j = journey.New(ctx.GR, a.grid, clampToGrid(tgt, a.grid), a.Name())
+			} else if usingMap {
+				a.j = nil // same grid, fresh plan next tick — the map never shifts
 			}
 			slideStride(ctx, tgt, 1200*time.Millisecond, 1, a.Name())
 		}
