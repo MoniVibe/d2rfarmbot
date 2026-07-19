@@ -278,17 +278,20 @@ precondition.
    (WARNING 2).
 8. The march waits while any DOCKET pends. Travel outranks Service by class;
    the pending check is the treaty that keeps errands alive.
-8a. A WEDGED VENDOR OUTLIVES EVERY RETRY (measured 12:00→12:24: one
-    mid-trade kill, then four healed processes died against the same
-    dead Akara — talks deaf, trades ghost). Ghost verdicts accumulate
-    per world; at THREE the world is POISONED and the cure is a RELOG —
-    a fresh instance, not a fifth try. The relog cap and thaw apply.
-    PILOT'S NOTE (12:28): the poison lives in the WORLD, the ghost
-    counter in the PROCESS. A binary swap resets the counter without
-    curing the world — so a swap DURING a poisoned town starves its own
-    cure. When a poisoned world is diagnosed, STOP SWAPPING and let the
-    live process accumulate its three and relog. The desk's reflex to
-    deploy-the-next-fix is itself a hazard here.
+8a. THE OPEN SHOP THE BOT COULDN'T SEE (mis-diagnosed 12:00→12:35 as a
+    "poisoned world"; PHOTOGRAPHED 12:36 as the truth): Akara's trade
+    window stood WIDE OPEN — stock readable, everything working — while
+    the errand logged "menu never opened" and re-clicked her shut, over
+    and over. This mod opens the vendor WITHOUT setting the 0xF4 menu
+    byte the talk phase waited on. THE LEXICON ALREADY KNEW: vendor
+    stock is the honest oracle (BUY/SELL). A trade errand that can read
+    the shelves IS in the shop, whatever the byte says — jump to act,
+    never re-click an open shop closed. The ghost/relog "poison"
+    backstop survives for a REAL wedge, but this was never one.
+    PILOT'S LESSON: half an hour of theory chased a log's narrative
+    ("ghost", "deaf") when ONE screenshot held the answer. Photograph
+    the world BEFORE building a theory around what the bot reports —
+    the bot's blind spot is exactly what it cannot report.
 9. THE APPROACH AIMS AT THE BAND, never the body (measured 10:2x, the
    torch dance): sliding at an NPC's center lands in the hover-breaking
    clinch, and a backstep flung past the band re-overshoots forever. The

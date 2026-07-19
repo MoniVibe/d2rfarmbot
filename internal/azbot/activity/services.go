@@ -45,6 +45,7 @@ type errand struct {
 	// that had presumably changed shape. The errand now self-discovers the trade
 	// slot: each failed attempt tries a different Down-count (1,2,0,3), and the
 	// vendor-stock oracle judges. What works is what's true.
+	trade      bool // this errand ends in a TRADE window; readable stock proves it open
 	menuTry    int
 	blocked    int // consecutive blocked approach strides — the fire-pit-wall detector
 	hoverFails int // consecutive hover-sweep misses — the torch-owns-this-bearing detector
@@ -90,6 +91,18 @@ func (e *errand) step(ctx *Ctx, who string) (shopOpen bool, dead bool) {
 			target, found = mo, true
 			break
 		}
+	}
+
+	// THE SHOP IS OPEN WHEN ITS STOCK IS READABLE (photographed 12:36: Akara's
+	// trade window stood WIDE OPEN while the errand logged "menu never opened"
+	// and re-clicked her shut — this mod opens the vendor WITHOUT setting the
+	// 0xF4 menu byte the talk phase waited on). Vendor stock is the honest
+	// oracle the Lexicon already trusts: if it reads, we are trading. Jump
+	// straight to act, and NEVER re-click an open shop closed. Trade errands
+	// only — Heal wants the heal-dialog, not the merchant's shelves.
+	if e.trade && len(d.Inventory.ByLocation(item.LocationVendor)) > 0 {
+		e.phase = 4
+		return true, false
 	}
 
 	switch e.phase {
@@ -496,7 +509,7 @@ func tomeCount(ctx *Ctx, tomeID int) int {
 }
 
 func NewRestock() *Restock {
-	return &Restock{e: errand{npcID: npc.Akara,
+	return &Restock{e: errand{npcID: npc.Akara, trade: true,
 		ring: []data.Position{{X: 6023, Y: 4933}, {X: 6070, Y: 4960}, {X: 6100, Y: 4990}, {X: 6050, Y: 5010}, {X: 6110, Y: 4930}}}}
 }
 
@@ -694,7 +707,7 @@ type Fence struct {
 }
 
 func NewFence() *Fence {
-	return &Fence{tomes0: -1, e: errand{npcID: npc.Akara,
+	return &Fence{tomes0: -1, e: errand{npcID: npc.Akara, trade: true,
 		ring: []data.Position{{X: 6023, Y: 4933}, {X: 6070, Y: 4960}, {X: 6100, Y: 4990}, {X: 6050, Y: 5010}, {X: 6110, Y: 4930}}}}
 }
 
@@ -1560,7 +1573,7 @@ type Repair struct {
 }
 
 func NewRepair() *Repair {
-	return &Repair{lastDur: -1, e: errand{npcID: npc.Charsi,
+	return &Repair{lastDur: -1, e: errand{npcID: npc.Charsi, trade: true,
 		ring: []data.Position{{X: 6020, Y: 4952}, {X: 5992, Y: 4941}, {X: 5963, Y: 5001}, {X: 5962, Y: 4956}, {X: 5952, Y: 4944}}}}
 }
 
