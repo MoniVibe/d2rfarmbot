@@ -474,7 +474,22 @@ func (a *Advance) Step(ctx *Ctx) Verdict {
 	// (the unstreamed far side reads as wall), each regrid shifts the clamped
 	// goal, and every re-plan walks a fresh circle. The mouth is strode at
 	// directly — cross() owns the band; the wall-slide handles the posts.
-	if ed > 12 {
+	// THE BAND REQUIRES AN OPEN LINE (01:15: two strides per second into a
+	// pen wall — the entrance read "near" THROUGH the pocket fence, chebyshev
+	// again): the direct steer is lawful only when the straight line to the
+	// door is walkable on the truthful map grids; otherwise the planner owns
+	// it at any distance.
+	lineClear := true
+	if steps := chebyshev(me, tgt); steps > 1 {
+		for i := 1; i < steps; i++ {
+			p := data.Position{X: me.X + (tgt.X-me.X)*i/steps, Y: me.Y + (tgt.Y-me.Y)*i/steps}
+			if !mapWalk(d, s.Me.Area, hop, p) {
+				lineClear = false
+				break
+			}
+		}
+	}
+	if ed > 12 || !lineClear {
 		// P-5.5b THE MAP GRID MARCHES (01:05, the screenshot: a bending,
 		// fence-channeled road no straight drive can walk): the live grid
 		// lies wherever rooms are unstreamed, but the seed server's area grid
