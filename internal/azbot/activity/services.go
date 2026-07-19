@@ -187,13 +187,14 @@ func (e *errand) step(ctx *Ctx, who string) (shopOpen bool, dead bool) {
 			arc := data.Position{X: target.Position.X + ady, Y: target.Position.Y - adx}
 			slideStride(ctx, arc, 900*time.Millisecond, 1, who+"/arc")
 		}
-	case 2: // talk: hover-confirm, BARE click, wait for the shop
-		// A TRADE errand advances ONLY on readable vendor stock (the top-of-step
-		// short-circuit). This mod opens the shop DIRECTLY on click — there is no
-		// dialog to navigate, and pressing Home/Down/Enter into an open trade
-		// closes it (the "no menu slot opened a trade in 6 attempts" churn,
-		// 12:44). Only non-trade talks (Heal) chase the 0xF4 menu byte.
-		if s.MenuOpen && !e.trade {
+	case 2: // talk: hover-confirm, BARE click, wait for the menu byte
+		// Clicking Akara opens a DIALOG (MenuOpen high) that the phase-3 nav
+		// steers to Trade — REVERTED here after run 72 froze at gold=741 with
+		// this path removed (the 12:44 screenshot showed the END state, an open
+		// shop, not HOW it opened: dialog → Home/Down/Enter → trade). The
+		// vendor-stock short-circuit at the top of step() handles the
+		// already-open case so an open shop is never re-navigated closed.
+		if s.MenuOpen {
 			e.phase = 3
 			return false, false
 		}

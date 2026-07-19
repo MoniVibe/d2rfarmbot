@@ -22,6 +22,7 @@ import (
 	"github.com/hectorgimenez/d2go/pkg/data/area"
 	"github.com/hectorgimenez/d2go/pkg/data/item"
 	"github.com/hectorgimenez/d2go/pkg/data/npc"
+	"github.com/hectorgimenez/d2go/pkg/data/skill"
 	"github.com/hectorgimenez/d2go/pkg/data/stat"
 	"github.com/hectorgimenez/koolo/internal/azbot/activity"
 	"github.com/hectorgimenez/koolo/internal/azbot/arbiter"
@@ -1623,13 +1624,26 @@ func main() {
 	// (classic-bot law — kolbot/koolo configs declared skills; nobody inferred them).
 	calibrate := func() combat.Capability {
 		c := combat.Calibrate(logger, gr, hid, mem, []string{"f1", "f2", "f3", "f4", "f5", "f6", "f7", "f8"})
+		// Owner declaration sets the KEY; the proven SKILL for that key survives if
+		// calibration flipped it (P-8.7 skill-spend needs the skill ID for its tree
+		// seat — "skill 0 has no tree seat" was the bare-key binding, 12:48).
+		provenSkill := func(key byte) skill.ID {
+			for _, b := range c.Proven {
+				if b.Key == key {
+					return b.Skill
+				}
+			}
+			return 0
+		}
 		if *meleeKeyF != "" {
-			c.Contact = &combat.Binding{Key: hid.GetASCIICode(*meleeKeyF)}
-			logger.Info("capability: owner-declared melee key", "key", *meleeKeyF)
+			k := hid.GetASCIICode(*meleeKeyF)
+			c.Contact = &combat.Binding{Key: k, Skill: provenSkill(k)}
+			logger.Info("capability: owner-declared melee key", "key", *meleeKeyF, "skill", int(c.Contact.Skill))
 		}
 		if *rangedKeyF != "" {
-			c.Reach = &combat.Binding{Key: hid.GetASCIICode(*rangedKeyF)}
-			logger.Info("capability: owner-declared ranged key", "key", *rangedKeyF)
+			k := hid.GetASCIICode(*rangedKeyF)
+			c.Reach = &combat.Binding{Key: k, Skill: provenSkill(k)}
+			logger.Info("capability: owner-declared ranged key", "key", *rangedKeyF, "skill", int(c.Reach.Skill))
 		}
 		// UNARM THE TOME: probing leaves the LAST flipped skill selected — F3 is the
 		// Identify tome, so she stood around visibly armed with Identify (the owner

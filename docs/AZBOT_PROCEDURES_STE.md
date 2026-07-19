@@ -282,16 +282,20 @@ precondition.
     "poisoned world"; PHOTOGRAPHED 12:36 as the truth): Akara's trade
     window stood WIDE OPEN — stock readable, everything working — while
     the errand logged "menu never opened" and re-clicked her shut, over
-    and over. This mod opens the vendor WITHOUT setting the 0xF4 menu
-    byte the talk phase waited on. THE LEXICON ALREADY KNEW: vendor
-    stock is the honest oracle (BUY/SELL). A trade errand that can read
-    the shelves IS in the shop, whatever the byte says — jump to act,
-    never re-click an open shop closed. The ghost/relog "poison"
-    backstop survives for a REAL wedge, but this was never one.
-    PILOT'S LESSON: half an hour of theory chased a log's narrative
-    ("ghost", "deaf") when ONE screenshot held the answer. Photograph
-    the world BEFORE building a theory around what the bot reports —
-    the bot's blind spot is exactly what it cannot report.
+    and over. THE LEXICON ALREADY KNEW: vendor stock is the honest
+    oracle (BUY/SELL). A trade errand that can read the shelves IS in
+    the shop — jump to act, never re-click an open shop closed. That
+    short-circuit was the true fix. (A FOLLOW-ON over-correction removed
+    the dialog navigation too and FROZE trading at gold=741, run 72: the
+    click opens a DIALOG that Home/Down/Enter steers to Trade — the
+    screenshot showed the END state, an open shop, not the PATH that
+    opened it. Reverted.) The ghost/relog poison backstop survives for a
+    REAL wedge, but this was never one.
+    PILOT'S LESSON, TWICE OVER: a screenshot shows a STATE, not a
+    MECHANISM — half an hour chasing a log's "ghost" narrative, then a
+    frozen shop chasing a screenshot's end-state. Look, but confirm the
+    FIX moved the needle (gold, junk) before believing it; revert fast
+    when it didn't.
 9. THE APPROACH AIMS AT THE BAND, never the body (measured 10:2x, the
    torch dance): sliding at an NPC's center lands in the hover-breaking
    clinch, and a backstep flung past the band re-overshoots forever. The
