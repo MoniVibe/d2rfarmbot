@@ -52,6 +52,27 @@ type Activity interface {
 	Step(ctx *Ctx) Verdict
 }
 
+// losClear walks the ARROW'S line across the live grid: any known wall cell on the
+// segment blocks the shot (the owner: "she tries to shoot through walls"). Unknown
+// terrain (LowPriority) stays shootable — only loaded, real walls refuse.
+func losClear(g *game.Grid, a, b data.Position) bool {
+	if g == nil {
+		return true
+	}
+	steps := chebyshev(a, b)
+	for i := 1; i < steps; i++ {
+		p := data.Position{X: a.X + (b.X-a.X)*i/steps, Y: a.Y + (b.Y-a.Y)*i/steps}
+		rp := g.RelativePosition(p)
+		if rp.X < 0 || rp.Y < 0 || rp.X >= g.Width || rp.Y >= g.Height {
+			continue
+		}
+		if g.CollisionGrid[rp.Y][rp.X] == game.CollisionTypeNonWalkable {
+			return false
+		}
+	}
+	return true
+}
+
 // slideStride is a stride that refuses to rub walls: a blocked line retries once
 // rotated +45°, then −45° — the wall-slide. For the PLANLESS strides (escapes,
 // sidesteps, blind pushes); planned movement belongs to Journey. The owner: "it
@@ -466,6 +487,12 @@ func (f *Fight) Step(ctx *Ctx) Verdict {
 			verbs.Stride{To: f.targetPos, Hold: 900 * time.Millisecond}.Do(ctx.M, ctx.GR, ctx.P, ctx.Led, f.Name())
 			return Running
 		}
+		if !losClear(ctx.Grid, s.Me.Pos, f.targetPos) {
+			// A wall owns the arrow's line — REPOSITION for an angle instead of
+			// feeding the fence (the owner: "she tries to shoot through walls").
+			slideStride(ctx, f.targetPos, 700*time.Millisecond, 2, f.Name())
+			return Running
+		}
 		// SHOOT. Basic arrow (plain attack, zero mana) is the workhorse; the bow skill
 		// only while the pool is comfortable — never spammed dry, and never after the
 		// evidence audit demoted it.
@@ -512,7 +539,7 @@ func (f *Fight) Step(ctx *Ctx) Verdict {
 
 	// ---- No bow in the picture: the pre-bowzon paths (throw kiting, then melee). ----
 	canThrow := ctx.Cap != nil && ctx.Cap.Throw != nil
-	if canThrow && d >= 9 && d <= 22 {
+	if canThrow && d >= 9 && d <= 22 && losClear(ctx.Grid, s.Me.Pos, f.targetPos) {
 		f.strike(ctx, f.target, f.targetPos, ctx.Cap.Throw.Key)
 		return Running
 	}
@@ -601,6 +628,7 @@ type Loot struct {
 	target   data.UnitID
 	failures map[data.UnitID]int
 	ban      map[data.UnitID]time.Time
+	j        *journey.Journey
 }
 
 func NewLoot() *Loot { return &Loot{failures: map[data.UnitID]int{}, ban: map[data.UnitID]time.Time{}} }
@@ -696,11 +724,27 @@ func (l *Loot) Step(ctx *Ctx) Verdict {
 	}
 	it, _, ok := l.pick(s)
 	if !ok {
+		l.j = nil
 		return Done
 	}
 	d := chebyshev(s.Me.Pos, it.Pos)
-	if d > 5 {
-		verbs.Stride{To: it.Pos}.Do(ctx.M, ctx.GR, ctx.P, ctx.Led, l.Name())
+	if d > 3 {
+		// JOURNEY, not a blind stride: an item inside a house reads as "5 tiles away"
+		// through the wall — she flicker-hovered it and moved on (the owner's report).
+		// The planner walks the door; proximity is not reachability.
+		if ctx.Grid != nil {
+			if l.j == nil || chebyshev(l.j.Goal, it.Pos) > 4 {
+				l.j = journey.New(ctx.GR, ctx.Grid, it.Pos, l.Name())
+				l.j.Arrive = 2
+			}
+			st := l.j.Step(ctx.M, ctx.P, ctx.Led)
+			if st.State == journey.Stalled || st.State == journey.NoPath {
+				l.ban[it.ID] = time.Now().Add(60 * time.Second)
+				l.j = nil
+			}
+		} else {
+			verbs.Stride{To: it.Pos}.Do(ctx.M, ctx.GR, ctx.P, ctx.Led, l.Name())
+		}
 		return Running
 	}
 	o := verbs.Pickup{Target: it.ID, TargetPos: it.Pos}.Do(ctx.M, ctx.GR, ctx.P, ctx.Led, l.Name())

@@ -1511,7 +1511,7 @@ func main() {
 	// calibrate wraps probing + the owner's declared build: the owner KNOWS the char
 	// (classic-bot law — kolbot/koolo configs declared skills; nobody inferred them).
 	calibrate := func() combat.Capability {
-		c := combat.Calibrate(logger, gr, hid, mem, []string{"f1", "f2", "f3", "f4"})
+		c := combat.Calibrate(logger, gr, hid, mem, []string{"f1", "f2", "f3", "f4", "f5", "f6", "f7", "f8"})
 		if *meleeKeyF != "" {
 			c.Melee = &combat.Binding{Key: hid.GetASCIICode(*meleeKeyF)}
 			logger.Info("capability: owner-declared melee key", "key", *meleeKeyF)
