@@ -221,6 +221,13 @@ region; the cursor-empty read is the only proof of success.
    runway holds (TTD ≥ 10 s), retreats when it shortens, and dives when it
    collapses. ONE density backstop remains: 20+ within 25 is fled at any
    oracle verdict — density kills before HP moves (run 41's eighty-four).
+   THE COUNT MUST HOLD TWO READS (the ribbon law applied to crowds —
+   measured 23:12 at Flavie's pass: sight-lines through the corridor
+   mouth flip with every tile, the count flapped 20↔5, and flee/explore
+   thrashed at one grant per second while the camp sat safe behind the
+   palisade). A horde seen once is a flicker; a horde seen twice is a
+   horde — 400 ms of patience against a rule that exists for minutes-
+   scale danger.
 1. A CROWD (12+, 16 healthy) is fled only when the oracle agrees
    (TTD < 10 s) — a crowd she is out-sustaining is a target-rich
    environment, not an emergency.
@@ -452,6 +459,14 @@ procedure may ask "which class is this?" — only "what has she proven?"
 
 ### P-9 JUDGE — CLASS-AGNOSTIC ITEM VALUATION
 
+0. THE GROUND GATE (the owner, 23:10: "pick up uniques — it just
+   skipped a wand"): set, rare, and unique drops are what the whole
+   grind is FOR — the pickup requires only that ANY room exists
+   (2 cells), never the 8-cell worst-case gate that skipped a 1x2
+   unique wand with a merely-crowded bag. A big piece into a tight
+   bag may burn its three clicks and its ban — three clicks lost
+   beats a unique walked past. (Sets were worse: quality 5 fell
+   BELOW the >=6 line entirely and scored as mere magic.)
 1. An item is judged by readable facts: slot, quality, type code, and
    requirements. Names have no vote (the table is scrambled). A unique's
    or set piece's REAL level gate lives in the mod's own excel row

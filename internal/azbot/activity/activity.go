@@ -270,6 +270,10 @@ type Flee struct {
 	pinRef       data.Position
 	pinAt        time.Time
 	lastStrikeAt time.Time
+	// P-2.0 density confirmation: the 20+ backstop must hold two consecutive
+	// reads — sight-lines through a corridor mouth flap the count (Flavie's
+	// pass, 23:12) and a flickering horde is no horde.
+	denseN int
 	// P-2.11 flee-fatigue bookkeeping: distinct crowd-flee episodes on the
 	// same ground. The third inside the window declares the retreat a lie.
 	epCount      int
@@ -448,11 +452,18 @@ func (f *Flee) Demand(s *percept.Snapshot) *arbiter.Demand {
 		return nil
 	}
 	// P-2.0: DENSITY BACKSTOP first — 20+ is fled at any oracle verdict and
-	// through any fatigue (density kills before HP moves; run 41).
+	// through any fatigue (density kills before HP moves; run 41). The count
+	// must hold TWO consecutive reads: corridor sight-lines flap it (Flavie's
+	// pass thrash, 23:12), and a flickering horde is no horde.
 	if near >= 20 {
-		return &arbiter.Demand{Who: f.Name(), Class: arbiter.ClassSurvive,
-			Urgency: 1.35,
-			Commit:  arbiter.Commitment{MinHold: 2 * time.Second}}
+		f.denseN++
+		if f.denseN >= 2 {
+			return &arbiter.Demand{Who: f.Name(), Class: arbiter.ClassSurvive,
+				Urgency: 1.35,
+				Commit:  arbiter.Commitment{MinHold: 2 * time.Second}}
+		}
+	} else {
+		f.denseN = 0
 	}
 	ttd := TimeToDie(s)
 	if near >= crowdBar && ttd < 10 {
@@ -1430,9 +1441,12 @@ func (l *Loot) wanted(s *percept.Snapshot, it percept.ItemRef) float64 {
 		if s.Me.InvFree >= 4 {
 			return 0.9
 		}
-	case it.Quality >= 6: // rare/set/unique: the drops the whole grind is FOR
-		if gearRoom {
-			return 0.8
+	case it.Quality >= 5: // set/rare/unique: the drops the whole grind is FOR
+		// P-9.0 THE GROUND GATE: any room at all (2 cells) picks these up —
+		// the 8-cell worst-case gate skipped a 1x2 unique wand (the owner,
+		// 23:10), and quality 5 (SET) fell below the old >=6 line entirely.
+		if s.Me.InvFree >= 2 {
+			return 0.85
 		}
 	case contains(n, "Potion") || contains(n, "Herb"):
 		if s.Me.BeltHP+s.Me.BeltMana < s.Me.BeltSlots || s.Me.InvFree >= 1 {
