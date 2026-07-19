@@ -25,3 +25,8 @@ shots/
 crashdumps/
 *.dmp
 tools/handle64.exe
+
+azbot.exe.new
+azbot.exe.new2
+azbot_next.exe
+shot.exe
