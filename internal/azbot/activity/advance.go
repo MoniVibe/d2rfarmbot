@@ -540,6 +540,17 @@ func (a *Advance) borderTarget(ctx *Ctx, d game.Data, hop area.ID, me data.Posit
 			return p, true
 		}
 	}
+	// THE MAP NAMES EVERY EXIT — entrances included (01:10: she toured the
+	// Stony border wall-hugging in search of stairs the seed server had
+	// named since attach). Mapped exits lie by a few tiles (the farmbot
+	// law), but the door band's drive and the entrance ritual absorb that.
+	if ad, ok := d.Areas[d.PlayerUnit.Area]; ok {
+		for _, lv := range ad.AdjacentLevels {
+			if lv.Area == hop && (lv.Position.X != 0 || lv.Position.Y != 0) {
+				return lv.Position, true
+			}
+		}
+	}
 	if time.Since(a.extAt) > 2*time.Second {
 		if ext, err := ctx.GR.AdjacentLevelRooms(); err == nil {
 			a.extRooms, a.extAt = ext, time.Now()
