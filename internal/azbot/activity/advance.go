@@ -244,7 +244,7 @@ func (a *Advance) Step(ctx *Ctx) Verdict {
 			a.driving = false // geometrically THROUGH — reads can settle now
 		default:
 			crossingBracketUntil = time.Now().Add(3 * time.Second)
-			slideStride(ctx, a.driveTgt, 900*time.Millisecond, 1, a.Name())
+			clickStride(ctx, a.driveTgt, 900*time.Millisecond, a.Name())
 			return Running
 		}
 	}
@@ -290,7 +290,7 @@ func (a *Advance) Step(ctx *Ctx) Verdict {
 			return Done // adopted AND clear of the ribbon — the next leg re-bids fresh
 		}
 		out := data.Position{X: me.X + a.clearDir.X*14, Y: me.Y + a.clearDir.Y*14}
-		slideStride(ctx, out, 1200*time.Millisecond, 1, a.Name())
+		clickStride(ctx, out, 1200*time.Millisecond, a.Name())
 		return Running
 	}
 	if a.idx >= len(a.Itinerary)-1 && s.Me.Area == a.Itinerary[a.idx].Area {
@@ -364,11 +364,11 @@ func (a *Advance) Step(ctx *Ctx) Verdict {
 							}
 							st := a.j.Step(ctx.M, ctx.P, ctx.Led)
 							if st.State == journey.Stalled || st.State == journey.NoPath {
-								slideStride(ctx, padPos, 1200*time.Millisecond, 1, a.Name())
+								clickStride(ctx, padPos, 1200*time.Millisecond, a.Name())
 								a.j = nil
 							}
 						} else {
-							slideStride(ctx, padPos, 1200*time.Millisecond, 1, a.Name())
+							clickStride(ctx, padPos, 1200*time.Millisecond, a.Name())
 						}
 						return Running
 					}
@@ -411,7 +411,7 @@ func (a *Advance) Step(ctx *Ctx) Verdict {
 						a.wpTouched[s.Me.Area] = time.Now()
 						a.wpWalkAt = time.Time{}
 					} else {
-						slideStride(ctx, ob.Position, 1200*time.Millisecond, 1, a.Name())
+						clickStride(ctx, ob.Position, 1200*time.Millisecond, a.Name())
 						return Running
 					}
 					break
@@ -520,7 +520,7 @@ func (a *Advance) Step(ctx *Ctx) Verdict {
 			} else if usingMap {
 				a.j = nil // same grid, fresh plan next tick — the map never shifts
 			}
-			slideStride(ctx, tgt, 1200*time.Millisecond, 1, a.Name())
+			clickStride(ctx, tgt, 1200*time.Millisecond, a.Name())
 		}
 		return Running
 	}

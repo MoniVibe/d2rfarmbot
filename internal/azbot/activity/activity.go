@@ -109,6 +109,19 @@ func losClear(g *game.Grid, a, b data.Position) bool {
 	return true
 }
 
+// clickStride is THE FISH CURE for travel movement: click the carrot, let the
+// game's own pathfinder walk — the only mover that knows the mod's invented
+// fences (panels exist in NO grid; the whole night of 2026-07-20 fought walls
+// the game routes around free). Force-slide remains the fallback for a
+// refused or dead click. Travel contexts only — combat footwork keeps the
+// force-move edge (a click near a monster is an attack).
+func clickStride(ctx *Ctx, to data.Position, hold time.Duration, who string) {
+	o := verbs.ClickMove{To: to, Hold: hold}.Do(ctx.M, ctx.GR, ctx.P, ctx.Led, who)
+	if o.Result != verbs.ResDone {
+		slideStride(ctx, to, hold, 1, who)
+	}
+}
+
 // slideStride is a stride that refuses to rub walls: a blocked line retries once
 // rotated +45°, then −45° — the wall-slide. For the PLANLESS strides (escapes,
 // sidesteps, blind pushes); planned movement belongs to Journey. The owner: "it
