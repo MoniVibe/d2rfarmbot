@@ -1906,6 +1906,25 @@ func main() {
 			time.Sleep(200 * time.Millisecond)
 			continue
 		}
+		// WARNING 10 — THE WALL EDITS THE WORLD: stamp Walled once per tick so
+		// every demand and step downstream counts only enemies with a clear line.
+		// 30 tiles covers every proximity bar in use (crowd 25, hunt 45 excepted —
+		// far picks re-check LoS themselves at selection).
+		if grid != nil && !s.Me.InTown {
+			for i := range s.Enemies {
+				e := &s.Enemies[i]
+				dx, dy := e.Pos.X-s.Me.Pos.X, e.Pos.Y-s.Me.Pos.Y
+				if dx < 0 {
+					dx = -dx
+				}
+				if dy < 0 {
+					dy = -dy
+				}
+				if dx <= 30 && dy <= 30 {
+					e.Walled = !activity.LosClear(grid, s.Me.Pos, e.Pos)
+				}
+			}
+		}
 		// NEW GAME detection: a validity gap (relog, load screen) may mean a fresh
 		// world — the seed re-rolls per game. FetchMapData no-ops when the seed is
 		// unchanged; on a real change it re-fetches and the grid realigns below.

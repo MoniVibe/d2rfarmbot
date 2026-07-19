@@ -107,6 +107,11 @@ type EnemyRef struct {
 	ID   data.UnitID
 	Pos  data.Position
 	Mode uint32
+	// Walled: no clear grid line from her to it (WARNING 10 — the wall edits
+	// the world). Stamped by the executive once per tick from the live grid;
+	// a walled enemy is ABSENT to proximity counts, crowd bars, and strikes,
+	// and exists only to the planner that walks doors.
+	Walled bool
 }
 
 // ItemRef is a ground item: identity, position, name (mod-remapped names resolved by

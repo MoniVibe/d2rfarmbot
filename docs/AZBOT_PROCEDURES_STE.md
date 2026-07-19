@@ -125,6 +125,19 @@ ledger says so; deaf verbs into a paused world cost nothing.
 **WARNING 8 — SEED NAMESPACE.** The world re-rolls per game. Geometry facts
 from one seed must never steer another.
 
+**WARNING 10 — THE WALL EDITS THE WORLD.** Chebyshev counts through
+walls; the world does not. An enemy without a clear grid line to her is
+ABSENT to every proximity count, crowd bar, contact pick, and strike
+selection — it exists only to the planner that walks doors (target-by-
+sight already knows this; the counts did not). Measured 22:55, one
+night, one root: fenced camps read as 16-strong crowds and Flee bid
+1.35 at FULL blood (the portal orbit the owner watched); a cabin
+dweller three tiles away "in contact" drew point-blank volleys into
+the logs (the owner: "she tries to attack through walls"); a corpse
+across the town fence read "near" and pinned her in the hub corner.
+The percept stamps Walled once per tick from the live grid; every
+count downstream honors it.
+
 **WARNING 9 — THE CURSOR ITEM.** An item on the cursor owns every click:
 panel buttons do not press, world clicks DROP it, and the stuck-detector
 reads the paralysis as walls (measured 09:30: one missed put-back sent
@@ -202,6 +215,12 @@ region; the cursor-empty read is the only proof of success.
    — not at four nuisances under a scratch (the 57-HP sortie loop, 11:06).
 3. With an empty belt, a RETREAT has a destination: plant the portal when
    the gap opens, run to it, ENTER it. Fleeing is not a lifestyle.
+   BUT THE RIDE REQUIRES A WOUND (the owner, 22:55: "she opens a
+   portal, enters it, then returns without town services... shes
+   looping"): a full-blooded dry belt flees on FOOT — town holds
+   nothing for a penniless girl at full blood, and the round trip is
+   an orbit, not a service. Below the flee-clear bar (55) the ride is
+   real: the free heal at Akara is the service that pays it.
 4. A portal that exists is a decision already made. Breakout stepping at all
    means emergency: ENTER, desperately if needed. BUT A DEAD DOOR UN-MAKES
    THE DECISION (measured 21:35: twenty desperate dives into a portal that

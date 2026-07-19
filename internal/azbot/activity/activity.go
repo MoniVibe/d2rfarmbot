@@ -58,6 +58,10 @@ type Activity interface {
 // losClear walks the ARROW'S line across the live grid: any known wall cell on the
 // segment blocks the shot (the owner: "she tries to shoot through walls"). Unknown
 // terrain (LowPriority) stays shootable — only loaded, real walls refuse.
+// LosClear is the exported face of losClear for the executive's per-tick
+// Walled stamp (WARNING 10).
+func LosClear(g *game.Grid, a, b data.Position) bool { return losClear(g, a, b) }
+
 func losClear(g *game.Grid, a, b data.Position) bool {
 	if g == nil {
 		return true
@@ -293,6 +297,9 @@ func (st *Stand) Demand(s *percept.Snapshot) *arbiter.Demand {
 	}
 	near := 0
 	for _, e := range s.Enemies {
+		if e.Walled { // WARNING 10: standing near a fence is not being pressed
+			continue
+		}
 		if chebyshev(s.Me.Pos, e.Pos) <= 12 {
 			near++
 		}
@@ -392,6 +399,9 @@ func (f *Flee) Demand(s *percept.Snapshot) *arbiter.Demand {
 	// same oracle, so no dead band opens between the rules.
 	near := 0
 	for _, e := range s.Enemies {
+		if e.Walled { // WARNING 10: a fenced camp is not a crowd
+			continue
+		}
 		if chebyshev(s.Me.Pos, e.Pos) <= 25 {
 			near++
 		}
@@ -464,6 +474,9 @@ func (f *Flee) Step(ctx *Ctx) Verdict {
 	// clearance from a horde.
 	crowd := 0
 	for _, e := range s.Enemies {
+		if e.Walled { // WARNING 10
+			continue
+		}
 		if chebyshev(s.Me.Pos, e.Pos) <= 25 {
 			crowd++
 		}
@@ -478,6 +491,9 @@ func (f *Flee) Step(ctx *Ctx) Verdict {
 	cx, cy, n, closest := 0, 0, 0, 1<<30
 	var closestPos data.Position
 	for _, e := range s.Enemies {
+		if e.Walled { // WARNING 10: flee FROM what can reach her, not from fences
+			continue
+		}
 		d := chebyshev(s.Me.Pos, e.Pos)
 		if d < closest {
 			closest, closestPos = d, e.Pos
@@ -516,7 +532,11 @@ func (f *Flee) Step(ctx *Ctx) Verdict {
 	// activity able to cast never got its 2.5s). A dry belt means this flee ends in
 	// town or in a corpse: the moment the gap opens, Flee itself casts the portal —
 	// and USES it. Fleeing is not a lifestyle; it has a destination.
-	if s.Me.HealPots == 0 && len(s.Portals) > 0 {
+	if s.Me.HealPots == 0 && s.Me.HPPct < 55 && len(s.Portals) > 0 {
+		// P-2.3: THE RIDE REQUIRES A WOUND — a full-blooded dry belt flees on
+		// foot; town holds nothing for a penniless girl at full blood and the
+		// round trip is an orbit, not a service (the owner watched the loop,
+		// 22:55). Below the clear bar the free heal at Akara pays the trip.
 		// P-2.4: dead doors are ABSENT — a flee must never bind to a portal
 		// that provably does not open (the 21:35 death).
 		var best percept.PortalRef
@@ -539,7 +559,7 @@ func (f *Flee) Step(ctx *Ctx) Verdict {
 		}
 		// every door is dead: fall through — cast a new one or flee on foot
 	}
-	if s.Me.HealPots == 0 && ctx.Cap != nil && ctx.Cap.TownTP != nil &&
+	if s.Me.HealPots == 0 && s.Me.HPPct < 55 && ctx.Cap != nil && ctx.Cap.TownTP != nil &&
 		closest > 10 && time.Since(f.castAt) > 2500*time.Millisecond {
 		verbs.CastSelf{Key: ctx.Cap.TownTP.Key}.Do(ctx.M, ctx.GR, ctx.P, ctx.Led, f.Name())
 		f.castAt = time.Now()
@@ -648,6 +668,9 @@ func (b *Breakout) Demand(s *percept.Snapshot) *arbiter.Demand {
 	}
 	near := 0
 	for _, en := range s.Enemies {
+		if en.Walled { // WARNING 10: a fenced camp does not surround anyone
+			continue
+		}
 		if chebyshev(s.Me.Pos, en.Pos) <= 18 {
 			near++
 		}
@@ -693,6 +716,9 @@ func (b *Breakout) Step(ctx *Ctx) Verdict {
 	}
 	near := 0
 	for _, en := range s.Enemies {
+		if en.Walled { // WARNING 10
+			continue
+		}
 		if chebyshev(s.Me.Pos, en.Pos) <= 18 {
 			near++
 		}
@@ -928,6 +954,9 @@ func (f *Fight) Demand(s *percept.Snapshot) *arbiter.Demand {
 	if TimeToDie(s) < 8 && !time.Now().Before(fleeFatigueUntil) {
 		near25 := 0
 		for _, e := range s.Enemies {
+			if e.Walled { // WARNING 10
+				continue
+			}
 			if chebyshev(s.Me.Pos, e.Pos) <= 25 {
 				near25++
 			}
@@ -1045,6 +1074,9 @@ func (f *Fight) Step(ctx *Ctx) Verdict {
 	contact := 1 << 30
 	var contactPos data.Position
 	for _, e := range s.Enemies {
+		if e.Walled { // WARNING 10: a cabin dweller is not in contact — the
+			continue // point-blank volley into the logs was this line's absence
+		}
 		if dd := chebyshev(s.Me.Pos, e.Pos); dd < contact {
 			contact, contactPos = dd, e.Pos
 		}
@@ -1086,6 +1118,9 @@ func (f *Fight) Step(ctx *Ctx) Verdict {
 			// (the OR cowered her along walls: 2 fallen within 7 outran the bow).
 			press := 0
 			for _, e := range s.Enemies {
+				if e.Walled { // WARNING 10
+					continue
+				}
 				if chebyshev(s.Me.Pos, e.Pos) <= 7 {
 					press++
 				}
@@ -1293,6 +1328,9 @@ func (f *Fight) trySwap(ctx *Ctx) {
 func (f *Fight) nearestID(s *percept.Snapshot) data.UnitID {
 	best, bd := data.UnitID(0), 1<<30
 	for _, e := range s.Enemies {
+		if e.Walled { // WARNING 10: never strike what the wall owns
+			continue
+		}
 		if dd := chebyshev(s.Me.Pos, e.Pos); dd < bd {
 			best, bd = e.ID, dd
 		}

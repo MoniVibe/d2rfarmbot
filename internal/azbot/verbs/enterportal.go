@@ -138,9 +138,18 @@ sweep:
 
 	// The click starts a walk-to-and-enter; wait (uninterrupted) for the transition.
 	deadline := time.Now().Add(win)
+	extended := false
 	for time.Now().Before(deadline) {
 		time.Sleep(150 * time.Millisecond)
 		now := gr.GetData().PlayerUnit.Area
+		if now == 0 && !extended {
+			// A zero area is the LOAD SCREEN — the transition is HAPPENING. The
+			// short desperate window counted these as deaf (measured 22:42: she
+			// stood in town while the verdict said "never changed", 2/3 toward a
+			// false dead door). Grant the load its time, once.
+			deadline = deadline.Add(3 * time.Second)
+			extended = true
+		}
 		if now != start && now != 0 {
 			o.Result = ResDone
 			o.Evidence = fmt.Sprintf("area %d -> %d", int(start), int(now))
