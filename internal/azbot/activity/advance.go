@@ -274,12 +274,24 @@ func (a *Advance) Step(ctx *Ctx) Verdict {
 	// cools 90 s and the gate march resumes unharmed.
 	if s.Me.InTown && time.Since(a.wpAt) > 90*time.Second {
 		dd := ctx.GR.GetData()
-		var pad data.Object
+		// THE MAP ORACLE NAMES THE PAD (00:04: run 88 never rode — live
+		// objects stream ~2 screens and the hub cannot see the pad; the seed
+		// server has known its position since attach).
+		var padPos data.Position
 		padDist := 1 << 30
-		for _, ob := range dd.Objects {
+		if ad, ok := dd.Areas[s.Me.Area]; ok {
+			for _, ob := range ad.Objects {
+				if ob.IsWaypoint() {
+					if pd := chebyshev(s.Me.Pos, ob.Position); pd < padDist {
+						padDist, padPos = pd, ob.Position
+					}
+				}
+			}
+		}
+		for _, ob := range dd.Objects { // live sighting refines the map prior
 			if ob.IsWaypoint() && ob.ID != 0 {
 				if pd := chebyshev(s.Me.Pos, ob.Position); pd < padDist {
-					padDist, pad = pd, ob
+					padDist, padPos = pd, ob.Position
 				}
 			}
 		}
@@ -300,7 +312,7 @@ func (a *Advance) Step(ctx *Ctx) Verdict {
 					if time.Since(a.wpWalkAt) > 45*time.Second {
 						a.wpAt, a.wpWalkAt = time.Now(), time.Time{}
 					} else {
-						slideStride(ctx, pad.Position, 1200*time.Millisecond, 1, a.Name())
+						slideStride(ctx, padPos, 1200*time.Millisecond, 1, a.Name())
 						return Running
 					}
 				} else {
@@ -321,8 +333,14 @@ func (a *Advance) Step(ctx *Ctx) Verdict {
 	// Fight still preempts by class; this fires only while the march holds.
 	if !s.Me.InTown && time.Since(a.wpTouched[s.Me.Area]) > 10*time.Minute {
 		dd := ctx.GR.GetData()
-		for _, ob := range dd.Objects {
-			if ob.IsWaypoint() && ob.ID != 0 && chebyshev(s.Me.Pos, ob.Position) <= 25 {
+		// The map oracle names the pad here too — a 40-tile detour to light a
+		// permanent network node pays for itself forever.
+		mapPads := dd.Objects
+		if ad, ok := dd.Areas[s.Me.Area]; ok {
+			mapPads = append(append([]data.Object{}, dd.Objects...), ad.Objects...)
+		}
+		for _, ob := range mapPads {
+			if ob.IsWaypoint() && chebyshev(s.Me.Pos, ob.Position) <= 40 {
 				if a.wpTouched == nil {
 					a.wpTouched = map[area.ID]time.Time{}
 				}

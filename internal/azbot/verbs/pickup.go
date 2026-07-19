@@ -46,23 +46,42 @@ func (pk Pickup) Do(m *motor.Motor, gr *game.MemoryReader, p *percept.Perceptor,
 	bx := int(float32((pk.TargetPos.X-me.X)-(pk.TargetPos.Y-me.Y))*19.8) + gr.GameAreaSizeX/2
 	by := int(float32((pk.TargetPos.X-me.X)+(pk.TargetPos.Y-me.Y))*9.9) + gr.GameAreaSizeY/2
 
+	// The item's OWN IsHovered is the honest oracle (d2go computes it with the
+	// unit-type check; raw HoverData never confirmed a set sash the owner
+	// watched her hover for minutes, 00:05) — and it is DOUBLE-CONFIRMED,
+	// because a single read reflects the prior probe's cursor (the
+	// enterportal frame-latency lesson, finally applied here).
+	itemHovered := func() bool {
+		dd := gr.GetData()
+		if dd.HoverData.IsHovered && dd.HoverData.UnitID == pk.Target {
+			return true
+		}
+		for _, it := range dd.Inventory.ByLocation(item.LocationGround) {
+			if it.UnitID == pk.Target && it.IsHovered {
+				return true
+			}
+		}
+		return false
+	}
 	confirmed, px, py := false, bx, by
-	for _, dy := range []int{0, -8, 8, -16} {
+sweep:
+	for _, dy := range []int{0, -8, 8, -16, -24} {
 		for _, dx := range []int{0, -10, 10, -20, 20} {
 			cx, cy := bx+dx, by+dy
 			if cx < 20 || cy < 20 || cx > gr.GameAreaSizeX-20 || cy > gr.GameAreaSizeY-20 {
 				continue
 			}
 			m.AimPhysical(cx, cy)
-			time.Sleep(45 * time.Millisecond)
-			hd := gr.GetData().HoverData
-			if hd.IsHovered && hd.UnitID == pk.Target {
-				confirmed, px, py = true, cx, cy
-				break
+			time.Sleep(50 * time.Millisecond)
+			if !itemHovered() {
+				continue
 			}
-		}
-		if confirmed {
-			break
+			m.AimPhysical(cx, cy)
+			time.Sleep(70 * time.Millisecond)
+			if itemHovered() {
+				confirmed, px, py = true, cx, cy
+				break sweep
+			}
 		}
 	}
 	if !confirmed {
