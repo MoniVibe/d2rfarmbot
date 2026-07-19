@@ -555,6 +555,10 @@ type Fight struct {
 	rangedShots  int
 	rangedFlinch int
 	rangedDead   bool
+	// March is Advance's live door hint. P-5.8: within 12 of the march door the
+	// REACH TOOL holds — the clinch swap is suppressed and the volley fires
+	// point-blank; the funnel rewards the pierce, not the poke.
+	March func() (data.Position, bool)
 }
 
 func NewFight() *Fight { return &Fight{blacklist: map[data.UnitID]time.Time{}} }
@@ -686,6 +690,13 @@ func (f *Fight) Step(ctx *Ctx) Verdict {
 	// ---- THE BOWZON DANCE (owner's doctrine, verbatim: basic arrow as the workhorse,
 	// don't spam magic arrow dry, W-swap to javelin for contact, and the HIGHER priority
 	// is getting far enough to swap back to the bow and shoot at range). ----
+	// P-5.8: at the march door the dance inverts — the door mouth is shot open.
+	nearDoor := false
+	if f.March != nil {
+		if mt, ok := f.March(); ok && chebyshev(s.Me.Pos, mt) <= 12 {
+			nearDoor = true
+		}
+	}
 	switch s.Me.WeaponKind {
 	case "bow":
 		if s.Me.Arrows == 0 {
@@ -709,7 +720,11 @@ func (f *Fight) Step(ctx *Ctx) Verdict {
 		if contact <= 3 {
 			// In the clinch the javelin is still the better tool — ask for the swap —
 			// but until it lands, SHOOT the tooth point-blank. Never a mute cycle.
-			f.trySwap(ctx)
+			// P-5.8: at the door mouth the swap is SUPPRESSED — the bow holds and
+			// pierces the funnel; the poke was measured useless at the bridge.
+			if !nearDoor {
+				f.trySwap(ctx)
+			}
 			f.strike(ctx, f.nearestID(s), contactPos, key)
 			return Running
 		}
@@ -783,6 +798,15 @@ func (f *Fight) Step(ctx *Ctx) Verdict {
 		// A dry bow set is no bow at all: while Arrows==0 the javelins ARE the build —
 		// chase and stab instead of kiting toward a weapon that whiffs at air.
 		dryBow := s.Me.Arrows == 0
+		// P-5.8: holding the CONTACT TOOL at the door mouth, she swaps back to the
+		// REACH TOOL at once — and stabs while the swap pends. Never a mute cycle.
+		if nearDoor && !dryBow {
+			f.trySwap(ctx)
+			if contact <= 4 {
+				f.strike(ctx, f.nearestID(s), contactPos, mk)
+			}
+			return Running
+		}
 		// SWAP BACK AT >4 (the owner, twice: "she uses the javelin more than the bow —
 		// should be the other way around"): Jab's reach is ~4 — a contact she cannot
 		// stab is a contact she should be SHOOTING. In at contact<=3, out at >4; the

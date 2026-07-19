@@ -189,6 +189,12 @@ precondition.
    that backtracks refunds nothing: when the march direction is not into
    the crowd, Flee retreats FORWARD along it — the moor is crossed, not
    orbited. P-2's triggers and clearances stand unchanged.
+8. THE DOOR MOUTH IS SHOT OPEN (the owner, 2026-07-19, at the bridge:
+   "I'd rather she shoot her way through with the bow"): within 12 of
+   the march door, the REACH TOOL holds. The clinch swap is suppressed
+   and the volley fires point-blank — the funnel rewards the pierce,
+   not the poke. Holding the CONTACT TOOL there, she swaps back to the
+   REACH TOOL at once. A dry or dead REACH TOOL still yields (P-1.11).
 
 ### P-6 TELEMETRY (controlled language for the log)
 
