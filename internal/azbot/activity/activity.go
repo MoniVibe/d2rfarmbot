@@ -199,6 +199,11 @@ type Flee struct {
 	// a retreat that backtracks refunds nothing — flee FORWARD when the march
 	// direction is not into the crowd. Nil-safe: no hint, classic away-flee.
 	March func() (data.Position, bool)
+	// P-2.9 pin detection: a retreat that gains no ground is a fight, not a
+	// stride. pinRef/pinAt track net progress; lastStrikeAt paces the answer.
+	pinRef       data.Position
+	pinAt        time.Time
+	lastStrikeAt time.Time
 }
 
 func (f *Flee) Name() string { return "flee" }
@@ -261,10 +266,11 @@ func (f *Flee) Step(ctx *Ctx) Verdict {
 		return Done
 	}
 	cx, cy, n, closest := 0, 0, 0, 1<<30
+	var closestPos data.Position
 	for _, e := range s.Enemies {
 		d := chebyshev(s.Me.Pos, e.Pos)
 		if d < closest {
-			closest = d
+			closest, closestPos = d, e.Pos
 		}
 		if d <= 25 {
 			cx += e.Pos.X
@@ -274,6 +280,26 @@ func (f *Flee) Step(ctx *Ctx) Verdict {
 	}
 	if n == 0 {
 		return Done
+	}
+	// P-2.9 A PINNED RETREAT IS A FIGHT (measured 08:12: flee and breakout
+	// rotated 15s stuck-cooldowns striding into a wall, blood 51→24, no swing
+	// answered): no net ground for 3s with a TOOTH on her → strike it between
+	// strides. The wall has declared CORNERED for her. Never a mute cycle.
+	if f.pinAt.IsZero() || chebyshev(s.Me.Pos, f.pinRef) >= 3 {
+		f.pinRef, f.pinAt = s.Me.Pos, time.Now()
+	}
+	if time.Since(f.pinAt) > 3*time.Second && closest <= 3 &&
+		time.Since(f.lastStrikeAt) >= 350*time.Millisecond {
+		var key byte
+		switch {
+		case s.Me.WeaponKind == "melee" && ctx.Cap != nil && ctx.Cap.Contact != nil:
+			key = ctx.Cap.Contact.Key
+		case s.Me.WeaponKind == "bow" && ctx.Cap != nil && ctx.Cap.Reach != nil:
+			key = ctx.Cap.Reach.Key
+		}
+		volleyAt(ctx, closestPos, key, false)
+		f.lastStrikeAt = time.Now()
+		return Running
 	}
 	// PLANT THE EXIT ON THE RUN (measured 04:14: flee↔travel thrashed at the gate for
 	// 40s while Withdraw — ClassTravel — starved under Flee's survive class; the one
@@ -343,6 +369,11 @@ type Breakout struct {
 	// (run 35, the owner: "opens a portal, fights a little bit, then runs away from
 	// it?"). A started escape is finished: through the portal, heal, dress, return.
 	engaged bool
+	// P-2.9 pin detection: the "open gap" sector can point into camp furniture
+	// the grid has never heard of — striding there forever is the mute cycle
+	// that bled her 51→24 at 08:12.
+	pinRef data.Position
+	pinAt  time.Time
 }
 
 func (b *Breakout) Name() string { return "breakout" }
@@ -520,11 +551,38 @@ func (b *Breakout) Step(ctx *Ctx) Verdict {
 		}
 	}
 
-	if gapCount == 0 {
+	// P-2.9: pin detection across Steps — no net ground for 3s means the chosen
+	// escape line is stone (furniture is in NO grid); the answer is violence.
+	if b.pinAt.IsZero() || chebyshev(s.Me.Pos, b.pinRef) >= 3 {
+		b.pinRef, b.pinAt = s.Me.Pos, time.Now()
+	}
+	pinned := time.Since(b.pinAt) > 3*time.Second
+	if gapCount == 0 && !pinned {
 		// Open gap: stride through it hard (sliding off any wall on the line).
 		dir := sectorDir[gap]
 		out := data.Position{X: s.Me.Pos.X + dir.X*22, Y: s.Me.Pos.Y + dir.Y*22}
 		slideStride(ctx, out, 2*time.Second, 3, b.Name())
+		return Running
+	}
+	if gapCount == 0 && pinned {
+		// The "open" sector is a wall. Strike the nearest enemy instead —
+		// CORNERED = FIGHT, and a kill is the only door left.
+		best, bd := data.Position{}, 1<<30
+		for _, e := range s.Enemies {
+			if d := chebyshev(s.Me.Pos, e.Pos); d < bd {
+				best, bd = e.Pos, d
+			}
+		}
+		if bd <= 4 && time.Since(b.lastStrikeAt) >= 350*time.Millisecond {
+			var key byte
+			if ctx.Cap != nil && ctx.Cap.Contact != nil {
+				key = ctx.Cap.Contact.Key
+			}
+			volleyAt(ctx, best, key, false)
+			b.lastStrikeAt = time.Now()
+		} else if bd > 4 {
+			slideStride(ctx, best, 1200*time.Millisecond, 1, b.Name()) // walk AT the enemy: off the wall
+		}
 		return Running
 	}
 	// FIGHT FOR THE WAY OUT: strike the blocker holding the thinnest sector — VOLLEY

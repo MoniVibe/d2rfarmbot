@@ -144,6 +144,11 @@ from one seed must never steer another.
    provably gone. One potion tick does not un-declare an emergency.
 8. Dodge yields when body-locked (2+ adjacent). Inside a ring the answer is
    violence, not footwork.
+9. A PINNED RETREAT IS A FIGHT (measured 08:12–08:13: breakout and flee
+   pinned at a wall in rotating 15 s cooldowns, striding into the stone,
+   blood 51→24, no swing answered): when the retreat stride gains no
+   ground and a TOOTH is on her, strike the nearest TOOTH between
+   strides. The wall has declared CORNERED for her. Never a mute cycle.
 
 ### P-3 RECOVER
 
