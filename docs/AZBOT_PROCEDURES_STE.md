@@ -94,9 +94,13 @@ Dead is lawful EXCEPT mid-relog: a kill between relog's first ESC and the
 new world's load leaves the pause menu up for the successor (WARNING 4,
 measured 08:41). A kill MID-TRADE leaves the vendor panel up instead
 (measured 12:00: the successor's calibration pressed keys into a deaf
-panel and every service fired into ghost windows). The successor heals
-itself: readable vendor stock at attach is PROOF a panel is open —
-ESC it shut before calibration, up to three times.
+panel and every service fired into ghost windows). And a kill with the
+BAG OPEN leaves a byte-blind panel no proof can see (photographed
+12:12: six deaf talks with the inventory standing). The successor
+heals itself blind: in town, one ESC at attach — the three-bearing
+stride test then tells whether it closed a panel or raised the pause
+menu, and a RealEsc restores the difference. Self-contained, before
+calibration, every launch.
 
 **WARNING 7 — THE FOCUS LAW.** An unfocused world is UNKNOWN. It may
 freeze (measured: zero-gain strides, 2026-07-19 before dawn), or it may keep

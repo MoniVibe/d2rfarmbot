@@ -1585,10 +1585,11 @@ func main() {
 			logger.Info("outcome", "verb", o.Verb, "holder", o.Holder, "result", o.Result.String(), "ev", o.Evidence)
 		}
 	}
-	// WARNING 6 (the 12:00 lesson): a swap mid-TRADE leaves the vendor panel up
-	// for the successor — calibration then presses keys into a deaf panel and
-	// every service fires into ghost windows. Readable vendor stock at attach
-	// is PROOF a panel is open: ESC is safe (WARNING 4) and mandatory.
+	// WARNING 6 (the 12:00 and 12:12 lessons): a swap can inherit ANY panel —
+	// the vendor window (readable) or the plain bag (byte-blind, photographed
+	// eating six straight talks). The successor heals itself blind: in town,
+	// one ESC — the three-bearing stride test then tells whether it closed a
+	// panel or raised the pause menu, and a RealEsc restores the difference.
 	for i := 0; i < 3; i++ {
 		if len(gr.GetData().Inventory.ByLocation(item.LocationVendor)) == 0 {
 			break
@@ -1596,6 +1597,27 @@ func main() {
 		logger.Info("startup: inherited trade panel — closing before calibration")
 		m.KeyLane().Press(0x1B)
 		time.Sleep(600 * time.Millisecond)
+	}
+	if d0 := gr.GetData(); d0.PlayerUnit.Area.IsTown() {
+		m.KeyLane().Press(0x1B) // closes any byte-blind panel; raises the menu if none
+		time.Sleep(500 * time.Millisecond)
+		frozen := true
+		for _, dir := range []data.Position{{X: 4, Y: 4}, {X: -5, Y: 1}, {X: 1, Y: -5}} {
+			me := gr.GetData().PlayerUnit.Position
+			o := verbs.Stride{To: data.Position{X: me.X + dir.X, Y: me.Y + dir.Y},
+				Hold: 400 * time.Millisecond, MinGain: 1}.Do(m, gr, p, led, "startup/shadow")
+			if o.Result == verbs.ResDone {
+				frozen = false
+				break
+			}
+		}
+		if frozen {
+			m.RealEsc() // no panel was open — we raised the menu; put it back
+			time.Sleep(400 * time.Millisecond)
+			logger.Info("startup: hygiene ESC raised the menu (no inherited panel) — restored")
+		} else {
+			logger.Info("startup: hygiene ESC done — world moves; any inherited panel is shut")
+		}
 	}
 	// calibrate wraps probing + the owner's declared build: the owner KNOWS the char
 	// (classic-bot law — kolbot/koolo configs declared skills; nobody inferred them).

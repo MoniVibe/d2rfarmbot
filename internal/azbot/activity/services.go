@@ -1250,6 +1250,7 @@ const skillTabY = 201
 // buttons are farmbot's proven -statalloc coords on this same window.
 const (
 	newStatsBtnX, newStatsBtnY = 397, 662
+	newSkillBtnX, newSkillBtnY = 755, 661 // photographed live 12:12 (logs/shot.png)
 	strBtnX, strBtnY           = 347, 305
 	dexBtnX, dexBtnY           = 347, 428
 	vitBtnX, vitBtnY           = 347, 552
@@ -1393,7 +1394,10 @@ func (sp *Spend) stepSkills(ctx *Ctx, s *percept.Snapshot) Verdict {
 	}
 	if !sp.treeOpen {
 		ctx.M.MoveStop()
-		ctx.M.PressKey(0x54) // 'T' — farmbot's proven tree door on this repack
+		// The NEW SKILL button is the primary door (photographed live at
+		// client (755,661), 12:12 — P-8.2: screen buttons over hotkeys);
+		// farmbot's 'T' toggle waits as plan B on the first frozen read.
+		ctx.M.UIClick(newSkillBtnX, newSkillBtnY)
 		sp.treeOpen = true
 		sp.clickAt = time.Now()
 		return Running
@@ -1413,12 +1417,20 @@ func (sp *Spend) stepSkills(ctx *Ctx, s *percept.Snapshot) Verdict {
 	if after < before {
 		sp.skVerified++
 		sp.skFrozen = 0
-	} else if sp.skFrozen++; sp.skFrozen >= 2 {
-		skillSpendWorks.Store(false)
-		ctx.Led.Append(verbs.Outcome{Verb: "spend", Holder: sp.Name(), Result: verbs.ResDeaf,
-			Evidence: fmt.Sprintf("skill points frozen at %d (verified %d) — tree belief retired", before, sp.skVerified)})
-		sp.closeTree(ctx)
-		return Abandoned
+	} else {
+		sp.skFrozen++
+		if sp.skFrozen == 1 {
+			ctx.M.PressKey(0x54) // plan B: farmbot's 'T' toggle
+			sp.clickAt = time.Now()
+			return Running
+		}
+		if sp.skFrozen >= 3 {
+			skillSpendWorks.Store(false)
+			ctx.Led.Append(verbs.Outcome{Verb: "spend", Holder: sp.Name(), Result: verbs.ResDeaf,
+				Evidence: fmt.Sprintf("skill points frozen at %d through both doors (verified %d) — tree belief retired", before, sp.skVerified)})
+			sp.closeTree(ctx)
+			return Abandoned
+		}
 	}
 	sp.clickAt = time.Now()
 	return Running
