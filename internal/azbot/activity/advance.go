@@ -38,6 +38,13 @@ func BorderKey(seed uint, from, to area.ID) string {
 	return fmt.Sprintf("border.%d.%d.%d", seed, int(from), int(to))
 }
 
+// RoadKey: the breadcrumb trail of a PROVEN walk to this door (the owner,
+// 01:47: "a more complex set of waypoints rather than a single priority move
+// order"). Recorded by the executive's road recorder on every real crossing.
+func RoadKey(seed uint, from, to area.ID) string {
+	return fmt.Sprintf("road.%d.%d.%d", seed, int(from), int(to))
+}
+
 // Leg is one stop on an itinerary: the area, and the character level that makes entering
 // it worthwhile. Under-leveled → Advance stops bidding and she grinds where she stands
 // (deaths are acceptable; futility is not).
@@ -443,6 +450,33 @@ func (a *Advance) Step(ctx *Ctx) Verdict {
 	}
 	me := s.Me.Pos
 
+	// THE ROAD REPLAY (P-5.2a): a proven walk outranks every derivation —
+	// find the furthest crumb we can still see ourselves near, then walk the
+	// chain crumb by crumb (click gait; the game handles the ground truth).
+	if ctx.Mem != nil {
+		var road []data.Position
+		if ctx.Mem.GetJSON(RoadKey(ctx.GR.MapSeed(), s.Me.Area, hop), &road) && len(road) >= 3 {
+			ni := -1
+			for i := len(road) - 1; i >= 0; i-- { // furthest-ahead crumb within reach
+				if chebyshev(me, road[i]) <= 30 {
+					ni = i
+					break
+				}
+			}
+			if ni >= 0 {
+				// walk at the NEXT crumb past the one we're near (or the last)
+				step := minInt(ni+1, len(road)-1)
+				if chebyshev(me, road[step]) <= 6 && step == len(road)-1 {
+					// at the trailhead's end: the drive/cross takes the seam
+				} else {
+					NavDebug(ctx, road[step], "road")
+					clickStride(ctx, road[step], 1100*time.Millisecond, a.Name())
+					return Running
+				}
+			}
+		}
+	}
+
 	tgt, known := a.borderTarget(ctx, d, hop, me)
 	if !known {
 		a.search(ctx, d, me)
@@ -476,32 +510,13 @@ func (a *Advance) Step(ctx *Ctx) Verdict {
 	// (the unstreamed far side reads as wall), each regrid shifts the clamped
 	// goal, and every re-plan walks a fresh circle. The mouth is strode at
 	// directly — cross() owns the band; the wall-slide handles the posts.
-	// THE BAND REQUIRES AN OPEN LINE (01:15: two strides per second into a
-	// pen wall — the entrance read "near" THROUGH the pocket fence, chebyshev
-	// again): the direct steer is lawful only when the straight line to the
-	// door is walkable on the truthful map grids; otherwise the planner owns
-	// it at any distance.
-	lineClear := true
-	if steps := chebyshev(me, tgt); steps > 1 {
-		for i := 1; i < steps; i++ {
-			p := data.Position{X: me.X + (tgt.X-me.X)*i/steps, Y: me.Y + (tgt.Y-me.Y)*i/steps}
-			if !mapWalk(d, s.Me.Area, hop, p) {
-				lineClear = false
-				break
-			}
-		}
-	}
-	if ed > 12 || !lineClear {
-		// P-5.5b THE MAP GRID MARCHES (01:05, the screenshot: a bending,
-		// fence-channeled road no straight drive can walk): the live grid
-		// lies wherever rooms are unstreamed, but the seed server's area grid
-		// is COMPLETE and STATIC — bent roads path cleanly and the goal never
-		// jumps, so the regrid-shift oscillator dies by construction. The
-		// live grid is the fallback only.
-		usingMap := false
-		if ad, ok := d.Areas[s.Me.Area]; ok && ad.Grid != nil {
-			a.grid, usingMap = ad.Grid, true
-		} else if a.grid == nil {
+	if ed > 12 {
+		// P-5.5b RETIRED AT 01:45 (nav.png: the map grid does not even COVER
+		// her position — koolo-map world placement LIES on this mod, exactly
+		// as this file's header has always said: topology only, geometry
+		// never). The live grid marches; it lies too, but only about the
+		// unstreamed, and rooms stream in on approach.
+		if a.grid == nil {
 			a.grid = ctx.Grid
 		}
 		if a.grid == nil { // no grid at all (build failed): walk by dead reckoning
@@ -515,12 +530,10 @@ func (a *Advance) Step(ctx *Ctx) Verdict {
 		}
 		st := a.j.Step(ctx.M, ctx.P, ctx.Led)
 		if st.State == journey.NoPath || st.State == journey.Stalled {
-			if !usingMap && time.Since(a.regridAt) > 8*time.Second && ctx.Regrid != nil {
+			if time.Since(a.regridAt) > 8*time.Second && ctx.Regrid != nil {
 				a.grid = ctx.Regrid()
 				a.regridAt = time.Now()
 				a.j = journey.New(ctx.GR, a.grid, clampToGrid(tgt, a.grid), a.Name())
-			} else if usingMap {
-				a.j = nil // same grid, fresh plan next tick — the map never shifts
 			}
 			clickStride(ctx, tgt, 1200*time.Millisecond, a.Name())
 		}
@@ -685,41 +698,10 @@ func (a *Advance) cross(ctx *Ctx, d game.Data, me data.Position, tgt data.Positi
 			// P-5.3a: a known far side arms THE DRIVE — one committed run at a
 			// point beyond it, deaf to the flickering reads, instead of 300ms
 			// read-reactive pushes that the seam turns into an oscillator.
-			// THE LANE SCAN (01:01, run 97 slid on the bank beside the bridge):
-			// the recorded facts name the flicker moment, not the walkable
-			// lane. The MAP grids of both areas are complete — sweep parallel
-			// offsets and drive the first corridor walkable end to end.
-			a.driving = true
-			a.driveFrom = tgt
-			a.driveTgt = data.Position{X: through.X + (through.X - tgt.X), Y: through.Y + (through.Y - tgt.Y)}
+			// (Lane scan retired 01:45 with the rest of map-geometry: the
+			// grids are misaligned on this mod. The drive runs on MEASURED
+			// facts alone; the slide handles the posts.)
 			a.driveAt = time.Now()
-			dxx, dyy := through.X-tgt.X, through.Y-tgt.Y
-			for _, off := range []int{0, 2, -2, 4, -4, 6, -6, 8, -8, 10, -10} {
-				var s0, s1 data.Position
-				if absInt(dxx) >= absInt(dyy) { // door axis mostly X: offset the lane in Y
-					s0 = data.Position{X: tgt.X, Y: tgt.Y + off}
-					s1 = data.Position{X: through.X + dxx, Y: through.Y + off}
-				} else {
-					s0 = data.Position{X: tgt.X + off, Y: tgt.Y}
-					s1 = data.Position{X: through.X + off, Y: through.Y + dyy}
-				}
-				steps := maxInt(absInt(s1.X-s0.X), absInt(s1.Y-s0.Y))
-				if steps == 0 {
-					continue
-				}
-				ok := true
-				for i := 0; i <= steps; i++ {
-					p := data.Position{X: s0.X + (s1.X-s0.X)*i/steps, Y: s0.Y + (s1.Y-s0.Y)*i/steps}
-					if !mapWalk(d, d.PlayerUnit.Area, hop, p) {
-						ok = false
-						break
-					}
-				}
-				if ok {
-					a.driveFrom, a.driveTgt = s0, s1
-					break
-				}
-			}
 			return
 		}
 		if !haveFar {

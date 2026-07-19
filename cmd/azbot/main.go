@@ -1861,7 +1861,21 @@ func main() {
 	// layer-1 border knowledge; the world's doors accumulate from use.
 	lastArea := area.ID(0)
 	var lastPos data.Position
+	// THE ROAD RECORDER (the owner, 01:47: "a more complex set of waypoints
+	// rather than a single priority move order"): a rolling breadcrumb trail
+	// of her ACTUAL walk — one crumb per 12+ tiles — persisted on every real
+	// crossing as road.<seed>.<from>.<to>. The march replays proven roads
+	// crumb by crumb instead of re-deriving geometry every night.
+	var crumbs []data.Position
 	recordCrossing := func(s *percept.Snapshot) {
+		if s.Me.Area == lastArea && lastArea != 0 {
+			if len(crumbs) == 0 || chebyshev(crumbs[len(crumbs)-1], s.Me.Pos) >= 12 {
+				crumbs = append(crumbs, s.Me.Pos)
+				if len(crumbs) > 12 {
+					crumbs = crumbs[len(crumbs)-12:]
+				}
+			}
+		}
 		if s.Me.Area != lastArea && lastArea != 0 && s.Me.Area != 0 {
 			// Portals teleport (town↔field): only record when the two sides are near
 			// each other — a real walked/clicked door, not a TP jump.
@@ -1870,9 +1884,16 @@ func main() {
 				prov := memory.Provenance{Source: "measured", Evidence: fmt.Sprintf("crossed %d->%d seed %d", int(lastArea), int(s.Me.Area), seed)}
 				mem.PutJSON(activity.BorderKey(seed, lastArea, s.Me.Area), memory.ScopeSeed, prov, lastPos)
 				mem.PutJSON(activity.BorderKey(seed, s.Me.Area, lastArea), memory.ScopeSeed, prov, s.Me.Pos)
+				if len(crumbs) >= 3 {
+					mem.PutJSON(activity.RoadKey(seed, lastArea, s.Me.Area), memory.ScopeSeed,
+						memory.Provenance{Source: "measured", Evidence: fmt.Sprintf("walked road, %d crumbs", len(crumbs))},
+						append(append([]data.Position{}, crumbs...), lastPos))
+					logger.Info("cartographer: ROAD learned", "from", int(lastArea), "to", int(s.Me.Area), "crumbs", len(crumbs)+1)
+				}
 				logger.Info("cartographer: door learned", "from", int(lastArea), "to", int(s.Me.Area),
 					"at", fmt.Sprintf("(%d,%d)", lastPos.X, lastPos.Y))
 			}
+			crumbs = crumbs[:0]
 		}
 		lastArea, lastPos = s.Me.Area, s.Me.Pos
 	}
@@ -2133,7 +2154,7 @@ func main() {
 				arb.Release()
 				// One decisive displacement in a fresh bearing breaks the physical loop.
 				esc := data.Position{X: s.Me.Pos.X - 20, Y: s.Me.Pos.Y - 20}
-				if v.Pathology == watchdog.Stuck {
+				if v.Pathology == watchdog.Stuck || v.Pathology == watchdog.Orbit {
 					// THE POCKET BREAKER (01:23: pinned in a Stony pen, every local
 					// maneuver a wiggle inside the box): four stucks in one 10-box
 					// refute footwork — the portal is the door. Ride home, run the
