@@ -2191,7 +2191,12 @@ func main() {
 					// probe left her pinned two minutes at full blood — the
 					// freeze doesn't care where she stands, and a frozen world
 					// holds its monsters frozen too).
-					if o.Result != verbs.ResDone && !s.Me.CursorItem && time.Since(lastUnpause) > 30*time.Second {
+					// The probe is a FOCUS GRAB (the owner, 02:35: "why does it
+					// bring diablo to the forefront sometimes") — it may not
+					// fire on the first stumble. Three same-box stucks first:
+					// real wedges persist; noise doesn't steal the screen.
+					if o.Result != verbs.ResDone && !s.Me.CursorItem && stuckRunN >= 3 &&
+						time.Since(lastUnpause) > 30*time.Second {
 						safeGround := true
 						for _, e := range s.Enemies {
 							if chebyshev(s.Me.Pos, e.Pos) <= 12 {
