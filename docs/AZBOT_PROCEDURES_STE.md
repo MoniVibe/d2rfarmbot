@@ -39,6 +39,8 @@ Code that performs the action must use the verb's name in its log line.
 | RETREAT | Strides away from a named threat until a named clearance | The clearance condition reads true | (see P-2) |
 | RECLAIM | Hover-confirmed click on her own corpse | Armed flips true | 4 spent rounds → cool and re-approach |
 | RELOG | Save+Exit, then Play, to materialize the corpse in town | The epistemics gate passes in a new world | Missed click → retry in 45 s; churn fail → 4 min |
+| PROBE | Press one candidate key once, then read the selection back | The right-skill selection changes | Unbound — the key is retired for this weapon set (not an error) |
+| SPEND | One click on a plus button while the points panel is provably open | The unspent count decreases AND the target's level rises | 2 frozen reads → close the panel, retire spending for the session |
 
 Approved nouns, one meaning each: TOOTH (an enemy in melee reach ≤3),
 PRESSURE (2+ enemies within 7), CROWD (12+ enemies within 25), DOORMAN
@@ -46,6 +48,14 @@ PRESSURE (2+ enemies within 7), CROWD (12+ enemies within 25), DOORMAN
 LIFELINE (tome, cube, quest-typed item), GHOST WINDOW (a trade read that
 lingers after the panel closed), RIBBON (the flickering area-id band at a
 border), LANDING ROOM (6+ free inventory cells).
+
+Class-agnostic combat nouns, one meaning each: TOOL (a weapon-set plus a
+proven selection that has flinched at least one enemy), REACH TOOL (a TOOL
+with a proven flinch beyond 5), CONTACT TOOL (a TOOL proven only within
+reach ≤3), FUEL (the consumable a TOOL drains — mana, ammo, or charges; a
+dry TOOL is not a TOOL), WORTH (flinches per attempt; the only measure of
+a skill's quality), DRAWABLE (an item type the character can provably
+wield — admitted by a table prior or by one successful EQUIP of the type).
 
 ---
 
@@ -97,10 +107,15 @@ from one seed must never steer another.
    blacklist the target. Do not rub the wall.
 6. VOLLEY at the pace of the animation (350 ms). Never wait for per-shot
    evidence. Never sweep the cursor for combat.
-7. With a TOOTH on her: ask for the javelin swap AND fire point-blank while
+7. With a TOOTH on her: ask for the CONTACT TOOL AND fire point-blank while
    the swap pends. The clinch is not a cease-fire.
 8. Kite only from PRESSURE or below half blood. One healthy chaser is a target.
 9. Kites check the grid first. CORNERED = FIGHT.
+10. Roles change on hysteresis: the CONTACT TOOL at reach ≤3, the REACH
+    TOOL again only past 4. Between is a held decision, not an oscillation.
+11. A character with one TOOL fights with it everywhere. A dry TOOL yields
+    its role to any fueled TOOL; with no fueled TOOL, the dry basic attack
+    is the TOOL of last resort.
 
 ### P-2 RETREAT
 
@@ -172,6 +187,54 @@ precondition.
 4. Status lines carry the self-model: position, area, hp, gold, weapon,
    arrows, holder.
 
+### P-7 ARM — THE CLASS-AGNOSTIC COMBAT SURFACE
+
+The character is whatever her hands and her evidence say she is. No
+procedure may ask "which class is this?" — only "what has she proven?"
+
+1. PROBE every candidate key at session start, after any weapon change,
+   and after RECLAIM (a corpse holds the weapons; selections change).
+2. A selection is a claim. A TOOL is a claim with a flinch. Classify by
+   evidence, never by a skill-ID list.
+3. Tables vote as priors, with provenance. Owner declarations seed the
+   roles and outrank tables. Behavior overrules both; a demotion logs its
+   disproof first (P-6.3).
+4. Fifteen attempts with zero flinches retire a claim for the session.
+5. The TOOL with a proven flinch beyond 5 is the REACH TOOL. A TOOL proven
+   only within reach is the CONTACT TOOL. One TOOL may hold both roles.
+6. Every TOOL names its FUEL and its gauge at classification time. A TOOL
+   whose gauge cannot be read fights only while a fallback TOOL stands.
+
+### P-8 SPEND — POINTS ARE ORDNANCE
+
+1. SPEND is a town service. It runs after IDENTIFY and before EQUIP: a
+   stat point spent well clears an equip gate in the same visit.
+2. The points panel opens by its screen button, never by hotkey
+   (WARNING 5). No button on screen means nothing to spend; move on.
+3. Stat points serve the wardrobe first: meet the requirements of the best
+   held DRAWABLE upgrade, exactly to the gate, strength before dexterity.
+   Points beyond every gate go to vitality. Energy is bought by evidence
+   of starvation only (a session of dry-TOOL retreats), never by default.
+4. Skill points follow WORTH: the proven skill with the highest measured
+   worth takes the point. A prerequisite on its path counts as investment
+   in it.
+5. With no flinch record yet, bank. Banked points are a decision awaiting
+   evidence, not a debt.
+6. Every SPEND obeys its check (Lexicon). A frozen count retires spending
+   for the session — the panel is lying or deaf, and points survive death.
+
+### P-9 JUDGE — CLASS-AGNOSTIC ITEM VALUATION
+
+1. An item is judged by readable facts: slot, quality, type code, and
+   requirements. Names have no vote (the table is scrambled).
+2. A DRAWABLE magic+ item is held for judgment; identified non-DRAWABLE
+   non-keepers are merchandise. LIFELINES stand outside all valuation
+   (WARNING 1).
+3. An upgrade is per-slot: better quality than the worn piece, with
+   requirements within reach — met now, or met by the SPEND already
+   pending (P-8.3).
+4. The wardrobe defines the class; no judgment consults a class name.
+
 ---
 
 ## 4. COMPLIANCE
@@ -184,3 +247,7 @@ precondition.
    same commit that fixes the code.
 4. The Lexicon grows by necessity, never by convenience. One word, one
    meaning, forever.
+5. A class name or a skill ID inside a conditional is doctrine drift.
+   Class knowledge lives in data tables with provenance; conditionals
+   consult roles, evidence, and readable facts only. (The wardrobe defines
+   the class, not the reverse.)
