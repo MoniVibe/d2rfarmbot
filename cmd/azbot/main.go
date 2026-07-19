@@ -103,11 +103,12 @@ func runReplay(logger *slog.Logger, path string, legs []activity.Leg) {
 		return
 	}
 	defer f.Close()
+	radv := activity.NewAdvance(legs)
 	acts := []activity.Activity{&activity.Breakout{}, &activity.Flee{}, activity.NewDodge(),
 		&activity.Respawn{}, activity.NewRelog(), activity.NewReclaim(), activity.NewFight(),
-		activity.NewLoot(), activity.NewFence(), activity.NewRestock(), activity.NewRepair(),
-		activity.NewHeal(), activity.NewIdentify(), activity.NewEquip(), activity.NewAdvance(legs),
-		&activity.Return{}, &activity.Explore{}}
+		activity.NewLoot(), activity.NewImbibe(), activity.NewFence(), activity.NewRestock(), activity.NewRepair(),
+		activity.NewHeal(), activity.NewIdentify(), activity.NewEquip(), radv,
+		&activity.Return{}, &activity.Explore{Frontier: radv.FrontierFor}}
 	arb := &arbiter.Arbiter{}
 	sc := bufio.NewScanner(f)
 	sc.Buffer(make([]byte, 1024*1024), 1024*1024)
@@ -1815,7 +1816,7 @@ func main() {
 	adv := activity.NewAdvance(legs)
 	fight := activity.NewFight()
 	fight.March = adv.MarchGoal // P-5.8: the door mouth is shot open
-	for _, a := range []activity.Activity{&activity.Breakout{}, &activity.Stand{}, &activity.Flee{March: adv.MarchGoal}, activity.NewDodge(), &activity.Respawn{}, activity.NewRelog(), activity.NewReclaim(), fight, activity.NewLoot(), activity.NewFence(), activity.NewRestock(), activity.NewRepair(), activity.NewHeal(), activity.NewIdentify(), activity.NewEquip(), activity.NewSpend(), adv, activity.NewWithdraw(), &activity.Return{}, &activity.Travel{Road: road}, &activity.Explore{}} {
+	for _, a := range []activity.Activity{&activity.Breakout{}, &activity.Stand{}, &activity.Flee{March: adv.MarchGoal}, activity.NewDodge(), &activity.Respawn{}, activity.NewRelog(), activity.NewReclaim(), fight, activity.NewLoot(), activity.NewImbibe(), activity.NewFence(), activity.NewRestock(), activity.NewRepair(), activity.NewHeal(), activity.NewIdentify(), activity.NewEquip(), activity.NewSpend(), adv, activity.NewWithdraw(), &activity.Return{}, &activity.Travel{Road: road}, &activity.Explore{Frontier: adv.FrontierFor}} {
 		acts[a.Name()] = a
 	}
 

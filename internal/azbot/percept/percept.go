@@ -15,6 +15,7 @@ import (
 	"github.com/hectorgimenez/d2go/pkg/data/item"
 	"github.com/hectorgimenez/d2go/pkg/data/mode"
 	"github.com/hectorgimenez/d2go/pkg/data/npc"
+	"github.com/hectorgimenez/d2go/pkg/data/object"
 	"github.com/hectorgimenez/d2go/pkg/data/stat"
 	"github.com/hectorgimenez/koolo/internal/game"
 )
@@ -171,6 +172,45 @@ type Snapshot struct {
 	Junk     []InvItem    // sellable inventory items, grid slots (the Fence's list)
 	Unid     []InvItem    // unidentified magic+ items, grid slots (Identify's list)
 	Upgrades []InvItem    // identified upgrades for worn slots (Equip's list)
+	// RiteNearby: a fresh (Selectable) shrine or well within 25 — Imbibe's
+	// cheap demand signal (P-5R); the Step re-verifies before moving.
+	RiteNearby bool
+}
+
+// The roadside-rite tables live HERE (activity imports percept, never the
+// reverse). GivingShrines are the kinds that GIVE (P-5R.1) — the taking kinds
+// (fire, poison, explosive, monster, exchanges, gem, portal, unknown) are
+// deliberately absent. Wells are split by what they refill.
+var GivingShrines = map[object.ShrineType]bool{
+	object.RefillShrine: true, object.HealthShrine: true, object.ManaShrine: true,
+	object.ArmorShrine: true, object.CombatShrine: true,
+	object.ResistFireShrine: true, object.ResistColdShrine: true,
+	object.ResistLightningShrine: true, object.ResistPoisonShrine: true,
+	object.SkillShrine: true, object.ManaRegenShrine: true,
+	object.StaminaShrine: true, object.ExperienceShrine: true,
+}
+
+var HealthWells = map[object.Name]bool{
+	object.HealingWell: true, object.Act1WildernessWell: true,
+	object.CathedralWell: true, object.DesertWell: true, object.CaveWell: true,
+	object.JungleHealWell: true, object.Act3SewersHealthWell: true,
+	object.MaggotHealthWell: true, object.ArcaneHealthWell: true,
+	object.Act2TombWell: true, object.Act3KurastHealthWell: true,
+	object.ExpansionWell: true, object.ExpansionSnowyWell: true,
+	object.WorldstoneWell: true, object.ExpansionTempleWell: true,
+}
+
+var ManaWells = map[object.Name]bool{
+	object.ManaWell1: true, object.ManaWell2: true, object.ManaWell3: true,
+	object.ManaWell4: true, object.ManaWell5: true, object.ManaWell7: true,
+	object.Act3SewersManaWell: true, object.MaggotManaWell: true,
+	object.ArcaneManaWell: true, object.Act3KurastManaWell: true,
+}
+
+// IsRite: any object the Imbibe activity might want — a giving shrine or a well.
+func IsRite(ob data.Object) bool {
+	return (ob.IsShrine() && GivingShrines[ob.Shrine.ShrineType]) ||
+		HealthWells[ob.Name] || ManaWells[ob.Name]
 }
 
 // AttachReport is the M0 epistemics gate verdict: behavioral probes over the channels
@@ -297,6 +337,23 @@ func (p *Perceptor) Capture() *Snapshot {
 	}
 	for _, it := range d.Inventory.ByLocation(item.LocationGround) {
 		s.Items = append(s.Items, ItemRef{ID: it.UnitID, Pos: it.Position, Name: string(it.Name), Quality: int(it.Quality)})
+	}
+	// P-5R roadside rites: a cheap nearby-rite flag for the Imbibe demand —
+	// the Step re-verifies against the live object list before a single step.
+	for _, ob := range d.Objects {
+		if ob.ID != 0 && ob.Selectable && IsRite(ob) {
+			dx, dy := ob.Position.X-d.PlayerUnit.Position.X, ob.Position.Y-d.PlayerUnit.Position.Y
+			if dx < 0 {
+				dx = -dx
+			}
+			if dy < 0 {
+				dy = -dy
+			}
+			if dx <= 25 && dy <= 25 {
+				s.RiteNearby = true
+				break
+			}
+		}
 	}
 	// Weapon self-model across BOTH sets: the active hands (LocLeftArm/RightArm) name
 	// WeaponKind; the secondary slots are readable too, so the bow set's ammo is known

@@ -21,8 +21,11 @@ import (
 	"github.com/hectorgimenez/koolo/internal/game"
 )
 
+// With an empty Want, the verb is the TOUCH ritual: opening the panel IS the
+// activation (a dark pad lights on its first open) — ESC closes it and the
+// network has grown. With Want, the first LIT destination rides.
 type UseWaypoint struct {
-	Want []area.ID // preference order, deepest first; the first LIT one rides
+	Want []area.ID // preference order, deepest first; empty = touch/activate only
 }
 
 func wpCheb(a, b data.Position) int {
@@ -121,6 +124,15 @@ func (uw UseWaypoint) Do(m *motor.Motor, gr *game.MemoryReader, p *percept.Perce
 		}
 	}
 	time.Sleep(300 * time.Millisecond)
+
+	// TOUCH mode: the open was the point — the pad is lit now and forever.
+	if len(uw.Want) == 0 {
+		m.KeyLane().Press(0x1B)
+		o.Result = ResDone
+		o.Evidence = "pad touched — the network grows"
+		led.Append(o)
+		return o
+	}
 
 	// CHOOSE: the panel's own list is the only honest activation read.
 	avail := gr.GetData().PlayerUnit.AvailableWaypoints

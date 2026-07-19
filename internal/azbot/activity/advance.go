@@ -118,9 +118,24 @@ type Advance struct {
 	marchGoalAt time.Time
 	// P-10 waypoint state: wpAt cools failed/spent ride attempts; wpWalkAt
 	// bounds the walk-to-the-pad detour so an unreachable pad cannot own the
-	// march forever.
-	wpAt     time.Time
-	wpWalkAt time.Time
+	// march forever; wpTouched cools the field TOUCH ritual per area.
+	wpAt      time.Time
+	wpWalkAt  time.Time
+	wpTouched map[area.ID]time.Time
+}
+
+// FrontierFor is the P-5F hint: the itinerary leg the march owns at this
+// level — the next leg once the level lawfully opens it, else the current.
+// Exploration exists only there.
+func (a *Advance) FrontierFor(level int) area.ID {
+	if len(a.Itinerary) == 0 {
+		return 0
+	}
+	ni := minInt(a.idx+1, len(a.Itinerary)-1)
+	if level >= a.Itinerary[ni].MinLevel {
+		return a.Itinerary[ni].Area
+	}
+	return a.Itinerary[minInt(a.idx, len(a.Itinerary)-1)].Area
 }
 
 // MarchGoal is the door the march is walking at right now — the FORCED MARCH
@@ -296,6 +311,40 @@ func (a *Advance) Step(ctx *Ctx) Verdict {
 					}
 					// whiff/deaf/refused: the gate march resumes below
 				}
+			}
+		}
+	}
+
+	// P-10 ACTIVATE ON ARRIVAL (the owner, 23:45: she skipped the Stony Field
+	// pad into a swarm): a pad within 25 on the field march is TOUCHED before
+	// the march proceeds — the ritual is seconds, the network is forever.
+	// Fight still preempts by class; this fires only while the march holds.
+	if !s.Me.InTown && time.Since(a.wpTouched[s.Me.Area]) > 10*time.Minute {
+		dd := ctx.GR.GetData()
+		for _, ob := range dd.Objects {
+			if ob.IsWaypoint() && ob.ID != 0 && chebyshev(s.Me.Pos, ob.Position) <= 25 {
+				if a.wpTouched == nil {
+					a.wpTouched = map[area.ID]time.Time{}
+				}
+				if chebyshev(s.Me.Pos, ob.Position) > 6 {
+					// Bounded approach: 30 s of not reaching the pad concedes it
+					// (a fenced pad must not own the march — the corner lesson).
+					if a.wpWalkAt.IsZero() {
+						a.wpWalkAt = time.Now()
+					}
+					if time.Since(a.wpWalkAt) > 30*time.Second {
+						a.wpTouched[s.Me.Area] = time.Now()
+						a.wpWalkAt = time.Time{}
+					} else {
+						slideStride(ctx, ob.Position, 1200*time.Millisecond, 1, a.Name())
+						return Running
+					}
+					break
+				}
+				a.wpTouched[s.Me.Area] = time.Now()
+				a.wpWalkAt = time.Time{}
+				verbs.UseWaypoint{}.Do(ctx.M, ctx.GR, ctx.P, ctx.Led, a.Name())
+				return Running
 			}
 		}
 	}

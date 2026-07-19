@@ -412,6 +412,35 @@ precondition.
    The swap is rate-limited and verified by the next snapshot; contact
    arriving mid-swap hands the moment back to P-1.
 
+### P-5F THE FRONTIER LAW (the owner, 23:52: "more driven in what she
+does rather than rampage aimlessly like a zerker")
+
+Exploration exists ONLY on the frontier — the itinerary leg the march
+currently owns (the next leg once her level lawfully opens it, else
+the current one). Ground behind the frontier is corridor, not habitat
+(measured: she wandered Stony Field back into Cold Plains chasing
+drift-aggro through the ribbon). Fight still answers aggro anywhere —
+crossing a corridor is not pacifism — but the WANDER belongs to the
+frontier alone; everywhere else the march owns every idle moment.
+
+### P-5R THE ROADSIDE RITES (the owner, 23:50: "intelligently take
+shrines and wells and other stuff")
+
+1. A shrine is judged by its READ TYPE (Shrine.ShrineType — memory,
+   never the sprite): the GIVING kinds (refill, health, mana, armor,
+   combat, the four resists, skill, mana-regen, stamina, experience)
+   are taken; the TAKING kinds (fire, poison, explosive, monster, the
+   exchanges, gem, portal, unknown) are left standing. Experience
+   outranks the rest of the rites.
+2. A WELL is drunk by need: a health well below 65 blood, a mana well
+   below 50 mana (the skill-law is thirsty). A full girl walks past.
+3. Selectable is the freshness oracle: a used shrine and a dry well
+   both read false — never a second click on a spent rite.
+4. The rites yield to blood: no sip within reach of an unwalled enemy
+   (8) — Fight owns that moment by class anyway.
+5. A rite that cannot be reached in 30 s is banned 5 minutes — no
+   fence-pinned pilgrimage (the corner lesson, again).
+
 ### P-6 TELEMETRY (controlled language for the log)
 
 1. A log line names its verb from the Lexicon.

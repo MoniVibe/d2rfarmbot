@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/hectorgimenez/d2go/pkg/data"
+	"github.com/hectorgimenez/d2go/pkg/data/area"
 	"github.com/hectorgimenez/d2go/pkg/data/mode"
 	"github.com/hectorgimenez/d2go/pkg/data/npc"
 	"github.com/hectorgimenez/d2go/pkg/data/skill"
@@ -1602,6 +1603,11 @@ func (l *Loot) Step(ctx *Ctx) Verdict {
 type Explore struct {
 	heading int  // index into the 8 bearings
 	set     bool // heading initialized from the road's outward direction
+	// Frontier is Advance's hint (P-5F): the itinerary leg the march owns for
+	// this level. Exploration exists only there — behind it, ground is
+	// corridor and the march owns every idle moment. Nil-safe: no itinerary,
+	// classic wander.
+	Frontier func(level int) area.ID
 }
 
 var bearings = []data.Position{{X: 35, Y: 0}, {X: 25, Y: 25}, {X: 0, Y: 35}, {X: -25, Y: 25},
@@ -1618,6 +1624,13 @@ func (x *Explore) Demand(s *percept.Snapshot) *arbiter.Demand {
 	// carefully above 25% rather than standing in a field that will never heal her.
 	if s.Me.HPPct < 50 && !(s.Me.HealPots == 0 && s.Me.HPPct >= 25) {
 		return nil
+	}
+	// P-5F THE FRONTIER LAW: the wander belongs to the frontier alone —
+	// behind it the march owns every idle moment (the Stony→Cold drift).
+	if x.Frontier != nil {
+		if fr := x.Frontier(s.Me.Level); fr != 0 && fr != s.Me.Area {
+			return nil
+		}
 	}
 	return &arbiter.Demand{Who: x.Name(), Class: arbiter.ClassExplore, Urgency: 0.1,
 		Commit: arbiter.Commitment{MinHold: 4 * time.Second}}
