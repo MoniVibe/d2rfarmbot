@@ -121,6 +121,7 @@ type Advance struct {
 	// march forever; wpTouched cools the field TOUCH ritual per area.
 	wpAt      time.Time
 	wpWalkAt  time.Time
+	wpLogAt   time.Time
 	wpTouched map[area.ID]time.Time
 }
 
@@ -294,6 +295,17 @@ func (a *Advance) Step(ctx *Ctx) Verdict {
 					padDist, padPos = pd, ob.Position
 				}
 			}
+		}
+		if padDist == 1<<30 && time.Since(a.wpLogAt) > 60*time.Second {
+			// P-6.2: a silent failure is a failure twice — run 89 left town on
+			// foot and the log could not say why the ride never fired.
+			a.wpLogAt = time.Now()
+			mapObjs := 0
+			if ad, ok := dd.Areas[s.Me.Area]; ok {
+				mapObjs = len(ad.Objects)
+			}
+			ctx.Led.Append(verbs.Outcome{Verb: "waypoint", Holder: a.Name(), Result: verbs.ResRefused,
+				Evidence: fmt.Sprintf("no pad known in area %d: map objects=%d, live objects=%d", int(s.Me.Area), mapObjs, len(dd.Objects))})
 		}
 		if padDist < 1<<30 {
 			var wants []area.ID

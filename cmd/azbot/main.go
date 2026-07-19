@@ -2021,16 +2021,25 @@ func main() {
 		wasDead = deadNow
 
 		var demands []arbiter.Demand
+		var benched []arbiter.Demand
 		for _, a := range acts {
 			if d := a.Demand(s); d != nil {
 				// The watchdog's prescriptions: a cooled activity may not win again
 				// until its moment passes — survival and recovery are never cooled.
 				if until, cooled := cooldowns[d.Who]; cooled && time.Now().Before(until) &&
 					d.Class > arbiter.ClassRecover {
+					benched = append(benched, *d)
 					continue
 				}
 				demands = append(demands, *d)
 			}
+		}
+		// A BENCH WITH AN EMPTY FIELD UN-BENCHES: cooling the sole bidder is
+		// self-inflicted idleness (the Flavie hang, 00:23 — advance benched,
+		// explore frontier-gated, and she stood in the moor doing nothing).
+		// The cooldown stays meaningful only while alternatives exist.
+		if len(demands) == 0 && len(benched) > 0 {
+			demands = benched
 		}
 		grant, changed := arb.Decide(demands)
 
