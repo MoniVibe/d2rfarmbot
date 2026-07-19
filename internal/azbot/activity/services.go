@@ -1471,13 +1471,22 @@ func (sp *Spend) closePanel(ctx *Ctx) {
 // skill, tree seat from the skill's own Desc against farmbot's proven grid.
 // Judged by the SkillPoints delta; the 'T' toggle is the door both ways.
 func (sp *Spend) stepSkills(ctx *Ctx, s *percept.Snapshot) Verdict {
+	// RETIRE, don't just Done: a bare Done leaves SkillPoints>0 so Demand
+	// re-bids the same instant — 88k grants/min hot-spin, measured 12:32.
+	// A can't-spend verdict must silence the bid for the session.
 	if ctx.Cap == nil || ctx.Cap.Reach == nil {
-		return Done // no proven TOOL: bank (P-8.5)
+		skillSpendWorks.Store(false)
+		ctx.Led.Append(verbs.Outcome{Verb: "spend", Holder: sp.Name(), Result: verbs.ResRefused,
+			Evidence: "no proven REACH TOOL — skill points banked (P-8.5)"})
+		return Done
 	}
 	sk := ctx.Cap.Reach.Skill
 	desc := sk.Desc()
 	if desc.Page < 1 || desc.Page > 3 || desc.Row < 1 || desc.Row > 6 || desc.Column < 1 || desc.Column > 3 {
-		return Done // no tree seat known for this skill — bank, never click blind
+		skillSpendWorks.Store(false)
+		ctx.Led.Append(verbs.Outcome{Verb: "spend", Holder: sp.Name(), Result: verbs.ResRefused,
+			Evidence: fmt.Sprintf("skill %d has no tree seat (page/row/col) — banked, never click blind", int(sk))})
+		return Done
 	}
 	if time.Since(sp.clickAt) < 700*time.Millisecond {
 		return Running
