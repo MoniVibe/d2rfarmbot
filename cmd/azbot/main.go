@@ -428,7 +428,18 @@ func main() {
 		toScreen := func(px, py int) (int, int) {
 			return int(float64(px)/(*dpiScale)) + gr.WindowLeftX, int(float64(py)/(*dpiScale)) + gr.WindowTopY
 		}
-		win.SetForegroundWindow(hwnd)
+		// MENUS DEMAND TRUE FOREGROUND (manager.go's law): a bare
+		// SetForegroundWindow from a background process silently fails —
+		// force it with the AttachThreadInput trick and VERIFY, or the click
+		// lands in whatever app actually holds focus.
+		for i := 0; i < 12; i++ {
+			if win.GetForegroundWindow() == hwnd {
+				break
+			}
+			game.ForceForegroundHWND(hwnd)
+			time.Sleep(300 * time.Millisecond)
+		}
+		logger.Info("relogtest: foreground check", "isForeground", win.GetForegroundWindow() == hwnd)
 		time.Sleep(400 * time.Millisecond)
 		atMenu := !report.OK() // already OUT of the game (character select): skip the exit phase
 		if atMenu && *playXY == "" {

@@ -68,7 +68,19 @@ func (hid *HID) GameFocused() bool {
 // FocusGame brings D2R to the foreground — required before OS-level real input
 // (menus read hardware-level input only).
 func (hid *HID) FocusGame() {
-	win.SetForegroundWindow(hid.gr.HWND)
+	// MENUS DEMAND TRUE FOREGROUND, and a bare SetForegroundWindow from a
+	// background process SILENTLY FAILS (Windows foreground-lock). Measured
+	// 2026-07-19 21:04: the relog Save+Exit click — correct coordinates —
+	// missed for eight hours because this call didn't take; with the
+	// AttachThreadInput force + verify, the same click fired in half a
+	// second. Force it and VERIFY, like manager.NewGame always has.
+	for i := 0; i < 10; i++ {
+		if win.GetForegroundWindow() == hid.gr.HWND {
+			return
+		}
+		ForceForegroundHWND(hid.gr.HWND)
+		time.Sleep(200 * time.Millisecond)
+	}
 }
 
 func (hid *HID) KeySequence(keysToPress ...byte) {
