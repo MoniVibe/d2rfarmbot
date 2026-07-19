@@ -157,12 +157,19 @@ region; the cursor-empty read is the only proof of success.
 
 ### P-2 RETREAT
 
-1. A CROWD is fled — at 12 wounded (below 75), at 16 healthy (the owner,
-   11:15: "shoot more than moving"; run 41's eighty-four remain the law's
-   floor, not its ceiling). Blood is a lagging indicator inside a horde.
+0. THE BLOOD ORACLE (the owner, 11:40: "can we have a survival hp oracle"):
+   retreat is judged by MEASURED survivability, never by counting heads.
+   A sliding 5 s window yields the blood drop rate; each belt heal extends
+   the runway 40 blood; TIME-TO-DIE is the verdict. She blasts while the
+   runway holds (TTD ≥ 10 s), retreats when it shortens, and dives when it
+   collapses. ONE density backstop remains: 20+ within 25 is fled at any
+   oracle verdict — density kills before HP moves (run 41's eighty-four).
+1. A CROWD (12+, 16 healthy) is fled only when the oracle agrees
+   (TTD < 10 s) — a crowd she is out-sustaining is a target-rich
+   environment, not an emergency.
 2. Clearance from a CROWD is: fewer than 8 within 25. The eject seat
-   (Breakout) arms at 6 surrounding below half blood — not at four
-   nuisances under a scratch (the 57-HP sortie loop, 11:06).
+   (Breakout) arms at 6 surrounding with a collapsing runway (TTD < 12 s)
+   — not at four nuisances under a scratch (the 57-HP sortie loop, 11:06).
 3. With an empty belt, a RETREAT has a destination: plant the portal when
    the gap opens, run to it, ENTER it. Fleeing is not a lifestyle.
 4. A portal that exists is a decision already made. Breakout stepping at all
@@ -188,6 +195,13 @@ region; the cursor-empty read is the only proof of success.
     portal HOT for three minutes. Return does not walk a hot portal —
     the march re-enters by the gate and picks its own ground. An escape
     valve that feeds her back to the same jaws is not an escape.
+11. THE THIRD RETREAT IS A LIE (the owner, 11:35: "not the same back
+    and forth more than 3 times"): a third crowd-flee within 90 s and
+    30 tiles of the last declares the retreat useless — Flee stands
+    down for 60 s, the wounded stand-down suspends, and FIGHT owns the
+    ground with the skill doing the arguing (P-1.13). The death floor
+    is exempt: below 30 blood the fatigue never binds, and Breakout's
+    critical band keeps the deep escape armed.
 
 ### P-3 RECOVER
 

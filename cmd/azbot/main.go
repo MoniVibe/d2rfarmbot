@@ -1735,9 +1735,13 @@ func main() {
 				logger.Info("executive: NEW WORLD", "seed", gr.MapSeed())
 				gridArea = -1 // force grid realign
 				lastArea = 0  // don't record a phantom crossing over the gap
+				// Beliefs retired by one world's bad frames must not silence
+				// services in the next (WARNING 8; the reviewer's finding 2).
+				activity.NewWorld()
 			}
 		}
 		recordCrossing(s)
+		activity.ObserveBlood(s) // P-2.0: one blood truth for every Demand this cycle
 		// Grid follows the area (the re-align, owned in one place) — and REGROWS on a
 		// clock in the field: rooms stream in as she walks, and a grid built at the
 		// border brands every unloaded room a wall. Loot/Reclaim/Fight journeys were
@@ -1810,6 +1814,7 @@ func main() {
 		if (s.Me.Armed != wasArmed || (wasDead && !deadNow)) && !deadNow {
 			logger.Info("executive: self-model event — recalibrating", "armed", s.Me.Armed, "revived", wasDead)
 			cap = calibrate()
+			fight.Recalibrated() // the audit follows the hands (P-7.1)
 			wasArmed = s.Me.Armed
 		}
 		wasDead = deadNow

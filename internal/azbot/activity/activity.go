@@ -164,6 +164,24 @@ var carryReachAt time.Time
 // portals alone and the march re-enters by the gate on its own ground.
 var hotPortalUntil time.Time
 
+// NewWorld re-arms every retired belief and clears cross-seed state — a relog
+// re-rolls the world (WARNING 8), and a belief retired by one bad frame in
+// game 1 must not silence a whole service for every game after (the
+// reviewer's finding 2: one ghost window benched the equip service forever).
+func NewWorld() {
+	healerHeals.Store(true)
+	equipWorks.Store(true)
+	identifyWorks.Store(true)
+	scrollWorks.Store(true)
+	spendWorks.Store(true)
+	skillSpendWorks.Store(true)
+	refusedEquips = map[int]bool{}
+	hotPortalUntil = time.Time{}
+	carryReachAt = time.Time{}
+	fleeFatigueUntil = time.Time{}
+	bloodRing = nil // a load-screen gap would read as a phantom drop rate
+}
+
 // CarryReach — P-5.9 THE MARCH CARRIES THE REACH TOOL (the owner, at the
 // corner: "she's not pulling her bow out"): walking with no enemy within 8,
 // a REACH set that exists and is not dry is the set in hand. One rate-limited
@@ -209,6 +227,62 @@ type Flee struct {
 	pinRef       data.Position
 	pinAt        time.Time
 	lastStrikeAt time.Time
+	// P-2.11 flee-fatigue bookkeeping: distinct crowd-flee episodes on the
+	// same ground. The third inside the window declares the retreat a lie.
+	epCount      int
+	epPos        data.Position
+	lastCrowdBid time.Time
+}
+
+// fleeFatigueUntil — P-2.11 THE THIRD RETREAT IS A LIE: while it holds, Flee
+// stands down (above the death floor) and Fight's wounded stand-down is
+// suspended — she blasts instead of orbiting. Reset per world (NewWorld).
+var fleeFatigueUntil time.Time
+
+// ---------------------------------------------------------------- Blood oracle (P-2.0)
+
+type bloodSample struct {
+	at time.Time
+	hp int
+}
+
+var bloodRing []bloodSample
+
+// ObserveBlood feeds the oracle one snapshot — the executive calls it every
+// cycle so every Demand judges from ONE truth.
+func ObserveBlood(s *percept.Snapshot) {
+	if s == nil || !s.Valid || s.Me.HPPct <= 0 {
+		return
+	}
+	now := time.Now()
+	bloodRing = append(bloodRing, bloodSample{now, s.Me.HPPct})
+	for len(bloodRing) > 0 && now.Sub(bloodRing[0].at) > 5*time.Second {
+		bloodRing = bloodRing[1:]
+	}
+}
+
+// TimeToDie — P-2.0 THE BLOOD ORACLE's verdict: seconds until the hard floor
+// (18) at the measured drop rate, with 40 blood of runway per belt heal.
+// 999 = the runway holds (stable, rising, or no window yet — never retreat
+// on a guess; the density backstop covers the burst that outruns the window).
+func TimeToDie(s *percept.Snapshot) float64 {
+	if len(bloodRing) < 3 {
+		return 999
+	}
+	first, last := bloodRing[0], bloodRing[len(bloodRing)-1]
+	dt := last.at.Sub(first.at).Seconds()
+	if dt < 1.5 {
+		return 999
+	}
+	rate := float64(first.hp-last.hp) / dt // blood pct per second
+	if rate <= 0.5 {
+		return 999
+	}
+	runway := float64(s.Me.HPPct-18) + float64(s.Me.HealPots)*40
+	if runway < 0 {
+		runway = 0
+	}
+	return runway / rate
 }
 
 func (f *Flee) Name() string { return "flee" }
@@ -217,15 +291,9 @@ func (f *Flee) Demand(s *percept.Snapshot) *arbiter.Demand {
 	if !s.Valid || s.Me.InTown || s.Me.HPPct <= 0 {
 		return nil
 	}
-	// The trigger ALIGNS with Fight's stand-down floor (35, or 50 dry): below it Fight
-	// refuses to bid, and the old narrow Flee (HP<32, contact≤14) left a dead band
-	// where NOTHING bid — she stood mid-moor eating archer fire (the owner: "it stands
-	// idle despite monsters being nearby"). If she's too hurt to fight and teeth are
-	// within 25 tiles, she leaves. Range counts: archers at 20 are pressure too.
-	floor := 35
-	if s.Me.HealPots == 0 {
-		floor = 50
-	}
+	// P-2.0: the retreat triggers below judge by the BLOOD ORACLE's runway
+	// (TimeToDie), not by static HP floors — Fight's own stand-down uses the
+	// same oracle, so no dead band opens between the rules.
 	near := 0
 	for _, e := range s.Enemies {
 		if chebyshev(s.Me.Pos, e.Pos) <= 25 {
@@ -239,14 +307,49 @@ func (f *Flee) Demand(s *percept.Snapshot) *arbiter.Demand {
 	if s.Me.HPPct < 75 {
 		crowdBar = 12
 	}
-	if near >= crowdBar {
+	// WARNING 3 (the reviewer's finding 5): a naked girl with a corpse out
+	// there has ONE job — fleeing away from her own gear is how she loops
+	// flee→die→respawn forever. Recovery owns her; Flee stands down.
+	if s.Me.WeaponKind == "none" && s.Me.CorpseFound {
+		return nil
+	}
+	// P-2.0: DENSITY BACKSTOP first — 20+ is fled at any oracle verdict and
+	// through any fatigue (density kills before HP moves; run 41).
+	if near >= 20 {
 		return &arbiter.Demand{Who: f.Name(), Class: arbiter.ClassSurvive,
 			Urgency: 1.35,
 			Commit:  arbiter.Commitment{MinHold: 2 * time.Second}}
 	}
-	// P-1.12: the lone chaser is Fight's, at any blood — a retreat from one
-	// enemy is a chase, and she loses chases (the single-zombie death, 09:18).
-	if s.Me.HPPct < floor && near >= 2 {
+	ttd := TimeToDie(s)
+	if near >= crowdBar && ttd < 10 {
+		// P-2.11 THE THIRD RETREAT IS A LIE: count distinct episodes on the
+		// same ground; the third inside 90 s fatigues Flee for 60 s. The death
+		// floor (30) is exempt — fatigue never binds a dying girl.
+		if time.Since(f.lastCrowdBid) > 15*time.Second {
+			if time.Since(f.lastCrowdBid) > 90*time.Second || chebyshev(s.Me.Pos, f.epPos) > 30 {
+				f.epCount = 0 // fresh ground or a stale window: new ledger
+			}
+			f.epCount++
+			f.epPos = s.Me.Pos
+			if f.epCount >= 3 {
+				fleeFatigueUntil = time.Now().Add(60 * time.Second)
+				f.epCount = 0
+			}
+		}
+		f.lastCrowdBid = time.Now()
+		if time.Now().Before(fleeFatigueUntil) && s.Me.HPPct >= 30 {
+			return nil // stand and blast — Fight owns the ground (P-2.11)
+		}
+		return &arbiter.Demand{Who: f.Name(), Class: arbiter.ClassSurvive,
+			Urgency: 1.35,
+			Commit:  arbiter.Commitment{MinHold: 2 * time.Second}}
+	}
+	// P-1.12 + P-2.0: the wounded retreat fires on a SHORT RUNWAY with real
+	// pressure — never on head-count alone, never from one chaser.
+	if ttd < 8 && near >= 2 {
+		if time.Now().Before(fleeFatigueUntil) && s.Me.HPPct >= 30 {
+			return nil // P-2.11: the fatigue suspends the wounded retreat too
+		}
 		return &arbiter.Demand{Who: f.Name(), Class: arbiter.ClassSurvive,
 			Urgency: 1.0 - float64(s.Me.HPPct)/100,
 			Commit:  arbiter.Commitment{MinHold: 2 * time.Second}}
@@ -444,11 +547,11 @@ func (b *Breakout) Demand(s *percept.Snapshot) *arbiter.Demand {
 			near++
 		}
 	}
-	// P-2.2: the eject seat arms at 6 surrounding below half blood — four
-	// nuisances under a scratch kept her porting out of winnable fights all
-	// morning (the 57-HP sortie loop, 11:06).
+	// P-2.2 + P-2.0: the eject seat arms at 6 surrounding with a COLLAPSING
+	// runway — four nuisances under a scratch kept her porting out of
+	// winnable fights all morning (the 57-HP sortie loop, 11:06).
 	critical := s.Me.HPPct < 24
-	surrounded := near >= 6 && s.Me.HPPct < 50
+	surrounded := near >= 6 && TimeToDie(s) < 12
 	trapped := s.Me.HPPct < 45 && s.Me.HealPots == 0 && near >= 3
 	// COMMITMENT: an engaged escape keeps bidding while its portal stands — one
 	// potion tick dropping 'surrounded' must not strand a half-used exit.
@@ -472,6 +575,7 @@ func (b *Breakout) Step(ctx *Ctx) Verdict {
 	}
 	if s.Me.InTown {
 		b.engaged = false
+		b.castTries = 0 // the poverty spiral ends where the shopping starts
 		return Done // through the portal — safe; town services take the wheel
 	}
 	near := 0
@@ -484,6 +588,10 @@ func (b *Breakout) Step(ctx *Ctx) Verdict {
 		b.engaged = false // the portal fell out of the world (rooms unloaded / expired)
 	}
 	if near == 0 && s.Me.HPPct >= 40 && !b.engaged {
+		// A capped cast counter must not survive the emergency it counted:
+		// hours later, tome restocked, a new encirclement found the cast block
+		// dead forever (the reviewer's finding 1) — reset on every clean exit.
+		b.castTries = 0
 		return Done // broke out and clear — and no half-used exit standing
 	}
 
@@ -673,24 +781,28 @@ type Fight struct {
 
 func NewFight() *Fight { return &Fight{blacklist: map[data.UnitID]time.Time{}} }
 
+// Recalibrated clears the ranged-skill audit — P-7.1 PROBEs after RECLAIM
+// because the weapons changed hands, and a demotion measured on the OLD hands
+// proves nothing about the new (the reviewer's finding 3: a once-demoted bow
+// stayed plain-arrow forever across every reclaim).
+func (f *Fight) Recalibrated() {
+	f.rangedDead, f.rangedShots, f.rangedFlinch = false, 0, 0
+}
+
 func (f *Fight) Name() string { return "fight" }
 
 func (f *Fight) Demand(s *percept.Snapshot) *arbiter.Demand {
 	// Stop committing to a fight while wounded — hand the tick to Flee/EscapeTP early,
 	// not at 5% (the bleed-out). With no potions the bar is higher: retreat sooner.
-	floor := 35
-	if s.Me.HealPots == 0 {
-		floor = 50
-	}
 	if !s.Valid || s.Me.InTown {
 		return nil
 	}
-	// P-1.12 THE LONE TOOTH IS FOUGHT AT ANY BLOOD: the wounded stand-down
-	// applies to PRESSURE, never to a single enemy — she died to one zombie
-	// without hitting it back while Flee owned every wounded moment (09:18).
-	// The count uses Flee's own 25-tile band: one enemy there is Fight's at
-	// any blood, two or more are Flee's — no dead band between the rules.
-	if s.Me.HPPct < floor {
+	// P-2.0 + P-1.12: the stand-down judges by the BLOOD ORACLE — she fights
+	// any pack she is out-sustaining, and only a genuinely collapsing runway
+	// (TTD < 8 s) with real pressure hands the moment to Flee. The lone
+	// chaser is fought at any blood; fatigue (P-2.11) suspends the stand-down
+	// entirely so she blasts instead of orbiting.
+	if TimeToDie(s) < 8 && !time.Now().Before(fleeFatigueUntil) {
 		near25 := 0
 		for _, e := range s.Enemies {
 			if chebyshev(s.Me.Pos, e.Pos) <= 25 {
@@ -698,7 +810,7 @@ func (f *Fight) Demand(s *percept.Snapshot) *arbiter.Demand {
 			}
 		}
 		if near25 != 1 {
-			return nil // packs are Flee's; the lone chaser is a target
+			return nil // a collapsing runway in a pack is Flee's moment
 		}
 	}
 	// Naked with a corpse holding her gear: punching the moor is denial, not combat —
@@ -761,9 +873,11 @@ func (f *Fight) Step(ctx *Ctx) Verdict {
 		// wall and wins a nearest-first pick — then the approach dances on the wall.
 		// Anything with a clear arrow line outranks everything walled, at any range.
 		// The EXP ORACLE's radius applies here too — no chasing trash on old ground.
+		// ONE radius with Demand (10, reviewer 10): a target that never earned
+		// the bid must never win the selection.
 		radius := 45
 		if !ExpWorthwhile(s.Me.Level, s.Me.Area) {
-			radius = 12
+			radius = 10
 		}
 		// PACK-AWARE pick: score = distance + 3×(bodies within 8 of the candidate).
 		// Nearest-first used to elect the CENTER of a 20-stack and she charged it
@@ -1361,8 +1475,8 @@ type Travel struct {
 func (t *Travel) Name() string { return "travel" }
 
 func (t *Travel) Demand(s *percept.Snapshot) *arbiter.Demand {
-	if !s.Valid || !s.Me.InTown || s.Me.HPPct < 30 || len(t.Road) == 0 {
-		return nil
+	if !s.Valid || !s.Me.InTown || s.Me.HPPct < 30 || len(t.Road) < 2 {
+		return nil // Step indexes Road[len-2]: a one-point road would panic (reviewer 8)
 	}
 	if s.Me.WeaponKind == "none" && s.Me.CorpseFound {
 		return nil // naked with a body out there: recovery owns her, not the road

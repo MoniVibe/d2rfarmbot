@@ -120,6 +120,11 @@ func (dg *Dodge) Demand(s *percept.Snapshot) *arbiter.Demand {
 	if adjacent >= 2 {
 		return nil
 	}
+	// WARNING 3 (the reviewer's finding 5): recovery owns the naked girl —
+	// footwork away from her own corpse serves nothing.
+	if s.Me.WeaponKind == "none" && s.Me.CorpseFound {
+		return nil
+	}
 	// P-2.8: DODGE IS A WOUNDED ART — healthy blood trades: eat the arrow,
 	// answer with one (the owner: the archer-camp wiggle was a sidestep
 	// between every volley). The 400 ms only earns itself when the pool is low.
