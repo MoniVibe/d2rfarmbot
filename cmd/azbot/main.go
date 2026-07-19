@@ -1916,6 +1916,9 @@ func main() {
 	}
 	lastUnpause := time.Time{}
 	lastDeEsc := time.Time{}
+	stuckRunN := 0
+	stuckRunPos := data.Position{}
+	lastPocketTP := time.Time{}
 	for time.Now().Before(deadline) {
 		// WARNING 7 (revised twice; the owner 2026-07-19 night: "we didn't need to
 		// focus diablo before"): the bot NEVER steals focus AND never stops playing
@@ -2131,6 +2134,27 @@ func main() {
 				// One decisive displacement in a fresh bearing breaks the physical loop.
 				esc := data.Position{X: s.Me.Pos.X - 20, Y: s.Me.Pos.Y - 20}
 				if v.Pathology == watchdog.Stuck {
+					// THE POCKET BREAKER (01:23: pinned in a Stony pen, every local
+					// maneuver a wiggle inside the box): four stucks in one 10-box
+					// refute footwork — the portal is the door. Ride home, run the
+					// services (the banked points too), re-enter by proven ground.
+					if chebyshev(s.Me.Pos, stuckRunPos) > 10 {
+						stuckRunPos, stuckRunN = s.Me.Pos, 0
+					}
+					stuckRunN++
+					if stuckRunN >= 4 && !s.Me.InTown && cap.TownTP != nil &&
+						time.Since(lastPocketTP) > 120*time.Second {
+						logger.Warn("watchdog: POCKET BREAKER — footwork refuted; the portal is the door")
+						verbs.CastSelf{Key: cap.TownTP.Key}.Do(m, gr, p, led, "watchdog")
+						time.Sleep(2200 * time.Millisecond)
+						if s2 := p.Capture(); s2.Valid && len(s2.Portals) > 0 {
+							verbs.EnterPortal{Target: s2.Portals[0].ID, TargetPos: s2.Portals[0].Pos}.
+								Do(m, gr, p, led, "watchdog")
+						}
+						lastPocketTP = time.Now()
+						stuckRunN = 0
+						continue
+					}
 					o := verbs.Stride{To: esc, Hold: 2 * time.Second, MinGain: 3}.Do(m, gr, p, led, "watchdog")
 					// WARNING 4: the pause menu is byte-blind and can arrive from
 					// outside (a swap mid-relog, measured 08:41) — a REFUSED watchdog
