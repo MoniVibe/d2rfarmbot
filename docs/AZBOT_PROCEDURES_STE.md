@@ -248,6 +248,15 @@ region; the cursor-empty read is the only proof of success.
 2. In town, unarmed, corpse far: RELOG. The corpse materializes at the spawn.
 3. In town, unarmed, corpse near: RECLAIM it. Step off the body first; her
    own sprite owns the cursor.
+3a. A BODY IN ANOTHER AREA IS AN AREA PROBLEM BEFORE IT IS A BODY
+   PROBLEM. Chebyshev counts THROUGH walls (measured 22:45: pinned in
+   the hub corner striding at a corpse "that way" across the town
+   fence — the owner: "she needs to surmount the wall and get
+   outside"). The sentinel stamps the death AREA at the death moment;
+   when that area is not here, RECLAIM marches the learned border
+   first — the cartographer's gate fact, the same door oracle the
+   march walks by — crosses, and only then journeys at the body. A
+   straight line to a body is a lie wherever a wall stands.
 4. Guarded body: LURE. Run out, the swarm follows the runner, loop back.
 5. Blind-click the body only when zero guards stand on it.
 6. While recovery owns her, no travel procedure may bid (WARNING 3).

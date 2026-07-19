@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/hectorgimenez/d2go/pkg/data"
+	"github.com/hectorgimenez/d2go/pkg/data/area"
 	"github.com/hectorgimenez/koolo/internal/azbot/arbiter"
 	"github.com/hectorgimenez/koolo/internal/azbot/journey"
 	"github.com/hectorgimenez/koolo/internal/azbot/percept"
@@ -21,6 +22,8 @@ type Reclaim struct {
 	tries   int
 	rounds  int // failed hover-sweep rounds at the body
 	coolAt  time.Time
+	bestD   int // closest approach to the body — the travel progress clock
+	bestAt  time.Time
 }
 
 func NewReclaim() *Reclaim { return &Reclaim{} }
@@ -56,6 +59,61 @@ func (rc *Reclaim) Step(ctx *Ctx) Verdict {
 	}
 	me := s.Me.Pos
 	d := chebyshev(me, s.Me.CorpsePos)
+	// Travel progress clock (every walk-at-a-target needs one — movement law 2):
+	// closest approach must improve or the run is grinding a wall. Hand the
+	// grant back, cool, and come at it from wherever the world put her.
+	if rc.bestAt.IsZero() || d < rc.bestD-2 {
+		rc.bestD, rc.bestAt = d, time.Now()
+	}
+	if time.Since(rc.bestAt) > 75*time.Second {
+		rc.bestD, rc.bestAt = 0, time.Time{}
+		rc.j = nil
+		rc.coolAt = time.Now().Add(20 * time.Second)
+		return Abandoned
+	}
+	// P-3.3a: a body in another area is an AREA problem before it is a body
+	// problem — chebyshev counts THROUGH walls (the hub-corner grind, 22:45).
+	// The sentinel stamped the death area; when it is not here, march the
+	// learned border toward it — the cartographer's gate fact, the same door
+	// oracle the march walks by — and only journey at the body once inside.
+	bodyArea := s.Me.Area
+	if ctx.Mem != nil {
+		var ds struct {
+			Area int `json:"area"`
+		}
+		if ctx.Mem.GetJSON("death_state", &ds) && ds.Area != 0 {
+			bodyArea = area.ID(ds.Area)
+		}
+	}
+	if bodyArea != s.Me.Area && ctx.Mem != nil {
+		gd := ctx.GR.GetData()
+		hop := nextHop(gd, s.Me.Area, bodyArea)
+		var gate data.Position
+		if hop != 0 && ctx.Mem.GetJSON(BorderKey(ctx.GR.MapSeed(), s.Me.Area, hop), &gate) && gate.X != 0 {
+			if chebyshev(me, gate) <= 10 {
+				// At the gate mouth: the wall is behind — push through the ribbon
+				// on the body's own bearing.
+				slideStride(ctx, s.Me.CorpsePos, 1200*time.Millisecond, 1, rc.Name())
+				return Running
+			}
+			if ctx.Grid != nil {
+				goal := clampToGrid(gate, ctx.Grid)
+				if rc.j == nil || chebyshev(rc.j.Goal, goal) > 8 {
+					rc.j = journey.New(ctx.GR, ctx.Grid, goal, rc.Name())
+				}
+				st := rc.j.Step(ctx.M, ctx.P, ctx.Led)
+				if st.State == journey.NoPath || st.State == journey.Stalled {
+					slideStride(ctx, gate, 1200*time.Millisecond, 1, rc.Name())
+					rc.j = nil
+				}
+			} else {
+				slideStride(ctx, gate, 1200*time.Millisecond, 1, rc.Name())
+			}
+			return Running
+		}
+		// No route or no learned gate: fall through to the direct journey —
+		// honest best effort, and the progress clock above bounds the grind.
+	}
 	// GUARDED BODY: monsters standing on the corpse eat every click (the owner watched
 	// her "punch things near it" — the blind fallback landing on a monster is a naked
 	// attack). The human move: LURE — run away, the swarm follows HER, not the body;
