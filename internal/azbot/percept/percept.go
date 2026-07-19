@@ -78,6 +78,14 @@ type PlayerState struct {
 	// EquipCandCount: identified inventory pieces that beat what she wears — the
 	// Equip service's docket (shift-click auto-equip, owner-declared gesture).
 	EquipCandCount int
+	// P-8 SPEND self-model: banked stat points and the stat gap to the best
+	// requirement-gated candidate in the bag. NeedStr/NeedDex are the HIGHEST
+	// str/dex among identified pieces that would docket but for stats — points
+	// spent to these gates unlock an equip in the same town visit (P-8.1).
+	Str, Dex   int
+	StatPoints int
+	NeedStr    int
+	NeedDex    int
 }
 
 // EnemyRef is a live hostile: identity, position, and Mode (the honest liveness read —
@@ -229,16 +237,25 @@ func (p *Perceptor) Capture() *Snapshot {
 	if v, ok := d.PlayerUnit.BaseStats.FindStat(stat.StashGold, 0); ok {
 		gold += v.Value
 	}
+	// Banked stat points (P-8: points are ordnance). BaseStats, like Level/Gold —
+	// the Stats block reads 0 for these on this repack.
+	statPts := 0
+	if v, ok := d.PlayerUnit.BaseStats.FindStat(stat.StatPoints, 0); ok {
+		statPts = v.Value
+	}
 	s.Valid = true
 	s.Me = PlayerState{
-		Pos:    pos,
-		Area:   d.PlayerUnit.Area,
-		Mode:   d.PlayerUnit.Mode,
-		HPPct:  d.PlayerUnit.HPPercent(),
-		MPPct:  d.PlayerUnit.MPPercent(),
-		Level:  lvl,
-		Gold:   gold,
-		InTown: d.PlayerUnit.Area.IsTown(),
+		Pos:        pos,
+		Area:       d.PlayerUnit.Area,
+		Mode:       d.PlayerUnit.Mode,
+		HPPct:      d.PlayerUnit.HPPercent(),
+		MPPct:      d.PlayerUnit.MPPercent(),
+		Level:      lvl,
+		Gold:       gold,
+		InTown:     d.PlayerUnit.Area.IsTown(),
+		Str:        str,
+		Dex:        dex,
+		StatPoints: statPts,
 	}
 	if ub := p.gr.UIBytes(); len(ub) > 0xF4 {
 		s.MenuOpen = ub[0xF4] == 1
@@ -358,18 +375,9 @@ func (p *Perceptor) Capture() *Snapshot {
 	// CAN ACTUALLY WEAR: level and stat requirements gate first (the owner watched
 	// her hammer shift-click on a piece the game refused — "she tries equipping an
 	// item she can't equip"). Bows only judged on the bow set.
-	isUpgrade := func(it data.Item) bool {
-		if !it.Identified || int(it.Quality) < 4 {
-			return false
-		}
-		desc := it.Desc()
-		reqLvl := desc.RequiredLevel
-		if v, ok := it.FindStat(stat.LevelRequire, 0); ok && v.Value > reqLvl {
-			reqLvl = v.Value
-		}
-		if reqLvl > lvl || desc.RequiredStrength > str || desc.RequiredDexterity > dex {
-			return false // the game would refuse the click — so we refuse the attempt
-		}
+	// fitsSlot: the piece would improve a slot she wears (or fill an empty one) —
+	// judged on quality alone, requirements NOT yet consulted.
+	fitsSlot := func(it data.Item) bool {
 		switch it.Desc().Type {
 		case "bow":
 			// P-9.3: judged against the bow set WHEREVER it rides. The Equip
@@ -391,6 +399,31 @@ func (p *Perceptor) Capture() *Snapshot {
 			return !worn || int(it.Quality) > q
 		}
 		return false
+	}
+	isUpgrade := func(it data.Item) bool {
+		if !it.Identified || int(it.Quality) < 4 {
+			return false
+		}
+		desc := it.Desc()
+		reqLvl := desc.RequiredLevel
+		if v, ok := it.FindStat(stat.LevelRequire, 0); ok && v.Value > reqLvl {
+			reqLvl = v.Value
+		}
+		if reqLvl > lvl || desc.RequiredStrength > str || desc.RequiredDexterity > dex {
+			// The game would refuse the click — so we refuse the attempt. But a
+			// piece gated ONLY by str/dex is a SPEND target (P-8.3): record the
+			// gate so banked points can buy the unlock in the same town visit.
+			if reqLvl <= lvl && fitsSlot(it) {
+				if desc.RequiredStrength > str && desc.RequiredStrength > s.Me.NeedStr {
+					s.Me.NeedStr = desc.RequiredStrength
+				}
+				if desc.RequiredDexterity > dex && desc.RequiredDexterity > s.Me.NeedDex {
+					s.Me.NeedDex = desc.RequiredDexterity
+				}
+			}
+			return false
+		}
+		return fitsSlot(it)
 	}
 	occupied := 0
 	for _, it := range d.Inventory.ByLocation(item.LocationInventory) {

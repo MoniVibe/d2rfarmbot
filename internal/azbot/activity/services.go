@@ -14,6 +14,7 @@ import (
 	"github.com/hectorgimenez/d2go/pkg/data"
 	"github.com/hectorgimenez/d2go/pkg/data/item"
 	"github.com/hectorgimenez/d2go/pkg/data/npc"
+	"github.com/hectorgimenez/d2go/pkg/data/stat"
 	"github.com/hectorgimenez/koolo/internal/azbot/arbiter"
 	"github.com/hectorgimenez/koolo/internal/azbot/journey"
 	"github.com/hectorgimenez/koolo/internal/azbot/percept"
@@ -832,6 +833,117 @@ func snapPNG(ctx *Ctx, path string) {
 		_ = png.Encode(f, ctx.GR.Screenshot())
 		f.Close()
 	}
+}
+
+// ---------------------------------------------------------------- Spend (ClassService)
+
+// spendWorks: the live belief that the New-Stats screen button and the panel's
+// plus buttons spend points here. Retired on frozen counts, like equipWorks.
+var spendWorks atomic.Bool
+
+func init() { spendWorks.Store(true) }
+
+// Spend — P-8 POINTS ARE ORDNANCE. Banked stat points buy the wardrobe's
+// requirement gates first (P-8.3: exactly to the gate, strength before
+// dexterity; the owner's unique bow is the standing customer), the rest go to
+// vitality. The panel opens by its SCREEN BUTTON (P-8.2 — WARNING 5, panel
+// hotkeys are deaf); every click is judged by the StatPoints delta (SPEND,
+// Lexicon); ESC fires only after a VERIFIED spend proves a panel was open
+// (WARNING 4 — the pause trap).
+type Spend struct {
+	opened   bool
+	verified int // clicks proven by a points delta since the panel opened
+	frozen   int // consecutive clicks with no delta
+	clickAt  time.Time
+}
+
+// Screen geometry, client pixels (1920x1050): the New Stats button photographed
+// live 2026-07-19 08:21 (logs/shot.png, physical 475,793 / 1.2); the plus
+// buttons are farmbot's proven -statalloc coords on this same window.
+const (
+	newStatsBtnX, newStatsBtnY = 397, 662
+	strBtnX, strBtnY           = 347, 305
+	dexBtnX, dexBtnY           = 347, 428
+	vitBtnX, vitBtnY           = 347, 552
+)
+
+func NewSpend() *Spend { return &Spend{} }
+
+func (sp *Spend) Name() string { return "spend" }
+
+func (sp *Spend) Demand(s *percept.Snapshot) *arbiter.Demand {
+	if !s.Valid || !s.Me.InTown || s.Me.StatPoints <= 0 || !spendWorks.Load() {
+		return nil
+	}
+	urg := 0.35 // vitality dump: below Identify — the docket may still reveal a gate
+	if s.Me.NeedStr > s.Me.Str || s.Me.NeedDex > s.Me.Dex {
+		urg = 0.8 // a gate is buyable: clear it BEFORE Equip (0.75) runs this visit (P-8.1)
+	}
+	return &arbiter.Demand{Who: sp.Name(), Class: arbiter.ClassService,
+		Urgency: urg,
+		Commit:  arbiter.Commitment{MinHold: 4 * time.Second}}
+}
+
+func (sp *Spend) Step(ctx *Ctx) Verdict {
+	s := ctx.Snap
+	if !s.Valid {
+		return Running
+	}
+	if s.Me.StatPoints <= 0 {
+		sp.closePanel(ctx)
+		return Done // ordnance spent — the docket re-judges on the next snapshot
+	}
+	if time.Since(sp.clickAt) < 450*time.Millisecond {
+		return Running // let the last click land before judging
+	}
+	// SAFETY INTERLOCK (Equip's law): panel clicks with a VENDOR up are trades.
+	if len(ctx.GR.GetData().Inventory.ByLocation(item.LocationVendor)) > 0 {
+		closeShop(ctx)
+		return Running
+	}
+	if !sp.opened {
+		ctx.M.MoveStop()
+		ctx.M.UIClick(newStatsBtnX, newStatsBtnY)
+		sp.opened = true
+		sp.clickAt = time.Now()
+		return Running
+	}
+	// The recipient (P-8.3): strength to the gate, then dexterity, then vitality.
+	bx, by := vitBtnX, vitBtnY
+	if s.Me.NeedStr > s.Me.Str {
+		bx, by = strBtnX, strBtnY
+	} else if s.Me.NeedDex > s.Me.Dex {
+		bx, by = dexBtnX, dexBtnY
+	}
+	before := s.Me.StatPoints
+	ctx.M.UIClick(bx, by)
+	time.Sleep(300 * time.Millisecond)
+	after := before
+	if v, ok := ctx.GR.GetData().PlayerUnit.BaseStats.FindStat(stat.StatPoints, 0); ok {
+		after = v.Value
+	}
+	if after < before {
+		sp.verified++
+		sp.frozen = 0
+	} else if sp.frozen++; sp.frozen >= 2 {
+		// Two frozen counts retire spending for the session (SPEND, Lexicon).
+		spendWorks.Store(false)
+		ctx.Led.Append(verbs.Outcome{Verb: "spend", Holder: sp.Name(), Result: verbs.ResDeaf,
+			Evidence: fmt.Sprintf("count frozen at %d (verified %d this panel) — belief retired", before, sp.verified)})
+		sp.closePanel(ctx) // ESC only if a spend ever verified — WARNING 4
+		return Abandoned
+	}
+	sp.clickAt = time.Now()
+	return Running
+}
+
+// closePanel ESCs shut ONLY when a verified spend proved a panel was open —
+// an unproven ESC is the pause trap (WARNING 4).
+func (sp *Spend) closePanel(ctx *Ctx) {
+	if sp.opened && sp.verified > 0 {
+		ctx.M.KeyLane().Press(0x1B)
+	}
+	sp.opened, sp.verified, sp.frozen = false, 0, 0
 }
 
 // ---------------------------------------------------------------- Repair (ClassService)
