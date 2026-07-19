@@ -321,6 +321,14 @@ procedure may ask "which class is this?" — only "what has she proven?"
    evidence, not a debt.
 6. Every SPEND obeys its check (Lexicon). A frozen count retires spending
    for the session — the panel is lying or deaf, and points survive death.
+7. SKILL POINTS ARE ORDNANCE TOO (the owner, 11:20: "maximize dps").
+   The recipient is the proven REACH TOOL's skill — WORTH made flesh
+   (P-8.4); with no proven TOOL, bank. The tree opens by farmbot's
+   proven door and grid (skilldesc Page/Row/Column against the
+   calibrated tab and cell coordinates — data with provenance, not
+   class knowledge). The check: the skill's level rises in the live
+   Skills map AND the unspent count falls. Two frozen reads retire
+   skill spending for the session.
 
 ### P-9 JUDGE — CLASS-AGNOSTIC ITEM VALUATION
 

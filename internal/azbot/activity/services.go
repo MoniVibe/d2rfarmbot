@@ -318,6 +318,9 @@ func ServicesPending(s *percept.Snapshot) bool {
 	if s.Me.StatPoints > 0 && spendWorks.Load() {
 		return true
 	}
+	if s.Me.SkillPoints > 0 && skillSpendWorks.Load() {
+		return true // P-8.7: banked dps is an errand
+	}
 	// P-4.5: a near-empty tome is an errand too — marching out with no escape
 	// hatch is how retreats lose their destination (P-2.3), and an empty ID
 	// tome starves the whole judging pipeline.
@@ -1216,7 +1219,28 @@ type Spend struct {
 	frozen   int // consecutive clicks with no delta
 	clickAt  time.Time
 	doorAt   time.Time // when the New Stats door was clicked — the settle clock
+	// P-8.7 skill phase state
+	treeOpen   bool
+	skVerified int
+	skFrozen   int
 }
+
+// skillSpendWorks: the live belief that the tree door + calibrated grid spend
+// skill points here (P-8.7). Retired on frozen counts.
+var skillSpendWorks atomic.Bool
+
+func init() { skillSpendWorks.Store(true) }
+
+// farmbot's calibrated skill-tree grid, client pixels — PROVEN on this repack
+// (-autoskill spent Benji's banked points into Teeth, 2026-07-18). Page 1 is
+// the RIGHTMOST tab. Data with provenance, not class knowledge (rule 5).
+var (
+	skillTabX = map[int]int{1: 1668, 2: 1523, 3: 1380}
+	skillColX = [4]int{0, 1397, 1524, 1651}
+	skillRowY = [7]int{0, 279, 365, 449, 529, 625, 711}
+)
+
+const skillTabY = 201
 
 // Screen geometry, client pixels (1920x1050): the New Stats button photographed
 // live 2026-07-19 08:21 (logs/shot.png, physical 475,793 / 1.2); the plus
@@ -1233,11 +1257,19 @@ func NewSpend() *Spend { return &Spend{} }
 func (sp *Spend) Name() string { return "spend" }
 
 func (sp *Spend) Demand(s *percept.Snapshot) *arbiter.Demand {
-	if !s.Valid || !s.Me.InTown || s.Me.StatPoints <= 0 || !spendWorks.Load() {
+	if !s.Valid || !s.Me.InTown {
+		return nil
+	}
+	wantStats := s.Me.StatPoints > 0 && spendWorks.Load()
+	wantSkills := s.Me.SkillPoints > 0 && skillSpendWorks.Load()
+	if !wantStats && !wantSkills {
 		return nil
 	}
 	urg := 0.35 // vitality dump: below Identify — the docket may still reveal a gate
-	if s.Me.NeedStr > s.Me.Str || s.Me.NeedDex > s.Me.Dex {
+	if wantSkills {
+		urg = 0.6 // P-8.7: skill points ARE the dps — above the vitality dump
+	}
+	if wantStats && (s.Me.NeedStr > s.Me.Str || s.Me.NeedDex > s.Me.Dex) {
 		urg = 0.8 // a gate is buyable: clear it BEFORE Equip (0.75) runs this visit (P-8.1)
 	}
 	return &arbiter.Demand{Who: sp.Name(), Class: arbiter.ClassService,
@@ -1253,9 +1285,14 @@ func (sp *Spend) Step(ctx *Ctx) Verdict {
 	if s.Me.CursorItem {
 		return Running // WARNING 9: no clicks while an item rides the cursor
 	}
-	if s.Me.StatPoints <= 0 {
+	if s.Me.StatPoints <= 0 || !spendWorks.Load() {
 		sp.closePanel(ctx)
-		return Done // ordnance spent — the docket re-judges on the next snapshot
+		// P-8.7: skill points next — the dps ordnance.
+		if s.Me.SkillPoints <= 0 || !skillSpendWorks.Load() {
+			sp.closeTree(ctx)
+			return Done // all ordnance spent or retired
+		}
+		return sp.stepSkills(ctx, s)
 	}
 	if time.Since(sp.clickAt) < 450*time.Millisecond {
 		return Running // let the last click land before judging
@@ -1334,6 +1371,63 @@ func (sp *Spend) closePanel(ctx *Ctx) {
 		ctx.M.KeyLane().Press(0x1B)
 	}
 	sp.opened, sp.verified, sp.frozen = false, 0, 0
+}
+
+// stepSkills — P-8.7: one skill point per Step into the proven REACH TOOL's
+// skill, tree seat from the skill's own Desc against farmbot's proven grid.
+// Judged by the SkillPoints delta; the 'T' toggle is the door both ways.
+func (sp *Spend) stepSkills(ctx *Ctx, s *percept.Snapshot) Verdict {
+	if ctx.Cap == nil || ctx.Cap.Reach == nil {
+		return Done // no proven TOOL: bank (P-8.5)
+	}
+	sk := ctx.Cap.Reach.Skill
+	desc := sk.Desc()
+	if desc.Page < 1 || desc.Page > 3 || desc.Row < 1 || desc.Row > 6 || desc.Column < 1 || desc.Column > 3 {
+		return Done // no tree seat known for this skill — bank, never click blind
+	}
+	if time.Since(sp.clickAt) < 700*time.Millisecond {
+		return Running
+	}
+	if !sp.treeOpen {
+		ctx.M.MoveStop()
+		ctx.M.PressKey(0x54) // 'T' — farmbot's proven tree door on this repack
+		sp.treeOpen = true
+		sp.clickAt = time.Now()
+		return Running
+	}
+	if sp.skVerified == 0 && sp.skFrozen == 0 {
+		snapPNG(ctx, "logs/skilltree.png") // first knock: the door photographs itself
+	}
+	before := s.Me.SkillPoints
+	ctx.M.UIClick(skillTabX[desc.Page], skillTabY)
+	time.Sleep(250 * time.Millisecond)
+	ctx.M.UIClick(skillColX[desc.Column], skillRowY[desc.Row])
+	time.Sleep(350 * time.Millisecond)
+	after := before
+	if v, ok := ctx.GR.GetData().PlayerUnit.BaseStats.FindStat(stat.SkillPoints, 0); ok {
+		after = v.Value
+	}
+	if after < before {
+		sp.skVerified++
+		sp.skFrozen = 0
+	} else if sp.skFrozen++; sp.skFrozen >= 2 {
+		skillSpendWorks.Store(false)
+		ctx.Led.Append(verbs.Outcome{Verb: "spend", Holder: sp.Name(), Result: verbs.ResDeaf,
+			Evidence: fmt.Sprintf("skill points frozen at %d (verified %d) — tree belief retired", before, sp.skVerified)})
+		sp.closeTree(ctx)
+		return Abandoned
+	}
+	sp.clickAt = time.Now()
+	return Running
+}
+
+// closeTree presses the 'T' toggle shut ONLY when a verified spend proved the
+// tree was open — a blind toggle on a closed tree would OPEN it.
+func (sp *Spend) closeTree(ctx *Ctx) {
+	if sp.treeOpen && sp.skVerified > 0 {
+		ctx.M.PressKey(0x54)
+	}
+	sp.treeOpen, sp.skVerified, sp.skFrozen = false, 0, 0
 }
 
 // ---------------------------------------------------------------- Repair (ClassService)

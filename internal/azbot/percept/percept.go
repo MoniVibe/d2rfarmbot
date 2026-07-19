@@ -82,10 +82,11 @@ type PlayerState struct {
 	// requirement-gated candidate in the bag. NeedStr/NeedDex are the HIGHEST
 	// str/dex among identified pieces that would docket but for stats — points
 	// spent to these gates unlock an equip in the same town visit (P-8.1).
-	Str, Dex   int
-	StatPoints int
-	NeedStr    int
-	NeedDex    int
+	Str, Dex    int
+	StatPoints  int
+	SkillPoints int // banked skill points — P-8.7's ordnance
+	NeedStr     int
+	NeedDex     int
 	// TPScrolls: the TP tome's charge count (mod id 533, stat Quantity) — the
 	// escape hatch's fuel gauge (P-4.5). -1 = no tome in the bag (nothing to
 	// fill; a loose scroll is not a tome).
@@ -249,11 +250,15 @@ func (p *Perceptor) Capture() *Snapshot {
 	if v, ok := d.PlayerUnit.BaseStats.FindStat(stat.StashGold, 0); ok {
 		gold += v.Value
 	}
-	// Banked stat points (P-8: points are ordnance). BaseStats, like Level/Gold —
-	// the Stats block reads 0 for these on this repack.
+	// Banked stat AND skill points (P-8: points are ordnance). BaseStats, like
+	// Level/Gold — the Stats block reads 0 for these on this repack.
 	statPts := 0
 	if v, ok := d.PlayerUnit.BaseStats.FindStat(stat.StatPoints, 0); ok {
 		statPts = v.Value
+	}
+	skillPts := 0
+	if v, ok := d.PlayerUnit.BaseStats.FindStat(stat.SkillPoints, 0); ok {
+		skillPts = v.Value
 	}
 	s.Valid = true
 	s.Me = PlayerState{
@@ -265,11 +270,12 @@ func (p *Perceptor) Capture() *Snapshot {
 		Level:      lvl,
 		Gold:       gold,
 		InTown:     d.PlayerUnit.Area.IsTown(),
-		Str:        str,
-		Dex:        dex,
-		StatPoints: statPts,
-		TPScrolls:  -1, // until the tome is seen in the bag
-		IDScrolls:  -1,
+		Str:         str,
+		Dex:         dex,
+		StatPoints:  statPts,
+		SkillPoints: skillPts,
+		TPScrolls:   -1, // until the tome is seen in the bag
+		IDScrolls:   -1,
 	}
 	if ub := p.gr.UIBytes(); len(ub) > 0xF4 {
 		s.MenuOpen = ub[0xF4] == 1
