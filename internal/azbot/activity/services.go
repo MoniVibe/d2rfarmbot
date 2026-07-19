@@ -276,6 +276,13 @@ func ServicesPending(s *percept.Snapshot) bool {
 	if s.Me.UnidentCount > 0 && identifyWorks.Load() {
 		return true
 	}
+	// P-8.1: banked points are an errand — the march waited on every other
+	// docket while 20 points sat in the bank and the unique stayed bagged
+	// (run 52: Advance took the actuator at 0.20 over Spend's 0.35 by class).
+	// Same escape clause: a retired spend belief does not gate the march.
+	if s.Me.StatPoints > 0 && spendWorks.Load() {
+		return true
+	}
 	if s.Me.Gold >= 10 && s.Me.MinDurPct <= 25 {
 		return true
 	}
@@ -914,6 +921,9 @@ func (sp *Spend) Step(ctx *Ctx) Verdict {
 	if time.Since(sp.doorAt) < 1100*time.Millisecond {
 		return Running
 	}
+	if sp.frozen == 0 && sp.verified == 0 {
+		snapPNG(ctx, "logs/spend_door.png") // did the New Stats click open anything?
+	}
 	// The recipient (P-8.3): strength to the gate, then dexterity, then vitality.
 	bx, by := vitBtnX, vitBtnY
 	if s.Me.NeedStr > s.Me.Str {
@@ -924,6 +934,9 @@ func (sp *Spend) Step(ctx *Ctx) Verdict {
 	before := s.Me.StatPoints
 	ctx.M.UIClick(bx, by)
 	time.Sleep(300 * time.Millisecond)
+	if sp.frozen == 1 && sp.verified == 0 {
+		snapPNG(ctx, "logs/spend_click.png") // where did the plus click actually land?
+	}
 	after := before
 	if v, ok := ctx.GR.GetData().PlayerUnit.BaseStats.FindStat(stat.StatPoints, 0); ok {
 		after = v.Value

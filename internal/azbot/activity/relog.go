@@ -13,8 +13,10 @@ package activity
 import (
 	"time"
 
+	"github.com/hectorgimenez/d2go/pkg/data"
 	"github.com/hectorgimenez/koolo/internal/azbot/arbiter"
 	"github.com/hectorgimenez/koolo/internal/azbot/percept"
+	"github.com/hectorgimenez/koolo/internal/azbot/verbs"
 )
 
 // Menu button positions in SCREENSHOT pixels (1920x1050 physical client), measured
@@ -27,6 +29,8 @@ const (
 type Relog struct {
 	nextAt time.Time // earliest next attempt — short after a missed click, long after churn
 	fails  int
+	failAt time.Time // when the cap filled — it thaws after 5 min (a capped relog
+	// left her permanently naked in a live process, run 47)
 }
 
 func NewRelog() *Relog { return &Relog{} }
@@ -45,6 +49,9 @@ func (rl *Relog) Demand(s *percept.Snapshot) *arbiter.Demand {
 	if s.Me.Level < 3 {
 		return nil // a fresh fist-fighter has no gear to fetch — punching IS her life
 	}
+	if rl.fails >= 3 && time.Since(rl.failAt) > 5*time.Minute {
+		rl.fails = 0 // the cap thaws: naked-forever is worse than another try
+	}
 	if time.Now().Before(rl.nextAt) || rl.fails >= 3 {
 		return nil // rate limit: a relog loop would churn worlds forever
 	}
@@ -53,14 +60,41 @@ func (rl *Relog) Demand(s *percept.Snapshot) *arbiter.Demand {
 		Commit:  arbiter.Commitment{MinHold: 30 * time.Second}}
 }
 
+// worldFrozen is WARNING 4's shadow test, MULTI-BEARING: a fence refuses one
+// direction (measured 08:50: +3,+3 at the spawn nook failed every probe and
+// the false "frozen" skipped relog's ESC through two whole grants); the pause
+// menu refuses ALL of them. Three bearings 120° apart; frozen only when every
+// one is refused.
+func (rl *Relog) worldFrozen(ctx *Ctx) bool {
+	s := ctx.Snap
+	if s == nil || !s.Valid {
+		return false
+	}
+	for _, d := range []data.Position{{X: 4, Y: 4}, {X: -5, Y: 1}, {X: 1, Y: -5}} {
+		o := verbs.Stride{To: data.Position{X: s.Me.Pos.X + d.X, Y: s.Me.Pos.Y + d.Y},
+			Hold: 400 * time.Millisecond, MinGain: 1}.Do(ctx.M, ctx.GR, ctx.P, ctx.Led, "relog/shadow")
+		if o.Result == verbs.ResDone {
+			return false // the world moves — no menu owns it
+		}
+	}
+	return true
+}
+
 func (rl *Relog) Step(ctx *Ctx) Verdict {
 	// Phase 1: pause menu → Save and Exit. TWO tries per grant (run 24: one missed
 	// click abandoned the whole recovery, the 4-minute rate limit left her naked in
 	// town, and Return nearly portaled her back into the swarm bare-fisted).
 	gone := false
 	for attempt := 0; attempt < 2 && !gone; attempt++ {
-		ctx.M.RealEsc()
-		time.Sleep(900 * time.Millisecond)
+		// WARNING 4: a byte-blind menu may ALREADY be up (a swap mid-relog left
+		// one, measured 08:41→08:46: the blind ESC then CLOSED it, the Save+Exit
+		// click fell into the world, and the between-attempt "cleanup" ESC
+		// re-raised it — the parity stuck inverted through three straight
+		// abandons). Test the world first; ESC only when it still moves.
+		if !rl.worldFrozen(ctx) {
+			ctx.M.RealEsc()
+			time.Sleep(900 * time.Millisecond)
+		}
 		ctx.M.RealMenuClick(relogExitBtnX, relogExitBtnY)
 		// Phase 2: wait for the world to unload.
 		for i := 0; i < 20 && ctx.M.Engage.Engaged(); i++ {
@@ -71,8 +105,7 @@ func (rl *Relog) Step(ctx *Ctx) Verdict {
 			}
 		}
 		if !gone {
-			ctx.M.RealEsc() // close whatever half-opened before the retry
-			time.Sleep(600 * time.Millisecond)
+			time.Sleep(600 * time.Millisecond) // no blind ESC — the next attempt's shadow test decides
 		}
 	}
 	if !gone {
