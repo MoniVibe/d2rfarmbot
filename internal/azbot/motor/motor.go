@@ -116,10 +116,14 @@ func (m *Motor) SetPanelScale(s float64) { m.panelScale = s }
 // BareClick is the NPC-talk click: a plain message click with NO key-state override.
 // The override reads as a HELD button when the game polls mid-window, and a held click
 // on an NPC is ATTACK semantics (the shift-click defect) — NPCs accept the bare click.
+// AMNESTY FIRST, EVERY TIME: a latched shift turns this click into force-attack-in-
+// place — the owner watched her air-punching Akara mid-restock (run 26). Interaction
+// clicks are too important to gamble on modifier state; clearing costs microseconds.
 func (m *Motor) BareClick(x, y int) {
 	if !m.Engage.Engaged() {
 		return
 	}
+	m.ModifierAmnesty()
 	m.hid.Click(game.LeftButton, x, y)
 }
 
@@ -188,6 +192,32 @@ func (m *Motor) SellClick(sx, sy int) {
 	m.ModifierAmnesty() // a latched ctrl is quick-sell on every later click — never risk it
 }
 
+// ShiftClick is UIClick with SHIFT held in the override — the auto-equip gesture on an
+// inventory cell while the plain inventory is open (owner-declared law: "shift click
+// and replace items from inventory to equip"). NEVER fire this with a vendor trade up:
+// there the same gesture means SELL. The amnesty at the end kills any latch.
+func (m *Motor) ShiftClick(sx, sy int) {
+	if !m.Engage.Engaged() {
+		return
+	}
+	m.MoveStop()
+	px := int(float64(m.hid.WindowLeftX())*m.panelScale) + sx
+	py := int(float64(m.hid.WindowTopY())*m.panelScale) + sy
+	_ = m.gi.OverridePhysicalCursorPos(px, py)
+	m.hid.MouseMoveClient(sx, sy)
+	time.Sleep(150 * time.Millisecond)
+	_ = m.gi.OverrideGetKeyState(0x10) // SHIFT: the auto-equip modifier
+	_ = m.gi.OverrideGetAsyncKeyState(0x10)
+	m.hid.LeftClickNoMoveClient(sx, sy)
+	_ = m.gi.RestoreGetKeyState()
+	_ = m.gi.RestoreGetAsyncKeyState()
+	time.Sleep(120 * time.Millisecond)
+	_ = m.gi.RestorePhysicalCursorPos()
+	_ = m.gi.RestoreGetCursorInfo()
+	_ = m.gi.RestoreGetCursorPosAddr()
+	m.ModifierAmnesty() // a latched shift makes every later click an attack — never risk it
+}
+
 // ModifierAmnesty releases every modifier (shift/ctrl/alt) at both the game-window and
 // OS level. Alt-tab eats key releases (they go to the newly focused window), so a
 // modifier held across a focus switch stays latched in D2R until this fresh release.
@@ -219,6 +249,19 @@ func (m *Motor) RealEsc() {
 	m.hid.FocusGame()
 	time.Sleep(200 * time.Millisecond)
 	game.SendKeyReal(0x1B)
+}
+
+// RealKey presses any key at the OS level with the game foregrounded — as a
+// SCANCODE event, the exact shape a physical key produces. Three input classes
+// were photographed failing to open the inventory (message press, key-state stub,
+// plain-vk SendInput — runs 33, 37, 38); the panel layer trusts only the scancode.
+func (m *Motor) RealKey(vk uint16) {
+	if !m.Engage.Engaged() {
+		return
+	}
+	m.hid.FocusGame()
+	time.Sleep(150 * time.Millisecond)
+	game.SendKeyRealScan(vk)
 }
 
 // GameFocused reports whether D2R owns the foreground (Sentinel's focus watch).
@@ -314,6 +357,22 @@ func (m *Motor) ClickLeft(x, y int) {
 	m.hid.Click(game.LeftButton, x, y)
 	_ = m.gi.RestoreGetKeyState()
 	_ = m.gi.RestoreGetAsyncKeyState()
+}
+
+// AttackClick: SHIFT+left at a world point — attack-in-place toward the cursor, the
+// walk-proof basic strike (a bow fires down the line, a spear swings the arc). This
+// is what killed the hover sweep: a shift-click needs no confirmed target because it
+// can never be mistaken for a move order. Amnesty after — shift never latches.
+func (m *Motor) AttackClick(x, y int) {
+	if !m.Engage.Engaged() {
+		return
+	}
+	_ = m.gi.OverrideGetKeyState2(0x10, 0x01) // SHIFT + LBUTTON together
+	_ = m.gi.OverrideGetAsyncKeyState2(0x10, 0x01)
+	m.hid.Click(game.LeftButton, x, y)
+	_ = m.gi.RestoreGetKeyState2() // the 2-key stub has its own restore shape
+	_ = m.gi.RestoreGetAsyncKeyState2()
+	m.ModifierAmnesty()
 }
 
 // KeyLane: cursor-free key presses (belt drinks, TP cast). The Sentinel's channel —

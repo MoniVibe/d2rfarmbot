@@ -16,6 +16,7 @@ import (
 	"github.com/hectorgimenez/koolo/internal/azbot/arbiter"
 	"github.com/hectorgimenez/koolo/internal/azbot/percept"
 	"github.com/hectorgimenez/koolo/internal/azbot/verbs"
+	"github.com/hectorgimenez/koolo/internal/game"
 )
 
 type missTrack struct {
@@ -106,6 +107,19 @@ func (dg *Dodge) Demand(s *percept.Snapshot) *arbiter.Demand {
 	if !s.Valid || s.Me.InTown || s.Me.HPPct <= 0 {
 		return nil
 	}
+	// BODY-LOCKED: with 2+ enemies standing ON her, every sidestep is a gain=0 shove
+	// into flesh (run 35's blocked-stride litany) — 350ms of paid paralysis per try.
+	// Inside a ring the answer is violence, not footwork: stand down, let Fight and
+	// Breakout hold the actuator.
+	adjacent := 0
+	for _, e := range s.Enemies {
+		if chebyshev(s.Me.Pos, e.Pos) <= 2 {
+			adjacent++
+		}
+	}
+	if adjacent >= 2 {
+		return nil
+	}
 	dg.observe(s)
 	if !dg.hasThreat {
 		return nil
@@ -127,28 +141,55 @@ func (dg *Dodge) Step(ctx *Ctx) Verdict {
 	if time.Since(dg.lastStrideAt) < 250*time.Millisecond {
 		return Running // let the current sidestep stride play out
 	}
-	// Sidestep PERPENDICULAR to the missile's velocity — both signs escape the line;
-	// pick the side farther from the nearest enemy so the dance doesn't dodge INTO a bite.
+	// Sidestep PERPENDICULAR to the missile's velocity — both signs escape the line —
+	// or straight BACK along it (more flight time = more miss). Candidates are checked
+	// against the GRID before any stride fires: run 25 showed her dodging INTO walls
+	// (gain=0 blocked strides at the same tile, ~400ms each, arrow lands anyway).
+	// Among walkable hops, prefer the one farthest from the nearest tooth.
 	speed := math.Hypot(dg.threatVX, dg.threatVY)
 	px, py := -dg.threatVY/speed, dg.threatVX/speed
 	const hop = 6
 	me := s.Me.Pos
-	a := data.Position{X: me.X + int(px*hop), Y: me.Y + int(py*hop)}
-	b := data.Position{X: me.X - int(px*hop), Y: me.Y - int(py*hop)}
-	tgt := a
-	if nearestEnemyDist(s, a) < nearestEnemyDist(s, b) {
-		tgt = b
+	cands := []data.Position{
+		{X: me.X + int(px*hop), Y: me.Y + int(py*hop)},
+		{X: me.X - int(px*hop), Y: me.Y - int(py*hop)},
+		{X: me.X - int(dg.threatVX/speed*hop), Y: me.Y - int(dg.threatVY/speed*hop)}, // straight away
 	}
-	// A blocked sidestep tries the OTHER side before the wall-slide — the arrow's
-	// line doesn't care which way she leaves it.
+	walkable := func(p data.Position) bool {
+		g := ctx.Grid
+		if g == nil {
+			return true
+		}
+		rp := g.RelativePosition(p)
+		if rp.X < 0 || rp.Y < 0 || rp.X >= g.Width || rp.Y >= g.Height {
+			return true // unknown terrain: optimistic, same as the planner
+		}
+		return g.CollisionGrid[rp.Y][rp.X] != game.CollisionTypeNonWalkable
+	}
+	var tgt data.Position
+	found, bestD := false, -1
+	for _, c := range cands {
+		if !walkable(c) {
+			continue
+		}
+		if d := nearestEnemyDist(s, c); d > bestD {
+			tgt, bestD, found = c, d, true
+		}
+	}
+	if !found {
+		tgt = cands[2] // walled pocket: push away along the arrow's line and hope
+	}
 	o := verbs.Stride{To: tgt, Hold: 350 * time.Millisecond, MinGain: 1}.
 		Do(ctx.M, ctx.GR, ctx.P, ctx.Led, dg.Name())
 	if o.Result == verbs.ResBlocked {
-		other := a
-		if tgt == a {
-			other = b
+		// The grid lied (object, streamed-in wall): one wall-slide try on the best
+		// alternative, then hand the cycle back — never grind a wall mid-dodge.
+		for _, c := range cands {
+			if c != tgt && walkable(c) {
+				slideStride(ctx, c, 350*time.Millisecond, 1, dg.Name())
+				break
+			}
 		}
-		slideStride(ctx, other, 350*time.Millisecond, 1, dg.Name())
 	}
 	dg.lastStrideAt = time.Now()
 	return Running

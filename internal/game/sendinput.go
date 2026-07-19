@@ -120,6 +120,23 @@ func SendKeyReal(vk uint16) {
 	sendInputs([]hwInput{up})
 }
 
+// SendKeyRealScan presses vk as a SCANCODE event — the exact shape a physical key
+// produces. Some input layers (the panel hotkeys, photographed ignoring three other
+// input classes across runs 33-38) read RawInput's MakeCode and see nothing in a
+// plain-vk SendInput; the scancode field is what they trust.
+func SendKeyRealScan(vk uint16) {
+	if iSendKey(vk) {
+		return
+	}
+	procMapVirtualKey := user32SI.NewProc("MapVirtualKeyW")
+	sc, _, _ := procMapVirtualKey.Call(uintptr(vk), 0) // MAPVK_VK_TO_VSC
+	// KEYBDINPUT packs into the union as wVk(low16)|wScan(high16), then dwFlags.
+	down := hwInput{inputType: inputKeyboard, a: uint32(sc) << 16, b: keyeventfScancode}
+	up := hwInput{inputType: inputKeyboard, a: uint32(sc) << 16, b: keyeventfScancode | keyeventfKeyUp}
+	sendInputs([]hwInput{down})
+	sendInputs([]hwInput{up})
+}
+
 // SendClickRealScreen is SendClickReal against the primary display's own bounds — the
 // aquarium is a single-screen laptop, so the virtual desktop IS the screen. Takes the
 // same LOGICAL screen coords as SetCursorPos (WindowLeft + client), keeping units

@@ -121,6 +121,7 @@ func main() {
 	goal := flag.String("goal", "farm", "the Director's current goal: farm (routes+explore+loot) | campaign/rampage (Act 1 march) | gamble (Gheed errand when bankrolled). Goals shape WHICH activities bid; the arbiter still owns every moment.")
 	meleeKeyF := flag.String("meleekey", "", "OWNER-DECLARED melee skill key (e.g. f1 for Jab) — config beats inference on a scrambled mod; overrides calibration")
 	rangedKeyF := flag.String("rangedkey", "", "OWNER-DECLARED bow skill key — overrides calibration (the flinch audit still verifies)")
+	invKeyF := flag.String("invkey", "i", "inventory-panel toggle key (the Equip service's door; KeyBindings memory is dead, so declare it if rebound)")
 	roadTest := flag.Bool("roadtest", false, "M2 soak: walk the measured town road out and back on Stride verbs, print the outcome histogram, exit")
 	jTest := flag.String("jtest", "", "M3 soak: journey to world x,y on the live grid via the Journey authority, print the verdict, exit")
 	fightTest := flag.Bool("fighttest", false, "M4 soak: calibrate capability, cross to Blood Moor, hover-strike nearest enemies with evidence, exit")
@@ -1548,7 +1549,7 @@ func main() {
 	if *goal == "campaign" || *goal == "rampage" {
 		legs = activity.Act1Itinerary()
 	}
-	for _, a := range []activity.Activity{&activity.Breakout{}, &activity.Flee{}, activity.NewDodge(), &activity.Respawn{}, activity.NewRelog(), activity.NewReclaim(), activity.NewFight(), activity.NewLoot(), activity.NewFence(), activity.NewRestock(), activity.NewRepair(), activity.NewHeal(), activity.NewAdvance(legs), activity.NewWithdraw(), &activity.Return{}, &activity.Travel{Road: road}, &activity.Explore{}} {
+	for _, a := range []activity.Activity{&activity.Breakout{}, &activity.Flee{}, activity.NewDodge(), &activity.Respawn{}, activity.NewRelog(), activity.NewReclaim(), activity.NewFight(), activity.NewLoot(), activity.NewFence(), activity.NewRestock(), activity.NewRepair(), activity.NewHeal(), activity.NewIdentify(), activity.NewEquip(), activity.NewAdvance(legs), activity.NewWithdraw(), &activity.Return{}, &activity.Travel{Road: road}, &activity.Explore{}} {
 		acts[a.Name()] = a
 	}
 
@@ -1761,7 +1762,7 @@ func main() {
 				"urgency", fmt.Sprintf("%.2f", grant.Demand.Urgency))
 		}
 		act := acts[grant.Demand.Who]
-		v := act.Step(&activity.Ctx{M: m, GR: gr, P: p, Led: led, Grid: grid, Cap: &cap, Snap: s, SwapKey: hid.GetASCIICode(*swapKey), Regrid: regrid, Mem: mem})
+		v := act.Step(&activity.Ctx{M: m, GR: gr, P: p, Led: led, Grid: grid, Cap: &cap, Snap: s, SwapKey: hid.GetASCIICode(*swapKey), InvKey: hid.GetASCIICode(*invKeyF), Regrid: regrid, Mem: mem})
 		if v != activity.Running {
 			logger.Info("verdict", "activity", grant.Demand.Who, "verdict", map[activity.Verdict]string{activity.Done: "done", activity.Abandoned: "abandoned"}[v])
 			arb.Release()

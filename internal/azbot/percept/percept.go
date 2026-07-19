@@ -65,6 +65,15 @@ type PlayerState struct {
 	// service's reason to exist. The classic bots' law: loot → sell → gold →
 	// repair/potions; a bot with an empty purse cannot take care of itself.
 	JunkCount int
+	// InvFree: free inventory grid cells (vanilla 10x4 frame; item footprints from
+	// the static Desc table). Loot consults it — a full bag turns every pickup into
+	// a 3-fail ban cycle (the owner: "it tries to pick up things but its full").
+	InvFree int
+	// UnidentCount: magic+ items awaiting the ID tome — the Identify service's docket.
+	UnidentCount int
+	// EquipCandCount: identified inventory pieces that beat what she wears — the
+	// Equip service's docket (shift-click auto-equip, owner-declared gesture).
+	EquipCandCount int
 }
 
 // EnemyRef is a live hostile: identity, position, and Mode (the honest liveness read —
@@ -123,6 +132,8 @@ type Snapshot struct {
 	Portals  []PortalRef  // town portals (and red portals) in the world
 	Missiles []MissileRef // projectiles in flight — the dodge reflex's raw feed
 	Junk     []InvItem    // sellable inventory items, grid slots (the Fence's list)
+	Unid     []InvItem    // unidentified magic+ items, grid slots (Identify's list)
+	Upgrades []InvItem    // identified upgrades for worn slots (Equip's list)
 }
 
 // AttachReport is the M0 epistemics gate verdict: behavioral probes over the channels
@@ -189,6 +200,17 @@ func (p *Perceptor) Capture() *Snapshot {
 	if v, ok := d.PlayerUnit.BaseStats.FindStat(stat.Level, 0); ok {
 		lvl = v.Value
 	}
+	str, dex := 0, 0
+	if v, ok := d.PlayerUnit.Stats.FindStat(stat.Strength, 0); ok {
+		str = v.Value
+	} else if v, ok := d.PlayerUnit.BaseStats.FindStat(stat.Strength, 0); ok {
+		str = v.Value
+	}
+	if v, ok := d.PlayerUnit.Stats.FindStat(stat.Dexterity, 0); ok {
+		dex = v.Value
+	} else if v, ok := d.PlayerUnit.BaseStats.FindStat(stat.Dexterity, 0); ok {
+		dex = v.Value
+	}
 	// Gold = inventory + STASH (the owner: "she has cash in the stash, it uses it when
 	// she tries to buy something" — vendors draw from the bank on this build, so the
 	// bank IS purchasing power; reading only pocket gold had her acting broke at a
@@ -226,15 +248,28 @@ func (p *Perceptor) Capture() *Snapshot {
 	// Weapon self-model across BOTH sets: the active hands (LocLeftArm/RightArm) name
 	// WeaponKind; the secondary slots are readable too, so the bow set's ammo is known
 	// even while she holds javelins — the swap-back decision needs that truth.
+	// slotQual/bowQual feed the EQUIP ORACLE: what quality currently occupies each
+	// wearable slot (absent = empty slot = any identified candidate is an upgrade).
 	s.Me.WeaponKind = "none"
 	bowActive, bowSecondary := false, false
 	quivActive, quivSecondary := -2, -2 // -2 = no quiver seen on that set
+	slotQual := map[item.LocationType]int{}
+	bowQual := -1
 	for _, eq := range d.Inventory.ByLocation(item.LocationEquipped) {
 		bl := eq.Location.BodyLocation
+		switch bl {
+		case item.LocHead, item.LocTorso, item.LocFeet, item.LocGloves:
+			slotQual[bl] = int(eq.Quality)
+		}
 		active := bl == item.LocLeftArm || bl == item.LocRightArm
 		secondary := bl == item.LocLeftArmSecondary || bl == item.LocRightArmSecondary
 		if !active && !secondary {
 			continue
+		}
+		if active {
+			if n := string(eq.Name); contains(n, "Bow") || contains(n, "Crossbow") {
+				bowQual = int(eq.Quality)
+			}
 		}
 		n := string(eq.Name)
 		isQuiver := contains(n, "Quiver") || contains(n, "Arrow") || contains(n, "Bolt")
@@ -263,21 +298,19 @@ func (p *Perceptor) Capture() *Snapshot {
 			s.Me.WeaponKind = "melee"
 		}
 	}
-	// Arrows = the ammo wherever the bow lives (a dry quiver VANISHES from its slot,
-	// so bow-without-quiver reads as 0 — every basic attack would whiff at air).
+	// Arrows: ONLY a positively measured quantity counts. Quiver detection by NAME is
+	// blind on this mod (the name table is scrambled — run 23 read the bow IN HAND as
+	// arrows=0 while she shot fine), and quivers self-replenish (owner-confirmed), so
+	// dryness is near-impossible anyway. ABSENCE PROVES NOTHING: an invisible quiver
+	// must never bench the bow — that phantom 0 locked her to the javelin twice
+	// (runs 22 and 23, the owner three times: "she still isn't bow first").
 	switch {
-	case bowActive:
-		s.Me.Arrows = maxInt(quivActive, 0)
-		if quivActive == -1 {
-			s.Me.Arrows = -1
-		}
-	case bowSecondary:
-		s.Me.Arrows = maxInt(quivSecondary, 0)
-		if quivSecondary == -1 {
-			s.Me.Arrows = -1
-		}
+	case bowActive && quivActive >= 0:
+		s.Me.Arrows = quivActive
+	case bowSecondary && quivSecondary >= 0:
+		s.Me.Arrows = quivSecondary
 	default:
-		s.Me.Arrows = -1 // no bow anywhere: ammo is nobody's problem
+		s.Me.Arrows = -1 // no measurable quiver: unknown, assume stocked
 	}
 	// Belt potions count by NUMERIC ID first — the mod scrambles the name table
 	// (its HP potion reads "Herb" id 602, its mana potion id 607 = the old INVALID607
@@ -311,18 +344,87 @@ func (p *Perceptor) Capture() *Snapshot {
 	// iteration order: the audit could keep an empty probe-era spare and fence the
 	// real, scroll-loaded book (the owner: "she simply dropped her tp book again").
 	// A spare tome's 150g is never worth the escape hatch.
+	// isUpgrade: the EQUIP ORACLE's v1 rule — an identified piece for a slot she
+	// wears (or an empty slot) whose quality strictly beats the incumbent, THAT SHE
+	// CAN ACTUALLY WEAR: level and stat requirements gate first (the owner watched
+	// her hammer shift-click on a piece the game refused — "she tries equipping an
+	// item she can't equip"). Bows only judged on the bow set.
+	isUpgrade := func(it data.Item) bool {
+		if !it.Identified || int(it.Quality) < 4 {
+			return false
+		}
+		desc := it.Desc()
+		reqLvl := desc.RequiredLevel
+		if v, ok := it.FindStat(stat.LevelRequire, 0); ok && v.Value > reqLvl {
+			reqLvl = v.Value
+		}
+		if reqLvl > lvl || desc.RequiredStrength > str || desc.RequiredDexterity > dex {
+			return false // the game would refuse the click — so we refuse the attempt
+		}
+		switch it.Desc().Type {
+		case "bow":
+			return s.Me.WeaponKind == "bow" && int(it.Quality) > bowQual
+		case "tors":
+			q, worn := slotQual[item.LocTorso]
+			return !worn || int(it.Quality) > q
+		case "helm":
+			q, worn := slotQual[item.LocHead]
+			return !worn || int(it.Quality) > q
+		case "boot":
+			q, worn := slotQual[item.LocFeet]
+			return !worn || int(it.Quality) > q
+		case "glov":
+			q, worn := slotQual[item.LocGloves]
+			return !worn || int(it.Quality) > q
+		}
+		return false
+	}
+	occupied := 0
 	for _, it := range d.Inventory.ByLocation(item.LocationInventory) {
 		id := int(it.ID)
+		if w, h := it.Desc().InventoryWidth, it.Desc().InventoryHeight; w > 0 && h > 0 {
+			occupied += w * h
+		} else {
+			occupied++ // unknown footprint: count one cell rather than none
+		}
+		if isUpgrade(it) {
+			s.Upgrades = append(s.Upgrades, InvItem{ID: id, GX: it.Position.X, GY: it.Position.Y, Qual: int(it.Quality)})
+			continue // an upgrade is never merchandise
+		}
 		switch {
-		case id == 533 || id == 534: // TP/ID tomes: untouchable, every copy
+		case id == 533 || id == 534 || id == 549: // TP/ID tomes + the HORADRIC CUBE
+			continue
+		case it.Desc().Type == item.TypeQuest:
+			// Quest items are IRREPLACEABLE and the audit's old posture — "everything
+			// I don't recognize is stock" — fenced the cube (the owner: "she also lost
+			// her cube somehow, what the hell"). Type by numeric ID cannot be lied to
+			// by the scrambled name table.
 			continue
 		case id == 602 || id == 607: // potions are fuel, not stock
 			continue
-		case int(it.Quality) >= 4: // magic+ might be gear-oracle food later — hold
+		case int(it.Quality) >= 4 && !it.Identified:
+			// UNIDENTIFIED goes to the docket FIRST — rares and uniques included.
+			// (The old ordering filed rare+ under 'keeper' before this check ever
+			// ran: the owner's unique bow could never be identified.)
+			s.Unid = append(s.Unid, InvItem{ID: id, GX: it.Position.X, GY: it.Position.Y, Qual: int(it.Quality)})
 			continue
+		case int(it.Quality) >= 6: // identified rare+: keepers (equip/stash decide)
+			continue
+		case int(it.Quality) >= 4:
+			// Identified magic she could actually draw (bow/javelin/quiver types) is
+			// held for the equip flow; identified magic she cannot use is MERCHANDISE.
+			if t := it.Desc().Type; t == "bow" || t == "jave" || t == "bowq" || t == "tpot" {
+				continue
+			}
 		}
 		s.Junk = append(s.Junk, InvItem{ID: id, GX: it.Position.X, GY: it.Position.Y, Qual: int(it.Quality)})
 	}
+	s.Me.InvFree = 40 - occupied // vanilla 10x4 frame; a modded larger bag reads conservative
+	if s.Me.InvFree < 0 {
+		s.Me.InvFree = 0
+	}
+	s.Me.UnidentCount = len(s.Unid)
+	s.Me.EquipCandCount = len(s.Upgrades)
 	s.Me.JunkCount = len(s.Junk)
 	if d.Corpse.Found {
 		s.Me.CorpseFound = true

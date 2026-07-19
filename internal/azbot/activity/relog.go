@@ -25,7 +25,7 @@ const (
 )
 
 type Relog struct {
-	lastAt time.Time
+	nextAt time.Time // earliest next attempt — short after a missed click, long after churn
 	fails  int
 }
 
@@ -45,7 +45,7 @@ func (rl *Relog) Demand(s *percept.Snapshot) *arbiter.Demand {
 	if s.Me.Level < 3 {
 		return nil // a fresh fist-fighter has no gear to fetch — punching IS her life
 	}
-	if time.Since(rl.lastAt) < 4*time.Minute || rl.fails >= 3 {
+	if time.Now().Before(rl.nextAt) || rl.fails >= 3 {
 		return nil // rate limit: a relog loop would churn worlds forever
 	}
 	return &arbiter.Demand{Who: rl.Name(), Class: arbiter.ClassRecover,
@@ -54,25 +54,32 @@ func (rl *Relog) Demand(s *percept.Snapshot) *arbiter.Demand {
 }
 
 func (rl *Relog) Step(ctx *Ctx) Verdict {
-	rl.lastAt = time.Now()
-	// Phase 1: pause menu → Save and Exit.
-	ctx.M.RealEsc()
-	time.Sleep(900 * time.Millisecond)
-	ctx.M.RealMenuClick(relogExitBtnX, relogExitBtnY)
-	// Phase 2: wait for the world to unload.
+	// Phase 1: pause menu → Save and Exit. TWO tries per grant (run 24: one missed
+	// click abandoned the whole recovery, the 4-minute rate limit left her naked in
+	// town, and Return nearly portaled her back into the swarm bare-fisted).
 	gone := false
-	for i := 0; i < 30 && ctx.M.Engage.Engaged(); i++ {
-		time.Sleep(500 * time.Millisecond)
-		if !ctx.P.Capture().Valid {
-			gone = true
-			break
+	for attempt := 0; attempt < 2 && !gone; attempt++ {
+		ctx.M.RealEsc()
+		time.Sleep(900 * time.Millisecond)
+		ctx.M.RealMenuClick(relogExitBtnX, relogExitBtnY)
+		// Phase 2: wait for the world to unload.
+		for i := 0; i < 20 && ctx.M.Engage.Engaged(); i++ {
+			time.Sleep(500 * time.Millisecond)
+			if !ctx.P.Capture().Valid {
+				gone = true
+				break
+			}
+		}
+		if !gone {
+			ctx.M.RealEsc() // close whatever half-opened before the retry
+			time.Sleep(600 * time.Millisecond)
 		}
 	}
 	if !gone {
-		// The click missed (or the menu was already open and ESC closed it) — close
-		// any half-open menu and report honestly.
-		ctx.M.RealEsc()
+		// Both clicks missed — the WORLD IS INTACT (no churn happened): retry soon,
+		// not in four minutes. The naked-march guards hold everyone else meanwhile.
 		rl.fails++
+		rl.nextAt = time.Now().Add(45 * time.Second)
 		return Abandoned
 	}
 	time.Sleep(3 * time.Second) // char select settles
@@ -83,9 +90,12 @@ func (rl *Relog) Step(ctx *Ctx) Verdict {
 		time.Sleep(1 * time.Second)
 		if ctx.P.Gate().OK() {
 			rl.fails = 0
+			rl.nextAt = time.Now().Add(4 * time.Minute)
 			return Done // new world; the executive refetches the map, Reclaim takes the town corpse
 		}
 	}
+	// The world churned but never gated back — the expensive failure: full cooldown.
 	rl.fails++
+	rl.nextAt = time.Now().Add(4 * time.Minute)
 	return Abandoned
 }

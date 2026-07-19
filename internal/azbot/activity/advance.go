@@ -51,6 +51,31 @@ func FarmItinerary() []Leg {
 	return []Leg{{area.BloodMoor, 1}, {area.ColdPlains, 3}, {area.StonyField, 6}}
 }
 
+// areaMlvl: approximate monster levels, Act 1 normal — the EXP ORACLE's table.
+// The rule of the game: experience collapses when clvl outruns mlvl by more than ~5.
+var areaMlvl = map[area.ID]int{
+	area.BloodMoor: 1, area.DenOfEvil: 1, area.ColdPlains: 2, area.BurialGrounds: 3,
+	area.Crypt: 3, area.Mausoleum: 3, area.StonyField: 4, area.UndergroundPassageLevel1: 4,
+	area.UndergroundPassageLevel2: 4, area.DarkWood: 5, area.BlackMarsh: 6, area.HoleLevel1: 5,
+	area.HoleLevel2: 5, area.ForgottenTower: 7, area.TamoeHighland: 8, area.PitLevel1: 7, area.PitLevel2: 7,
+	area.MonasteryGate: 8, area.OuterCloister: 9, area.Barracks: 9, area.JailLevel1: 10,
+	area.JailLevel2: 10, area.JailLevel3: 10, area.InnerCloister: 10, area.Cathedral: 11,
+	area.CatacombsLevel1: 11, area.CatacombsLevel2: 11, area.CatacombsLevel3: 12,
+	area.CatacombsLevel4: 12,
+}
+
+// ExpWorthwhile is the EXP ORACLE (the owner: "so it knows which area it should go
+// for and not waste time on low level monsters"): fighting here still pays. Gap ≤4 —
+// at 5 the moor kept a level-7 amazon busy with gray trash (the owner: "she still
+// kills in the blood moor and its barely xp, she should try to push for stony field").
+func ExpWorthwhile(clvl int, ar area.ID) bool {
+	ml, ok := areaMlvl[ar]
+	if !ok {
+		return true // unknown ground: assume it pays
+	}
+	return clvl-ml <= 4
+}
+
 // Act1Itinerary: the full march to Andariel's chamber. Level gates are mild — a rampage,
 // not a crawl.
 func Act1Itinerary() []Leg {
@@ -119,6 +144,11 @@ func (a *Advance) Demand(s *percept.Snapshot) *arbiter.Demand {
 	if !s.Valid || len(a.Itinerary) < 2 {
 		return nil
 	}
+	// A naked amazon with a corpse out there has ONE job and it is not marching —
+	// the recovery activities own her until the gear is back (run 24's near-miss).
+	if s.Me.WeaponKind == "none" && s.Me.CorpseFound {
+		return nil
+	}
 	// In town Advance IS the way out (the live border oracle reads the gate from
 	// anywhere — seed-independent, unlike the hand-piloted road): bid unless the town
 	// errands are waiting. Town is safe, so the HP floor drops (no regen in town; a
@@ -140,8 +170,12 @@ func (a *Advance) Demand(s *percept.Snapshot) *arbiter.Demand {
 	if s.Me.Level < a.Itinerary[idx+1].MinLevel {
 		return nil // under-leveled for the next leg: grind here (Fight/Loot/Explore bid on)
 	}
+	urg := 0.2 // above Explore's wander; Fight preempts by class — that IS the rampage
+	if !s.Me.InTown && !ExpWorthwhile(s.Me.Level, s.Me.Area) {
+		urg = 0.4 // outleveled ground pays nothing: the march itself is the best exp here
+	}
 	return &arbiter.Demand{Who: a.Name(), Class: arbiter.ClassTravel,
-		Urgency: 0.2, // above Explore's wander; Fight preempts by class — that IS the rampage
+		Urgency: urg,
 		Commit:  arbiter.Commitment{MinHold: 4 * time.Second}}
 }
 
@@ -547,6 +581,12 @@ func (r *Return) Name() string { return "return" }
 
 func (r *Return) Demand(s *percept.Snapshot) *arbiter.Demand {
 	if !s.Valid || !s.Me.InTown || s.Me.HPPct < 70 || len(s.Portals) == 0 {
+		return nil
+	}
+	// NEVER portal a naked amazon back into the swarm that killed her (run 24: relog's
+	// exit click missed and Return was next in line with the death-portal standing).
+	// The corpse run — relog or reclaim — owns every moment until the gear is back.
+	if s.Me.WeaponKind == "none" && s.Me.CorpseFound {
 		return nil
 	}
 	if ServicesPending(s) {
