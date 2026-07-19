@@ -1152,7 +1152,7 @@ func (eq *Equip) Step(ctx *Ctx) Verdict {
 	// own docket. The door opens first if needed; the cursor-empty read is the
 	// only proof; a bag with no room hands the problem to the fence.
 	if s.Me.CursorItem {
-		if len(ctx.GR.GetData().Inventory.ByLocation(item.LocationVendor)) > 0 {
+		if dd := ctx.GR.GetData(); len(dd.Inventory.ByLocation(item.LocationVendor)) > 0 && dd.OpenMenus.NPCShop {
 			closeShop(ctx)
 			return Running
 		}
@@ -1204,7 +1204,7 @@ func (eq *Equip) Step(ctx *Ctx) Verdict {
 	}
 	// SAFETY INTERLOCK: shift-click with a VENDOR up means SELL. The vendor-stock
 	// read must be empty before the gesture ever fires.
-	if len(ctx.GR.GetData().Inventory.ByLocation(item.LocationVendor)) > 0 {
+	if dd := ctx.GR.GetData(); len(dd.Inventory.ByLocation(item.LocationVendor)) > 0 && dd.OpenMenus.NPCShop {
 		closeShop(ctx)
 		return Running
 	}
@@ -1418,7 +1418,7 @@ func (sp *Spend) Step(ctx *Ctx) Verdict {
 		return Running // let the last click land before judging
 	}
 	// SAFETY INTERLOCK (Equip's law): panel clicks with a VENDOR up are trades.
-	if len(ctx.GR.GetData().Inventory.ByLocation(item.LocationVendor)) > 0 {
+	if dd := ctx.GR.GetData(); len(dd.Inventory.ByLocation(item.LocationVendor)) > 0 && dd.OpenMenus.NPCShop {
 		closeShop(ctx)
 		return Running
 	}
