@@ -124,6 +124,15 @@ func (uw UseWaypoint) Do(m *motor.Motor, gr *game.MemoryReader, p *percept.Perce
 		}
 	}
 	time.Sleep(300 * time.Millisecond)
+	// Photograph the OPEN panel every session (00:54: the failure photo showed
+	// no panel at all — the first bad row click had closed it, and the picture
+	// that could have named the true rows was taken twenty seconds too late).
+	if img := gr.Screenshot(); img != nil {
+		if f, err := os.Create("logs/wp_panel_open.png"); err == nil {
+			_ = png.Encode(f, img)
+			f.Close()
+		}
+	}
 
 	// TOUCH mode: the open was the point — the pad is lit now and forever.
 	if len(uw.Want) == 0 {

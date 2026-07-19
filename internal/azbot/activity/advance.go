@@ -389,7 +389,18 @@ func (a *Advance) Step(ctx *Ctx) Verdict {
 				}
 				a.wpTouched[s.Me.Area] = time.Now()
 				a.wpWalkAt = time.Time{}
-				verbs.UseWaypoint{}.Do(ctx.M, ctx.GR, ctx.P, ctx.Led, a.Name())
+				// P-10 (the owner, 00:54: "use them if it could shorten the
+				// travel — coming across a cold plains waypoint and teleporting
+				// to stony field"): the field pad carries the same wants as the
+				// town ride — the open is a RIDE when something deeper is lit,
+				// and remains a touch when nothing is.
+				var wants []area.ID
+				for i := len(a.Itinerary) - 1; i > a.idx; i-- {
+					if s.Me.Level >= a.Itinerary[i].MinLevel {
+						wants = append(wants, a.Itinerary[i].Area)
+					}
+				}
+				verbs.UseWaypoint{Want: wants}.Do(ctx.M, ctx.GR, ctx.P, ctx.Led, a.Name())
 				return Running
 			}
 		}
