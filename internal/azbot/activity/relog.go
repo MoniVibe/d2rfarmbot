@@ -41,17 +41,12 @@ func (rl *Relog) Demand(s *percept.Snapshot) *arbiter.Demand {
 	if !s.Valid || !s.Me.InTown || s.Me.HPPct <= 0 {
 		return nil
 	}
-	// P-4.8a: a POISONED WORLD (three ghost verdicts — a wedged vendor no
-	// retry can heal, measured 12:00→12:24) earns its relog even fully armed.
-	// Recover outranks Service by class, so the dying errands yield.
-	if WorldPoisoned() {
-		if time.Now().Before(rl.nextAt) || rl.fails >= 3 {
-			return nil
-		}
-		return &arbiter.Demand{Who: rl.Name(), Class: arbiter.ClassRecover,
-			Urgency: 0.5,
-			Commit:  arbiter.Commitment{MinHold: 30 * time.Second}}
-	}
+	// P-4.8a DEFANGED (12:56): the "poisoned world" relog was built on the
+	// wrong diagnosis — the real cause was the shop-detection bug (WARNING 8a),
+	// now fixed. It false-fires on intermittent fence-sell ghosts, outranks the
+	// march by class, and cannot even cure (relog's Save+Exit coords are wrong
+	// for this 1536x840 client — a REAL handoff item). Ghost logging stays for
+	// diagnostics; the relog no longer bids on it. An armed girl marches.
 	if s.Me.Armed {
 		return nil
 	}
