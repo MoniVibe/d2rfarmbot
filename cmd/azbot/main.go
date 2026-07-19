@@ -1568,6 +1568,14 @@ func main() {
 	statusAt := time.Time{}
 	sawInvalid := false
 	wasFocused := true
+	var trail []string // the last moments, for the owner's death reports
+	var trailAt time.Time
+	holderOf := func(a *arbiter.Arbiter) string {
+		if g := a.Current(); g != nil {
+			return g.Demand.Who
+		}
+		return "-"
+	}
 	for time.Now().Before(deadline) {
 		// OFFLINE D2R PAUSES WHEN UNFOCUSED (measured 2026-07-19: every stride gained 0
 		// while the owner read the chat window — the world was frozen, not walled). A
@@ -1612,8 +1620,31 @@ func main() {
 				logger.Info("executive: grid re-aligned", "area", gridArea)
 			}
 		}
+		// DEATH REPORT for the owner ("i didnt even know how it died"): the last
+		// moments, from the trail ring — hp slope, who held the actuator, how many
+		// teeth were on her.
+		if time.Since(trailAt) >= 900*time.Millisecond || s.Me.HPPct <= 0 {
+			trailAt = time.Now()
+			near := 0
+			for _, e := range s.Enemies {
+				if chebyshev(s.Me.Pos, e.Pos) <= 12 {
+					near++
+				}
+			}
+			trail = append(trail, fmt.Sprintf("%s hp=%d holder=%s near=%d pos=(%d,%d)",
+				s.At.Format("15:04:05"), s.Me.HPPct, holderOf(arb), near, s.Me.Pos.X, s.Me.Pos.Y))
+			if len(trail) > 12 {
+				trail = trail[1:]
+			}
+		}
 		// Self-model events: armed flip OR back-from-death → recalibrate capability.
 		deadNow := s.Me.HPPct <= 0
+		if deadNow && !wasDead {
+			logger.Warn("DEATH REPORT — the last moments:")
+			for _, ln := range trail {
+				logger.Warn("  " + ln)
+			}
+		}
 		if (s.Me.Armed != wasArmed || (wasDead && !deadNow)) && !deadNow {
 			logger.Info("executive: self-model event — recalibrating", "armed", s.Me.Armed, "revived", wasDead)
 			c2 := combat.Calibrate(logger, gr, hid, mem, []string{"f1", "f2", "f3", "f4"})

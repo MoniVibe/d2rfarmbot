@@ -63,10 +63,14 @@ func (rc *Reclaim) Step(ctx *Ctx) Verdict {
 			Do(ctx.M, ctx.GR, ctx.P, ctx.Led, rc.Name())
 		return Running
 	}
-	if d > 4 {
+	if d > 2 {
+		// TRUE adjacency required: chebyshev proximity counts THROUGH walls — she once
+		// hover-swept a corpse 5 tiles away on the far side of a trap-fence (the owner's
+		// screenshot). Arrive=2 makes the planner route AROUND the fence to really reach it.
 		if ctx.Grid != nil {
 			if rc.j == nil || chebyshev(rc.j.Goal, s.Me.CorpsePos) > 5 {
 				rc.j = journey.New(ctx.GR, ctx.Grid, s.Me.CorpsePos, rc.Name())
+				rc.j.Arrive = 2
 			}
 			st := rc.j.Step(ctx.M, ctx.P, ctx.Led)
 			if st.State == journey.NoPath || st.State == journey.Stalled {

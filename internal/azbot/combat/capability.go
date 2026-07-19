@@ -50,14 +50,18 @@ func Calibrate(log *slog.Logger, gr *game.MemoryReader, hid *game.HID, mem *memo
 			b := Binding{Key: key, Skill: after}
 			cap.Proven = append(cap.Proven, b)
 			log.Info("capability: proven binding", "key", name, "skill", int(after))
+			// COMBAT classifications additionally require invested points: the mod
+			// scrambles tables, and a "bow skill" she never skilled may be Identify
+			// wearing an attack's ID (the owner watched her arm it). Tomes are granted
+			// at level 0 and stay exempt. Fight's flinch audit is the second guard.
 			switch after {
 			case skill.Jab, skill.PowerStrike, skill.AttackSkill:
-				if cap.Melee == nil {
+				if cap.Melee == nil && cap.Known[after] >= 1 {
 					v := b
 					cap.Melee = &v
 				}
 			case skill.MagicArrow, skill.FireArrow, skill.ColdArrow, skill.IceArrow, skill.GuidedArrow, skill.MultipleShot:
-				if cap.RangedCast == nil {
+				if cap.RangedCast == nil && cap.Known[after] >= 1 {
 					v := b
 					cap.RangedCast = &v
 				}

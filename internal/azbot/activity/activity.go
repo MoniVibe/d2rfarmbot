@@ -153,6 +153,7 @@ func (f *Flee) Step(ctx *Ctx) Verdict {
 type Breakout struct {
 	castAt       time.Time
 	lastStrikeAt time.Time
+	castTries    int // casts that never produced a portal (empty tome — the poverty spiral)
 }
 
 func (b *Breakout) Name() string { return "breakout" }
@@ -264,10 +265,16 @@ func (b *Breakout) Step(ctx *Ctx) Verdict {
 	}
 
 	// PREPARE THE EXIT: no portal down yet and things look grim → cast one now.
-	// It persists; fighting continues beside it. This is the "both".
-	if len(s.Portals) == 0 && ctx.Cap != nil && ctx.Cap.TownTP != nil &&
+	// It persists; fighting continues beside it. This is the "both". THREE casts with
+	// no portal appearing = the tome is EMPTY (0 gold, 0 scrolls — the poverty
+	// spiral); stop pretending and fight the gap instead (measured: pinned 0x0
+	// re-casting into nothing while the ring closed).
+	if len(s.Portals) == 0 && ctx.Cap != nil && ctx.Cap.TownTP != nil && b.castTries < 3 &&
 		(hardFloor || s.Me.HealPots == 0 || near >= 5) &&
 		time.Since(b.castAt) > 2500*time.Millisecond {
+		if !b.castAt.IsZero() {
+			b.castTries++ // the previous cast had 2.5s to materialize a portal and didn't
+		}
 		verbs.CastSelf{Key: ctx.Cap.TownTP.Key}.Do(ctx.M, ctx.GR, ctx.P, ctx.Led, b.Name())
 		b.castAt = time.Now()
 		return Running
@@ -345,6 +352,13 @@ type Fight struct {
 	aimDX, aimDY int       // sweep offset that confirmed hover last shot (next shot's hint)
 	lastKey      byte      // skill key selected by the previous strike
 	lastStrikeAt time.Time // paces the volley to the attack animation (~350ms)
+	// Evidence audit of the calibrated ranged skill: the mod scrambles tables, so the
+	// "bow skill" the calibrator proved may be IDENTIFY wearing an attack's ID (the
+	// owner watched her arm it). A skill that never makes anyone flinch is demoted —
+	// plain attack always works.
+	rangedShots  int
+	rangedFlinch int
+	rangedDead   bool
 }
 
 func NewFight() *Fight { return &Fight{blacklist: map[data.UnitID]time.Time{}} }
@@ -396,6 +410,9 @@ func (f *Fight) Step(ctx *Ctx) Verdict {
 			alive = true
 			f.targetPos = e.Pos
 			if e.Mode == uint32(mode.NpcGettingHit) {
+				if f.lastKey != 0 {
+					f.rangedFlinch++ // the calibrated skill provably hurts things
+				}
 				f.volleys, f.noEvid = 0, 0
 			}
 			break
@@ -450,12 +467,19 @@ func (f *Fight) Step(ctx *Ctx) Verdict {
 			return Running
 		}
 		// SHOOT. Basic arrow (plain attack, zero mana) is the workhorse; the bow skill
-		// only while the pool is comfortable — never spammed dry.
+		// only while the pool is comfortable — never spammed dry, and never after the
+		// evidence audit demoted it.
 		var key byte
-		if ctx.Cap != nil && ctx.Cap.RangedCast != nil && s.Me.MPPct >= 50 {
+		if !f.rangedDead && ctx.Cap != nil && ctx.Cap.RangedCast != nil && s.Me.MPPct >= 50 {
 			key = ctx.Cap.RangedCast.Key
 		}
 		f.strike(ctx, f.target, f.targetPos, key)
+		if key != 0 {
+			f.rangedShots++
+			if f.rangedShots >= 15 && f.rangedFlinch == 0 {
+				f.rangedDead = true // fifteen "shots", zero flinches ever: that is no weapon
+			}
+		}
 		return Running
 
 	case "melee":
