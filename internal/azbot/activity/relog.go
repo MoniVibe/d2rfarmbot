@@ -95,15 +95,14 @@ func (rl *Relog) Step(ctx *Ctx) Verdict {
 	// town, and Return nearly portaled her back into the swarm bare-fisted).
 	gone := false
 	for attempt := 0; attempt < 2 && !gone; attempt++ {
-		// WARNING 4: a byte-blind menu may ALREADY be up (a swap mid-relog left
-		// one, measured 08:41→08:46: the blind ESC then CLOSED it, the Save+Exit
-		// click fell into the world, and the between-attempt "cleanup" ESC
-		// re-raised it — the parity stuck inverted through three straight
-		// abandons). Test the world first; ESC only when it still moves.
-		if !rl.worldFrozen(ctx) {
-			ctx.M.RealEsc()
-			time.Sleep(900 * time.Millisecond)
-		}
+		// ESC UNCONDITIONALLY: for RELOG the pause menu is the GOAL, not a trap —
+		// raising it is exactly what we want (Save+Exit lives on it). The
+		// worldFrozen shadow test (my WARNING-4 addition) FALSE-POSITIVED at the
+		// spawn nook where town fences block all three bearings — it skipped the
+		// ESC, clicked Save+Exit into an unopened menu, and stranded her naked
+		// (measured 13:09→13:14, six abandons). This is the proven original.
+		ctx.M.RealEsc()
+		time.Sleep(900 * time.Millisecond)
 		ctx.M.RealMenuClick(relogExitBtnX, relogExitBtnY)
 		// Phase 2: wait for the world to unload.
 		for i := 0; i < 20 && ctx.M.Engage.Engaged(); i++ {
@@ -114,7 +113,8 @@ func (rl *Relog) Step(ctx *Ctx) Verdict {
 			}
 		}
 		if !gone {
-			time.Sleep(600 * time.Millisecond) // no blind ESC — the next attempt's shadow test decides
+			ctx.M.RealEsc() // close whatever half-opened before the retry
+			time.Sleep(600 * time.Millisecond)
 		}
 	}
 	if !gone {
