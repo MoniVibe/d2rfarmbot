@@ -149,6 +149,11 @@ region; the cursor-empty read is the only proof of success.
     from one chaser is a chase, and she loses chases — the sentinel
     drinks while she swings. One enemy near, any blood: FIGHT bids and
     Flee does not.
+13. THE STACK EATS THE SKILL (the owner, 11:25: "high priority to fire
+    magic arrows on large stacks, 4+"): four or more bodies bunched
+    within 6 of the aim point make a SKILL shot — the pierce pays for
+    its mana in bodies; the basic arrow is for singles. Above a swallow
+    of mana (5%), a stack overrides the thrift bar.
 
 ### P-2 RETREAT
 

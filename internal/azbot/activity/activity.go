@@ -843,6 +843,20 @@ func (f *Fight) Step(ctx *Ctx) Verdict {
 		if !f.rangedDead && ctx.Cap != nil && ctx.Cap.Reach != nil && s.Me.MPPct >= manaBar {
 			key = ctx.Cap.Reach.Key
 		}
+		// P-1.13 THE STACK EATS THE SKILL: 4+ bodies bunched at the aim point
+		// make a skill shot — the pierce pays for its mana in bodies. Above a
+		// swallow of mana (5%), the stack overrides the thrift bar.
+		if key == 0 && !f.rangedDead && ctx.Cap != nil && ctx.Cap.Reach != nil && s.Me.MPPct >= 5 {
+			stack := 0
+			for _, e := range s.Enemies {
+				if chebyshev(f.targetPos, e.Pos) <= 6 || (contact <= 6 && chebyshev(contactPos, e.Pos) <= 6) {
+					stack++
+				}
+			}
+			if stack >= 4 {
+				key = ctx.Cap.Reach.Key
+			}
+		}
 		if contact <= 3 {
 			// In the clinch the javelin is still the better tool — ask for the swap —
 			// but until it lands, SHOOT the tooth point-blank. Never a mute cycle.
