@@ -271,7 +271,7 @@ func ServicesPending(s *percept.Snapshot) bool {
 	// the escape clause run 42 taught: a pending docket whose service CANNOT run
 	// (no landing room, nothing left to sell) must not gate the march — she idled
 	// in town 12 minutes on that deadlock.
-	if s.Me.EquipCandCount > 0 && equipWorks.Load() && s.Me.InvFree >= 6 {
+	if equippableCands(s) > 0 && equipWorks.Load() && s.Me.InvFree >= 6 {
 		return true
 	}
 	if s.Me.UnidentCount > 0 && identifyWorks.Load() && s.Me.IDScrolls > 0 {
@@ -874,6 +874,23 @@ var equipWorks atomic.Bool
 
 func init() { equipWorks.Store(true) }
 
+// refusedEquips: item type-ids whose shift-click froze the docket three times —
+// the game's silent refusal as an oracle (P-4.4, photographed 10:11: a
+// game-red armor docketed past every readable gate). Session-lifetime.
+var refusedEquips = map[int]bool{}
+
+// equippableCands counts docket items the game has not refused — the number
+// the march treaty and the Equip demand actually care about.
+func equippableCands(s *percept.Snapshot) int {
+	n := 0
+	for _, u := range s.Upgrades {
+		if !refusedEquips[u.ID] {
+			n++
+		}
+	}
+	return n
+}
+
 // Equip dresses her in the upgrades the Identify service unveils — the unique bow
 // rode in her bag while she fought with a starter bow (the owner: "she has armor and
 // a unique bow she could equip but she rolls with her current gear"). Town-only, one
@@ -884,6 +901,7 @@ type Equip struct {
 	lastN   int
 	fails   int
 	clickAt time.Time
+	strikes map[int]int // per-item silent refusals — three strikes refuse the item (P-4.4)
 }
 
 func NewEquip() *Equip { return &Equip{lastN: -1} }
@@ -901,8 +919,8 @@ func (eq *Equip) Demand(s *percept.Snapshot) *arbiter.Demand {
 			Urgency: 0.85,
 			Commit:  arbiter.Commitment{MinHold: 5 * time.Second}}
 	}
-	if s.Me.EquipCandCount == 0 || !equipWorks.Load() {
-		return nil
+	if equippableCands(s) == 0 || !equipWorks.Load() {
+		return nil // an all-refused docket is an empty docket (P-4.4)
 	}
 	// A swap needs LANDING ROOM: the displaced gear returns to the grid, and a full
 	// bag makes the equip fail silently (photographed, run 40: packed grid, the blue
@@ -1011,10 +1029,10 @@ func (eq *Equip) Step(ctx *Ctx) Verdict {
 		}
 		return Running
 	}
-	if s.Me.EquipCandCount == 0 {
+	if equippableCands(s) == 0 {
 		eq.closePanel(ctx)
 		eq.lastN, eq.fails = -1, 0
-		return Done // dressed — the docket is empty
+		return Done // dressed or all refused — either way the docket is empty (P-4.4)
 	}
 	// Progress audit: the candidate count DROPPING is the only oracle this ritual
 	// gets — the 0xF4 panel byte is blind to the plain inventory (run 31 retired
@@ -1022,6 +1040,7 @@ func (eq *Equip) Step(ctx *Ctx) Verdict {
 	// one air swing; the count judges everything.
 	if eq.lastN >= 0 && s.Me.EquipCandCount < eq.lastN {
 		eq.fails = 0
+		eq.strikes = nil // something landed — forgive the whole docket
 	}
 	eq.lastN = s.Me.EquipCandCount
 	if time.Since(eq.clickAt) < 1200*time.Millisecond {
@@ -1053,17 +1072,42 @@ func (eq *Equip) Step(ctx *Ctx) Verdict {
 		return Running
 	}
 	eq.fails++
-	if eq.fails > 3 {
+	if eq.fails > 12 {
+		// The absolute breaker: every candidate froze through its whole strike
+		// budget — the gesture itself is broken here, not one item.
 		equipWorks.Store(false)
 		ctx.Led.Append(verbs.Outcome{Verb: "equip", Holder: eq.Name(), Result: verbs.ResDeaf,
-			Evidence: fmt.Sprintf("3 shift-clicks, docket stuck at %d — equip belief retired (is -invkey right?)", s.Me.EquipCandCount)})
+			Evidence: fmt.Sprintf("12 shift-clicks, docket stuck at %d — equip belief retired (is -invkey right?)", s.Me.EquipCandCount)})
 		eq.closePanel(ctx)
 		eq.lastN, eq.fails = -1, 0
 		return Abandoned
 	}
-	// ROTATE the docket — hammering Upgrades[0] let one stubborn piece starve the
-	// wearable ones behind it.
-	it := s.Upgrades[(eq.fails-1)%len(s.Upgrades)]
+	// ROTATE the LIVE docket (refused items dropped) — hammering Upgrades[0] let
+	// one stubborn piece starve the wearable ones behind it.
+	cands := make([]percept.InvItem, 0, len(s.Upgrades))
+	for _, u := range s.Upgrades {
+		if !refusedEquips[u.ID] {
+			cands = append(cands, u)
+		}
+	}
+	if len(cands) == 0 {
+		eq.closePanel(ctx)
+		eq.lastN, eq.fails = -1, 0
+		return Done
+	}
+	it := cands[(eq.fails-1)%len(cands)]
+	// THE REFUSAL ORACLE (P-4.4): three silent refusals on one item and the
+	// game has spoken — a hidden requirement the memory read cannot see
+	// (photographed 10:11, the game-red armor). Drop it, dress the rest.
+	if eq.strikes == nil {
+		eq.strikes = map[int]int{}
+	}
+	if eq.strikes[it.ID]++; eq.strikes[it.ID] >= 3 {
+		refusedEquips[it.ID] = true
+		ctx.Led.Append(verbs.Outcome{Verb: "equip", Holder: eq.Name(), Result: verbs.ResBlocked,
+			Evidence: fmt.Sprintf("item %d refused by the game 3 times — dropped from the docket (P-4.4)", it.ID)})
+		return Running
+	}
 	// P-4.4: a candidate equips onto the ACTIVE hands — a bow needs the bow set
 	// out before the click, or the gesture benches the javelins instead of the
 	// white bow. The count audit still judges; a deaf swap burns one rotation.

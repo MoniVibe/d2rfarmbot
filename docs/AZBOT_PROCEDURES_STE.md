@@ -200,6 +200,11 @@ precondition.
    requirements before the click; the game's refusal is silent. A candidate
    equips onto the ACTIVE hands: swap to its set before the click (a bow
    candidate needs the bow set out, or the gesture benches the javelins).
+   THE REFUSAL IS ITSELF AN ORACLE (photographed 10:11: a game-red armor
+   docketed past every readable gate — the mod hides requirements): a
+   candidate whose shift-click freezes the docket three times is REFUSED
+   for the session, the docket drops it, and a docket of only refused
+   items is an empty docket — the march never waits on the unequippable.
 5. BUY fifth: potions to doctrine (one row mana, rest HP), from stash-backed
    gold (pocket + bank is purchasing power). THE BELT IS THE ONLY PROOF a
    potion buy landed: a full belt sends the bottle to the bag and the plan
