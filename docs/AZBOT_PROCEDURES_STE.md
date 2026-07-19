@@ -135,6 +135,12 @@ from one seed must never steer another.
 11. A character with one TOOL fights with it everywhere. A dry TOOL yields
     its role to any fueled TOOL; with no fueled TOOL, the dry basic attack
     is the TOOL of last resort.
+12. THE LONE TOOTH IS FOUGHT AT ANY BLOOD (the owner, 2026-07-19: "she
+    died to a single zombie without hitting it back"): the wounded
+    stand-down applies to PRESSURE, never to a single enemy. A retreat
+    from one chaser is a chase, and she loses chases — the sentinel
+    drinks while she swings. One enemy near, any blood: FIGHT bids and
+    Flee does not.
 
 ### P-2 RETREAT
 
@@ -183,7 +189,13 @@ precondition.
    equips onto the ACTIVE hands: swap to its set before the click (a bow
    candidate needs the bow set out, or the gesture benches the javelins).
 5. BUY fifth: potions to doctrine (one row mana, rest HP), from stash-backed
-   gold (pocket + bank is purchasing power).
+   gold (pocket + bank is purchasing power). Then TOWN-PORTAL SCROLLS to the
+   tome's floor of 8 — an empty tome un-writes P-2.3's destination (the
+   owner, 2026-07-19: "she's out already"). A scroll BUY is judged by the
+   TOME's quantity delta, never by gold — gold cannot tell a scroll from
+   junk. The scroll cell is LEARNED: probe the misc-tab candidates once,
+   the quantity delta names the true cell, and the fact is kept forever;
+   a wrong probe's junk goes to the fence like any other merchandise.
 6. REPAIR when worn below a quarter. Durability must rise per click.
 7. Every service obeys its delta check (Lexicon) and its GHOST defense
    (WARNING 2).

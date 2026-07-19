@@ -86,6 +86,10 @@ type PlayerState struct {
 	StatPoints int
 	NeedStr    int
 	NeedDex    int
+	// TPScrolls: the TP tome's charge count (mod id 533, stat Quantity) — the
+	// escape hatch's fuel gauge (P-4.5). -1 = no tome in the bag (nothing to
+	// fill; a loose scroll is not a tome).
+	TPScrolls int
 }
 
 // EnemyRef is a live hostile: identity, position, and Mode (the honest liveness read —
@@ -256,6 +260,7 @@ func (p *Perceptor) Capture() *Snapshot {
 		Str:        str,
 		Dex:        dex,
 		StatPoints: statPts,
+		TPScrolls:  -1, // until the tome is seen in the bag
 	}
 	if ub := p.gr.UIBytes(); len(ub) > 0xF4 {
 		s.MenuOpen = ub[0xF4] == 1
@@ -439,6 +444,12 @@ func (p *Perceptor) Capture() *Snapshot {
 		}
 		switch {
 		case id == 533 || id == 534 || id == 549: // TP/ID tomes + the HORADRIC CUBE
+			if id == 533 { // the TP tome's charge count is the escape hatch's fuel gauge
+				s.Me.TPScrolls = 0
+				if q, ok := it.FindStat(stat.Quantity, 0); ok {
+					s.Me.TPScrolls = q.Value
+				}
+			}
 			continue
 		case it.Desc().Type == item.TypeQuest:
 			// Quest items are IRREPLACEABLE and the audit's old posture — "everything

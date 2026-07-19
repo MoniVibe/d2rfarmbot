@@ -235,7 +235,9 @@ func (f *Flee) Demand(s *percept.Snapshot) *arbiter.Demand {
 			Urgency: 1.35,
 			Commit:  arbiter.Commitment{MinHold: 2 * time.Second}}
 	}
-	if s.Me.HPPct < floor && near > 0 {
+	// P-1.12: the lone chaser is Fight's, at any blood — a retreat from one
+	// enemy is a chase, and she loses chases (the single-zombie death, 09:18).
+	if s.Me.HPPct < floor && near >= 2 {
 		return &arbiter.Demand{Who: f.Name(), Class: arbiter.ClassSurvive,
 			Urgency: 1.0 - float64(s.Me.HPPct)/100,
 			Commit:  arbiter.Commitment{MinHold: 2 * time.Second}}
@@ -656,8 +658,24 @@ func (f *Fight) Demand(s *percept.Snapshot) *arbiter.Demand {
 	if s.Me.HealPots == 0 {
 		floor = 50
 	}
-	if !s.Valid || s.Me.InTown || s.Me.HPPct < floor {
+	if !s.Valid || s.Me.InTown {
 		return nil
+	}
+	// P-1.12 THE LONE TOOTH IS FOUGHT AT ANY BLOOD: the wounded stand-down
+	// applies to PRESSURE, never to a single enemy — she died to one zombie
+	// without hitting it back while Flee owned every wounded moment (09:18).
+	// The count uses Flee's own 25-tile band: one enemy there is Fight's at
+	// any blood, two or more are Flee's — no dead band between the rules.
+	if s.Me.HPPct < floor {
+		near25 := 0
+		for _, e := range s.Enemies {
+			if chebyshev(s.Me.Pos, e.Pos) <= 25 {
+				near25++
+			}
+		}
+		if near25 != 1 {
+			return nil // packs are Flee's; the lone chaser is a target
+		}
 	}
 	// Naked with a corpse holding her gear: punching the moor is denial, not combat —
 	// stand down and let Reclaim (higher class) own every moment until the bow is back.
