@@ -183,11 +183,21 @@ func (e *errand) step(ctx *Ctx, who string) (shopOpen bool, dead bool) {
 			e.phase = 0
 			return false, false
 		}
+		// THE DIAG'S VERDICT (12:25: "dist=20 ... hoverConfirmed=true"): a
+		// missed bare click is a MOVE order — she sails past the NPC, and
+		// every retry then fires a 20-tile walk-to-talk that the 3 s window
+		// truncates before arrival, forever. The band is re-checked on EVERY
+		// attempt; beyond 8 she re-approaches instead of clicking.
+		if chebyshev(s.Me.Pos, target.Position) > 8 {
+			e.phase = 1
+			return false, false
+		}
 		// One bounded click attempt per grant of this phase.
 		if time.Since(e.clickAt) < 3*time.Second {
 			return false, false // the click starts a WALK-to-talk; let it play out
 		}
 		if e.tries >= 6 {
+			NoteGhost() // P-4.8a: a dead NPC counts toward the world's poison
 			ctx.Led.Append(verbs.Outcome{Verb: "errand", Holder: who, Result: verbs.ResDeaf,
 				Evidence: fmt.Sprintf("npc=%d: 6 talk attempts, menu never opened (hover or click deaf — P-6.2)", int(e.npcID))})
 			return false, true
@@ -410,6 +420,7 @@ func (r *Restock) buyPotion(ctx *Ctx, id int, memKey string, probeIdx, frozen *i
 	learned := ctx.Mem != nil && ctx.Mem.GetJSON(memKey, &cell) && cell != [2]int{0, 0}
 	if !learned {
 		if *probeIdx >= len(candidates) {
+			NoteGhost() // P-4.8a: a whole probe pass into a dead window is poison
 			ctx.Led.Append(verbs.Outcome{Verb: "buy", Holder: r.Name(), Result: verbs.ResDeaf,
 				Evidence: fmt.Sprintf("potion %d: no candidate cell raised the owned count — trip abandoned", id)})
 			return false
@@ -749,6 +760,7 @@ func (fc *Fence) Step(ctx *Ctx) Verdict {
 			fc.ghost = 0
 		}
 		if fc.ghost >= 2 {
+			NoteGhost() // P-4.8a: the classic ghost window counts toward the poison
 			ctx.Led.Append(verbs.Outcome{Verb: "fence", Holder: fc.Name(), Result: verbs.ResDeaf,
 				Evidence: "GHOST TRADE WINDOW: sells not landing — aborting before a ctrl-click drops an item"})
 			closeShop(ctx)

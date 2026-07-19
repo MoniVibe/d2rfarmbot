@@ -38,7 +38,21 @@ func NewRelog() *Relog { return &Relog{} }
 func (rl *Relog) Name() string { return "relog" }
 
 func (rl *Relog) Demand(s *percept.Snapshot) *arbiter.Demand {
-	if !s.Valid || !s.Me.InTown || s.Me.Armed || s.Me.HPPct <= 0 {
+	if !s.Valid || !s.Me.InTown || s.Me.HPPct <= 0 {
+		return nil
+	}
+	// P-4.8a: a POISONED WORLD (three ghost verdicts — a wedged vendor no
+	// retry can heal, measured 12:00→12:24) earns its relog even fully armed.
+	// Recover outranks Service by class, so the dying errands yield.
+	if WorldPoisoned() {
+		if time.Now().Before(rl.nextAt) || rl.fails >= 3 {
+			return nil
+		}
+		return &arbiter.Demand{Who: rl.Name(), Class: arbiter.ClassRecover,
+			Urgency: 0.5,
+			Commit:  arbiter.Commitment{MinHold: 30 * time.Second}}
+	}
+	if s.Me.Armed {
 		return nil
 	}
 	// If the body is HERE in town, Reclaim's walk handles it — relog is for the body

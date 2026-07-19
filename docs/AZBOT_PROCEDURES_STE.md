@@ -278,6 +278,11 @@ precondition.
    (WARNING 2).
 8. The march waits while any DOCKET pends. Travel outranks Service by class;
    the pending check is the treaty that keeps errands alive.
+8a. A WEDGED VENDOR OUTLIVES EVERY RETRY (measured 12:00→12:24: one
+    mid-trade kill, then four healed processes died against the same
+    dead Akara — talks deaf, trades ghost). Ghost verdicts accumulate
+    per world; at THREE the world is POISONED and the cure is a RELOG —
+    a fresh instance, not a fifth try. The relog cap and thaw apply.
 9. THE APPROACH AIMS AT THE BAND, never the body (measured 10:2x, the
    torch dance): sliding at an NPC's center lands in the hover-breaking
    clinch, and a backstep flung past the band re-overshoots forever. The

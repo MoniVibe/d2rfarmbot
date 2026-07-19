@@ -164,6 +164,16 @@ var carryReachAt time.Time
 // portals alone and the march re-enters by the gate on its own ground.
 var hotPortalUntil time.Time
 
+// worldGhosts — P-4.8a: a wedged vendor outlives every retry. Ghost verdicts
+// accumulate per world; at three the world is POISONED and Relog cures it.
+var worldGhosts int
+
+// NoteGhost records one ghost/deaf-vendor verdict against this world.
+func NoteGhost() { worldGhosts++ }
+
+// WorldPoisoned reports whether this world has earned its relog (P-4.8a).
+func WorldPoisoned() bool { return worldGhosts >= 3 }
+
 // NewWorld re-arms every retired belief and clears cross-seed state — a relog
 // re-rolls the world (WARNING 8), and a belief retired by one bad frame in
 // game 1 must not silence a whole service for every game after (the
@@ -180,6 +190,7 @@ func NewWorld() {
 	carryReachAt = time.Time{}
 	fleeFatigueUntil = time.Time{}
 	bloodRing = nil // a load-screen gap would read as a phantom drop rate
+	worldGhosts = 0 // the poison died with the world it poisoned (P-4.8a)
 }
 
 // CarryReach — P-5.9 THE MARCH CARRIES THE REACH TOOL (the owner, at the
