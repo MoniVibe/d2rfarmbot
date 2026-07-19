@@ -221,6 +221,10 @@ func (e *errand) step(ctx *Ctx, who string) (shopOpen bool, dead bool) {
 		e.tries++
 		if e.tries == 3 {
 			snapPNG(ctx, "logs/talk_fail.png") // P-6.2: the third deaf talk photographs itself
+			ctx.Led.Append(verbs.Outcome{Verb: "errand", Holder: who, Result: verbs.ResWhiff,
+				Evidence: fmt.Sprintf("talk diag: npc=%d unit@(%d,%d) me@(%d,%d) dist=%d proj=(%d,%d) hoverConfirmed=%v",
+					int(e.npcID), target.Position.X, target.Position.Y, me.X, me.Y,
+					chebyshev(data.Position{X: me.X, Y: me.Y}, target.Position), bx, by, confirmed)})
 		}
 		if !confirmed {
 			// The same bearing that failed hover will fail it again — the torch
@@ -1321,7 +1325,10 @@ const skillTabY = 201
 // buttons are farmbot's proven -statalloc coords on this same window.
 const (
 	newStatsBtnX, newStatsBtnY = 397, 662
-	newSkillBtnX, newSkillBtnY = 755, 661 // photographed live 12:12 (logs/shot.png)
+	// Photographed at 12:20 with a CLEAN HUD (logs/talk_fail.png): the button's
+	// home is right of the belt; the 12:12 left-side reading was its panel-open
+	// relocation (D2R moves it clear of an open inventory).
+	newSkillBtnX, newSkillBtnY = 1377, 763
 	strBtnX, strBtnY           = 347, 305
 	dexBtnX, dexBtnY           = 347, 428
 	vitBtnX, vitBtnY           = 347, 552
