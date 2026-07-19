@@ -37,27 +37,53 @@ func (cm ClickMove) Do(m *motor.Motor, gr *game.MemoryReader, p *percept.Percept
 	m.MoveStop() // a held force-move key overrides the click's walk
 	d := gr.GetData()
 	start := d.PlayerUnit.Position
-	cx0, cy0 := gr.GameAreaSizeX/2, gr.GameAreaSizeY/2
-	vx := float64((cm.To.X-start.X)-(cm.To.Y-start.Y)) * 19.8
-	vy := float64((cm.To.X-start.X)+(cm.To.Y-start.Y)) * 9.9
-	// SCALE the aim vector to fit the window — never clamp axes separately:
-	// independent clamping warps a far target's direction into the corner,
-	// and the top-left corner is BLAISE'S PORTRAIT (01:38, the owner: "goes
-	// back and forth, highlights Blaise's portrait, rinse repeat" — every
-	// westward march click was feeding the merc UI).
-	k := 1.0
-	if maxX := float64(cx0 - 120); vx > maxX {
-		k = min(k, maxX/vx)
-	} else if vx < -maxX {
-		k = min(k, -maxX/vx)
+	// THE WAYSTATION (01:39: direction-scaled clicks landed on the river bank
+	// — D2R ignores a click on unpathable ground, and 01:38's independent
+	// clamps fed Blaise's portrait before that): never click a direction,
+	// click a WALKABLE POINT. Sample the line to the target at decreasing
+	// ranges and take the farthest one the map grid calls walkable; ranges
+	// ≤30 project on-screen naturally, so no clamp exists to warp anything.
+	total := cm.To.X - start.X
+	if d2 := cm.To.Y - start.Y; d2 > total {
+		total = d2
 	}
-	if maxUp := float64(cy0 - 140); vy < -maxUp { // the portraits own the top band
-		k = min(k, -maxUp/vy)
-	} else if maxDown := float64(cy0 - 170); vy > maxDown { // the belt owns the bottom
-		k = min(k, maxDown/vy)
+	if total < 0 {
+		total = -total
 	}
-	bx := cx0 + int(vx*k)
-	by := cy0 + int(vy*k)
+	if t2 := start.X - cm.To.X; t2 > total {
+		total = t2
+	}
+	if t2 := start.Y - cm.To.Y; t2 > total {
+		total = t2
+	}
+	ad, hasMap := d.Areas[d.PlayerUnit.Area]
+	way := cm.To
+	for _, dist := range []int{30, 22, 15, 10, 6} {
+		if total <= dist {
+			way = cm.To
+		} else {
+			way = data.Position{
+				X: start.X + (cm.To.X-start.X)*dist/total,
+				Y: start.Y + (cm.To.Y-start.Y)*dist/total,
+			}
+		}
+		if !hasMap || ad.Grid == nil {
+			break // no oracle: click the nearest sample and hope honestly
+		}
+		rp := ad.Grid.RelativePosition(way)
+		if rp.X >= 0 && rp.Y >= 0 && rp.X < ad.Grid.Width && rp.Y < ad.Grid.Height &&
+			ad.Grid.CollisionGrid[rp.Y][rp.X] == game.CollisionTypeWalkable {
+			break
+		}
+	}
+	bx := int(float32((way.X-start.X)-(way.Y-start.Y))*19.8) + gr.GameAreaSizeX/2
+	by := int(float32((way.X-start.X)+(way.Y-start.Y))*9.9) + gr.GameAreaSizeY/2
+	if bx < 130 || by < 130 || bx > gr.GameAreaSizeX-130 || by > gr.GameAreaSizeY-170 {
+		o.Result = ResRefused
+		o.Evidence = fmt.Sprintf("no walkable on-screen waystation toward (%d,%d)", cm.To.X, cm.To.Y)
+		led.Append(o)
+		return o
+	}
 	m.AimPhysical(bx, by)
 	time.Sleep(45 * time.Millisecond)
 	if hd := gr.GetData().HoverData; hd.IsHovered {
