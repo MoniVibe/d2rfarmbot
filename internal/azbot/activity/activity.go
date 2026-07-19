@@ -197,6 +197,10 @@ var carryReachAt time.Time
 // portals alone and the march re-enters by the gate on its own ground.
 var hotPortalUntil time.Time
 
+// potionCoolUntil: P-4.2a escape clause — an abandoned potion trip cools its
+// docket line so a dead vendor cell cannot gate the march (the 23:55 idle).
+var potionCoolUntil time.Time
+
 // worldGhosts — P-4.8a: a wedged vendor outlives every retry. Ghost verdicts
 // accumulate per world; at three the world is POISONED and Relog cures it.
 var worldGhosts int

@@ -366,7 +366,7 @@ func ServicesPending(s *percept.Snapshot) bool {
 	if s.Me.Gold >= 10 && s.Me.MinDurPct <= 25 {
 		return true
 	}
-	if s.Me.Gold >= 100 {
+	if s.Me.Gold >= 100 && time.Now().After(potionCoolUntil) {
 		if hp, mana := plan(s); hp+mana >= 2 {
 			return true
 		}
@@ -440,6 +440,10 @@ func (r *Restock) buyPotion(ctx *Ctx, id int, memKey string, probeIdx, frozen *i
 	if !learned {
 		if *probeIdx >= len(candidates) {
 			NoteGhost() // P-4.8a: a whole probe pass into a dead window is poison
+			// P-4.2a THE ESCAPE CLAUSE: an abandoned trip cools its docket line —
+			// it must not gate the march (measured 23:55: idle at the hub, 501
+			// gold, nothing left to try, Advance locked out by pending potions).
+			potionCoolUntil = time.Now().Add(3 * time.Minute)
 			ctx.Led.Append(verbs.Outcome{Verb: "buy", Holder: r.Name(), Result: verbs.ResDeaf,
 				Evidence: fmt.Sprintf("potion %d: no candidate cell raised the owned count — trip abandoned", id)})
 			return false
@@ -558,6 +562,9 @@ func (r *Restock) Demand(s *percept.Snapshot) *arbiter.Demand {
 	}
 	buyHP, buyMana := plan(s)
 	deficit := buyHP + buyMana
+	if time.Now().Before(potionCoolUntil) {
+		deficit = 0 // P-4.2a: the abandoned trip stays abandoned for its cool
+	}
 	// A near-empty tome is worth the trip on its own (P-4.5): with ≤2 scrolls
 	// the next retreat may have no destination.
 	if deficit < 2 && !(s.Me.TPScrolls >= 0 && s.Me.TPScrolls <= 2 && scrollDeficit(s) > 0) {

@@ -323,6 +323,13 @@ precondition.
    click GRABS the item, the next click throws it — WARNING 9 on
    repeat): at zero charges the service stands down until Restock
    refills the tome.
+2a. EVERY DOCKET CARRIES THE ESCAPE CLAUSE (run 42's law, extended
+   23:55: a mana-potion cell died, the trip abandoned honestly — and
+   the pending-potions gate still held the march, idling her at the
+   hub with 501 gold and nothing left to try). A service that has
+   ABANDONED its trip must not gate the march: the abandon cools its
+   docket line for 3 minutes, the march leaves, and the next town
+   visit retries with fresh probes.
 3. SELL third. Judged non-keepers become gold and LANDING ROOM.
 4. EQUIP fourth (requires LANDING ROOM). Open the panel by the IDENTIFY side
    door. Normalize the cursor with one plain click; put back what it grabs.
