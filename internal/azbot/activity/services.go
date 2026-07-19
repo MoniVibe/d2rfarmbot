@@ -6,6 +6,7 @@ package activity
 
 import (
 	"fmt"
+	"sync/atomic"
 	"time"
 
 	"github.com/hectorgimenez/d2go/pkg/data"
@@ -166,11 +167,25 @@ func closeShop(ctx *Ctx) {
 	time.Sleep(300 * time.Millisecond)
 }
 
+// healerHeals: the live belief that Akara's talk-heal works on this mod (vanilla law:
+// the Act 1 healer refills life+mana the moment you talk). Disproven by the Heal
+// errand itself — two talks with no HP change flips it false so the wounded-pending
+// gate can never deadlock her in town on a mod that removed the mercy.
+var healerHeals atomic.Bool
+
+func init() { healerHeals.Store(true) }
+
 // ServicesPending reports whether a town errand is waiting: a real belt deficit she can
-// afford, or gear worn to the quarter. The class ladder puts Travel ABOVE Service, so
-// the travel activities consult this and stand down — otherwise Travel starves the
-// errands forever and she marches out with an empty belt (the latent starvation bug).
+// afford, gear worn to the quarter, or WOUNDS a free healer can close. The class ladder
+// puts Travel ABOVE Service, so the travel activities consult this and stand down —
+// otherwise Travel starves the errands forever and she marches out with an empty belt
+// (the latent starvation bug) or at 37% straight back into the pack that chased her home
+// (measured 04:13:07: Breakout's portal landed her in town with zero gold and zero junk —
+// nothing pended, Advance marched her out wounded two seconds later).
 func ServicesPending(s *percept.Snapshot) bool {
+	if s.Me.HPPct <= 55 && healerHeals.Load() {
+		return true // Akara's refill is free; leaving town below the drink line is denial
+	}
 	if s.Me.Gold >= 10 && s.Me.MinDurPct <= 25 {
 		return true
 	}
@@ -386,6 +401,78 @@ func (fc *Fence) Step(ctx *Ctx) Verdict {
 		return Abandoned
 	}
 	time.Sleep(400 * time.Millisecond)
+	return Running
+}
+
+// ---------------------------------------------------------------- Heal (ClassService)
+
+// Heal is Akara's free refill: the Act 1 healer restores life and mana the moment
+// the TALK happens — no menu item, no gold. The errand that was missing at 04:13:07:
+// Breakout's portal delivered her to town at 37% with an empty purse, and because
+// nothing pended she marched right back into the pack. Talking to Akara IS the
+// restock when the purse is empty.
+type Heal struct {
+	e     errand
+	talks int // menu-opens that produced no HP change — the disproof counter
+}
+
+func NewHeal() *Heal {
+	return &Heal{e: errand{npcID: npc.Akara,
+		ring: []data.Position{{X: 6023, Y: 4933}, {X: 6070, Y: 4960}, {X: 6100, Y: 4990}, {X: 6050, Y: 5010}, {X: 6110, Y: 4930}}}}
+}
+
+func (h *Heal) Name() string { return "heal" }
+
+func (h *Heal) Demand(s *percept.Snapshot) *arbiter.Demand {
+	if !s.Valid || !s.Me.InTown || s.Me.HPPct > 55 || !healerHeals.Load() {
+		return nil
+	}
+	return &arbiter.Demand{Who: h.Name(), Class: arbiter.ClassService,
+		Urgency: 0.9 - float64(s.Me.HPPct)/200, // free and instant: outranks the shopping
+		Commit:  arbiter.Commitment{MinHold: 5 * time.Second}}
+}
+
+func (h *Heal) Step(ctx *Ctx) Verdict {
+	s := ctx.Snap
+	if !s.Valid {
+		return Running
+	}
+	if s.Me.HPPct > 90 {
+		if s.MenuOpen {
+			closeShop(ctx)
+		}
+		h.e.reset()
+		h.talks = 0
+		return Done // refilled — the pending clears and the march resumes
+	}
+	// The menu byte high = the talk happened = the heal (if this mod kept it) already
+	// landed. Close and read the verdict from a FRESH hp — the snapshot predates the talk.
+	if s.MenuOpen {
+		closeShop(ctx)
+		if hp := ctx.GR.GetData().PlayerUnit.HPPercent(); hp > 60 {
+			h.e.reset()
+			h.talks = 0
+			return Done
+		}
+		h.talks++
+		if h.talks >= 2 {
+			// Two talks, no refill: this mod's Akara does not heal. Stop believing —
+			// package-wide — or the wounded-pending gate deadlocks her in town forever.
+			healerHeals.Store(false)
+			ctx.Led.Append(verbs.Outcome{Verb: "heal", Holder: h.Name(), Result: verbs.ResDeaf,
+				Evidence: "two talks, no HP change — this Akara does not heal; belief retired"})
+			h.e.reset()
+			h.talks = 0
+			return Abandoned
+		}
+		return Running
+	}
+	// Drive the errand only through the TALK (phases 0-2); the MenuOpen intercept
+	// above fires before e.step could ever advance into trade navigation.
+	if _, dead := h.e.step(ctx, h.Name()); dead {
+		h.e.reset()
+		return Abandoned
+	}
 	return Running
 }
 

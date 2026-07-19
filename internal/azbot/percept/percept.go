@@ -189,9 +189,16 @@ func (p *Perceptor) Capture() *Snapshot {
 	if v, ok := d.PlayerUnit.BaseStats.FindStat(stat.Level, 0); ok {
 		lvl = v.Value
 	}
-	gold := 0 // gold lives in BaseStats on this repack (measured 2026-07-19; Stats reads 0)
+	// Gold = inventory + STASH (the owner: "she has cash in the stash, it uses it when
+	// she tries to buy something" — vendors draw from the bank on this build, so the
+	// bank IS purchasing power; reading only pocket gold had her acting broke at a
+	// funded stash). Both live in BaseStats on this repack (Stats reads 0).
+	gold := 0
 	if v, ok := d.PlayerUnit.BaseStats.FindStat(stat.Gold, 0); ok {
 		gold = v.Value
+	}
+	if v, ok := d.PlayerUnit.BaseStats.FindStat(stat.StashGold, 0); ok {
+		gold += v.Value
 	}
 	s.Valid = true
 	s.Me = PlayerState{

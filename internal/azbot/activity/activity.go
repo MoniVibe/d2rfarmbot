@@ -115,7 +115,9 @@ func chebyshev(a, b data.Position) int {
 // Flee triggers on low HP with contact pressure; strides away from the enemy centroid
 // until the pool recovers or the pressure is gone. The Sentinel keeps drinking in
 // parallel — this is escape, not medicine.
-type Flee struct{}
+type Flee struct {
+	castAt time.Time
+}
 
 func (f *Flee) Name() string { return "flee" }
 
@@ -160,9 +162,13 @@ func (f *Flee) Step(ctx *Ctx) Verdict {
 	if s.Me.HPPct > clear {
 		return Done
 	}
-	cx, cy, n := 0, 0, 0
+	cx, cy, n, closest := 0, 0, 0, 1<<30
 	for _, e := range s.Enemies {
-		if chebyshev(s.Me.Pos, e.Pos) <= 25 {
+		d := chebyshev(s.Me.Pos, e.Pos)
+		if d < closest {
+			closest = d
+		}
+		if d <= 25 {
 			cx += e.Pos.X
 			cy += e.Pos.Y
 			n++
@@ -170,6 +176,31 @@ func (f *Flee) Step(ctx *Ctx) Verdict {
 	}
 	if n == 0 {
 		return Done
+	}
+	// PLANT THE EXIT ON THE RUN (measured 04:14: flee↔travel thrashed at the gate for
+	// 40s while Withdraw — ClassTravel — starved under Flee's survive class; the one
+	// activity able to cast never got its 2.5s). A dry belt means this flee ends in
+	// town or in a corpse: the moment the gap opens, Flee itself casts the portal —
+	// and USES it. Fleeing is not a lifestyle; it has a destination.
+	if s.Me.HealPots == 0 && len(s.Portals) > 0 {
+		best, bd := s.Portals[0], chebyshev(s.Me.Pos, s.Portals[0].Pos)
+		for _, pt := range s.Portals[1:] {
+			if d := chebyshev(s.Me.Pos, pt.Pos); d < bd {
+				best, bd = pt, d
+			}
+		}
+		if bd > 20 {
+			slideStride(ctx, best.Pos, 1500*time.Millisecond, 1, f.Name())
+		} else {
+			verbs.EnterPortal{Target: best.ID, TargetPos: best.Pos}.Do(ctx.M, ctx.GR, ctx.P, ctx.Led, f.Name())
+		}
+		return Running
+	}
+	if s.Me.HealPots == 0 && ctx.Cap != nil && ctx.Cap.TownTP != nil &&
+		closest > 10 && time.Since(f.castAt) > 2500*time.Millisecond {
+		verbs.CastSelf{Key: ctx.Cap.TownTP.Key}.Do(ctx.M, ctx.GR, ctx.P, ctx.Led, f.Name())
+		f.castAt = time.Now()
+		return Running
 	}
 	away := data.Position{X: s.Me.Pos.X + (s.Me.Pos.X - cx/n), Y: s.Me.Pos.Y + (s.Me.Pos.Y - cy/n)}
 	slideStride(ctx, away, 2*time.Second, 3, f.Name())
@@ -492,16 +523,20 @@ func (f *Fight) Step(ctx *Ctx) Verdict {
 			f.trySwap(ctx)
 			return Running
 		}
-		if contact <= 4 {
-			// Something reached her: swap to the javelin set and stab. The swap is
-			// closed-loop — WeaponKind flips on the next capture, or it didn't happen.
+		if contact <= 3 {
+			// Something is TOUCHING her (melee reach is ~3): swap to the javelin and
+			// stab. Was <=4 — a bow shoots point-blank just fine in this game; only
+			// actual contact justifies giving up the ranged set.
 			f.trySwap(ctx)
 			return Running
 		}
-		if d < 8 { // uncomfortably close for archery — open the gap first
-			away := data.Position{X: s.Me.Pos.X + (s.Me.Pos.X - contactPos.X),
-				Y: s.Me.Pos.Y + (s.Me.Pos.Y - contactPos.Y)}
-			verbs.Stride{To: away, Hold: 900 * time.Millisecond, MinGain: 2}.Do(ctx.M, ctx.GR, ctx.P, ctx.Led, f.Name())
+		if contact <= 6 {
+			// Pressure closing but not touching: open the gap HARD, away from the
+			// nearest tooth. (The old rule kited on TARGET distance d<8 — she'd
+			// backpedal from a monster she should simply have shot in the face.)
+			away := data.Position{X: s.Me.Pos.X + (s.Me.Pos.X-contactPos.X)*2,
+				Y: s.Me.Pos.Y + (s.Me.Pos.Y - contactPos.Y)*2}
+			verbs.Stride{To: away, Hold: 1000 * time.Millisecond, MinGain: 2}.Do(ctx.M, ctx.GR, ctx.P, ctx.Led, f.Name())
 			return Running
 		}
 		if d > 25 { // out of bow range — close a little
@@ -547,7 +582,11 @@ func (f *Fight) Step(ctx *Ctx) Verdict {
 		// A dry bow set is no bow at all: while Arrows==0 the javelins ARE the build —
 		// chase and stab instead of kiting toward a weapon that whiffs at air.
 		dryBow := s.Me.Arrows == 0
-		if contact > 7 {
+		// SWAP BACK AT >4 (the owner, twice: "she uses the javelin more than the bow —
+		// should be the other way around"): Jab's reach is ~4 — a contact she cannot
+		// stab is a contact she should be SHOOTING. In at contact<=3, out at >4; the
+		// 1.5s swap rate-limit is the flutter guard.
+		if contact > 4 {
 			if !dryBow {
 				f.trySwap(ctx) // clear — back to the bow
 				return Running
@@ -565,10 +604,11 @@ func (f *Fight) Step(ctx *Ctx) Verdict {
 				verbs.Stride{To: f.targetPos, Hold: 700 * time.Millisecond}.Do(ctx.M, ctx.GR, ctx.P, ctx.Led, f.Name())
 				return Running
 			}
-			// Nothing in reach: step back rather than chase — range is the win condition.
-			away := data.Position{X: s.Me.Pos.X + (s.Me.Pos.X - contactPos.X),
-				Y: s.Me.Pos.Y + (s.Me.Pos.Y - contactPos.Y)}
-			verbs.Stride{To: away, Hold: 800 * time.Millisecond}.Do(ctx.M, ctx.GR, ctx.P, ctx.Led, f.Name())
+			// Contact at 5: shove the gap open HARD — a soft 800ms backstep never outran
+			// a chasing mob, which is half of why the javelin stuck to her hands.
+			away := data.Position{X: s.Me.Pos.X + (s.Me.Pos.X-contactPos.X)*2,
+				Y: s.Me.Pos.Y + (s.Me.Pos.Y - contactPos.Y)*2}
+			verbs.Stride{To: away, Hold: 1300 * time.Millisecond, MinGain: 2}.Do(ctx.M, ctx.GR, ctx.P, ctx.Led, f.Name())
 			return Running
 		}
 		f.strike(ctx, f.target, f.targetPos, mk)
@@ -686,12 +726,12 @@ func (l *Loot) wanted(s *percept.Snapshot, it percept.ItemRef) float64 {
 		contains(n, "Club") || contains(n, "Javelin") || contains(n, "Spear") || contains(n, "Wand") ||
 		contains(n, "Mace") || contains(n, "Scepter")):
 		return 0.95
-	case s.Me.Arrows >= 0 && s.Me.Arrows < 80 && (contains(n, "Arrow") || contains(n, "Quiver")):
-		// Ammo is the bow build's blood: hungrier the emptier the quiver runs.
-		if s.Me.Arrows < 20 {
-			return 0.9
-		}
-		return 0.6
+	case s.Me.Arrows == 0 && (contains(n, "Arrow") || contains(n, "Quiver")):
+		// Quivers SELF-REPLENISH on this mod (owner-confirmed) — ammo only matters
+		// when the quiver itself is GONE (vanished/never had one). No stockpiling.
+		return 0.9
+	case it.Quality >= 6: // rare/set/unique: the drops the whole grind is FOR
+		return 0.8
 	case contains(n, "Potion") || contains(n, "Herb"):
 		return 0.55
 	case n == "Gold":
@@ -754,7 +794,20 @@ func (l *Loot) Demand(s *percept.Snapshot) *arbiter.Demand {
 			return nil
 		}
 	}
-	if _, score, ok := l.pick(s); ok {
+	if it, score, ok := l.pick(s); ok {
+		// THE TREASURE GRAB: ClassFight starves ClassLoot whenever anything hostile
+		// is within 45 — in the moor that is ALWAYS, so a rare short bow lay ignored
+		// while she volleyed trash (the owner: "she didn't care at all"). Rare+ finds
+		// and ammo-for-a-dry-quiver bid IN the fight class: urgency does the risk
+		// arithmetic — a fight with teeth close still outbids (Fight at contact 5 is
+		// ~0.9), a fight against distant stragglers loses to treasure.
+		treasure := it.Quality >= 6 ||
+			(s.Me.Arrows == 0 && (contains(it.Name, "Arrow") || contains(it.Name, "Quiver")))
+		if treasure {
+			return &arbiter.Demand{Who: l.Name(), Class: arbiter.ClassFight,
+				Urgency: 0.85,
+				Commit:  arbiter.Commitment{MinHold: 2 * time.Second, SwitchMargin: 0.3}}
+		}
 		return &arbiter.Demand{Who: l.Name(), Class: arbiter.ClassLoot, Urgency: score,
 			Commit: arbiter.Commitment{MinHold: 2 * time.Second, SwitchMargin: 0.3}}
 	}

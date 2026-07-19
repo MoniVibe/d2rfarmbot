@@ -1548,7 +1548,7 @@ func main() {
 	if *goal == "campaign" || *goal == "rampage" {
 		legs = activity.Act1Itinerary()
 	}
-	for _, a := range []activity.Activity{&activity.Breakout{}, &activity.Flee{}, activity.NewDodge(), &activity.Respawn{}, activity.NewRelog(), activity.NewReclaim(), activity.NewFight(), activity.NewLoot(), activity.NewFence(), activity.NewRestock(), activity.NewRepair(), activity.NewAdvance(legs), activity.NewWithdraw(), &activity.Return{}, &activity.Travel{Road: road}, &activity.Explore{}} {
+	for _, a := range []activity.Activity{&activity.Breakout{}, &activity.Flee{}, activity.NewDodge(), &activity.Respawn{}, activity.NewRelog(), activity.NewReclaim(), activity.NewFight(), activity.NewLoot(), activity.NewFence(), activity.NewRestock(), activity.NewRepair(), activity.NewHeal(), activity.NewAdvance(legs), activity.NewWithdraw(), &activity.Return{}, &activity.Travel{Road: road}, &activity.Explore{}} {
 		acts[a.Name()] = a
 	}
 
@@ -1769,7 +1769,7 @@ func main() {
 		if time.Since(statusAt) > 10*time.Second {
 			logger.Info("status", "pos", fmt.Sprintf("(%d,%d)", s.Me.Pos.X, s.Me.Pos.Y),
 				"area", int(s.Me.Area), "hp", s.Me.HPPct, "lvl", s.Me.Level, "gold", s.Me.Gold,
-				"armed", s.Me.Armed, "holder", grant.Demand.Who)
+				"weapon", s.Me.WeaponKind, "arrows", s.Me.Arrows, "holder", grant.Demand.Who)
 			statusAt = time.Now()
 		}
 	}
