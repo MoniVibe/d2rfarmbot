@@ -130,6 +130,10 @@ sweep:
 		o.Evidence = "blind click (swarm owns the hover)"
 	}
 
+	aimNote := "hover-confirmed"
+	if !confirmed {
+		aimNote = "blind"
+	}
 	m.ClickLeft(px, py)
 
 	// The click starts a walk-to-and-enter; wait (uninterrupted) for the transition.
@@ -154,7 +158,9 @@ sweep:
 	r.n++
 	r.at = time.Now()
 	o.Result = ResDeaf
-	o.Evidence = fmt.Sprintf("clicked portal but area never changed (deaf %d/3)", r.n)
+	// Keep the aim mode: a run of blind deafs means the swarm owns the hover
+	// (the door is BURIED); hover-confirmed deafs mean the walk-in is blocked.
+	o.Evidence = fmt.Sprintf("clicked portal (%s) but area never changed (deaf %d/3)", aimNote, r.n)
 	led.Append(o)
 	return o
 }
