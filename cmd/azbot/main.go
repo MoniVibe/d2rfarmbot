@@ -2166,6 +2166,7 @@ func main() {
 					if stuckRunN >= 4 && !s.Me.InTown && cap.TownTP != nil &&
 						time.Since(lastPocketTP) > 120*time.Second {
 						logger.Warn("watchdog: POCKET BREAKER — footwork refuted; the portal is the door")
+						activity.MarkPortalHot(4 * time.Minute) // Return must NOT ride back into the pen (02:28)
 						verbs.CastSelf{Key: cap.TownTP.Key}.Do(m, gr, p, led, "watchdog")
 						time.Sleep(2200 * time.Millisecond)
 						if s2 := p.Capture(); s2.Valid && len(s2.Portals) > 0 {

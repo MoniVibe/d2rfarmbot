@@ -210,6 +210,11 @@ var carryReachAt time.Time
 // portals alone and the march re-enters by the gate on its own ground.
 var hotPortalUntil time.Time
 
+// MarkPortalHot: P-2.10 for callers outside the package (the pocket breaker,
+// 02:28: it TP'd her out of the pen and Return rode the standing portal
+// straight back INTO the pen — "pops a tp, goes in, immediately comes back").
+func MarkPortalHot(d time.Duration) { hotPortalUntil = time.Now().Add(d) }
+
 // potionCoolUntil: P-4.2a escape clause — an abandoned potion trip cools its
 // docket line so a dead vendor cell cannot gate the march (the 23:55 idle).
 var potionCoolUntil time.Time
