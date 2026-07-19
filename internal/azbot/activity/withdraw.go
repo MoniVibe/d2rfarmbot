@@ -56,13 +56,18 @@ func (w *Withdraw) Step(ctx *Ctx) Verdict {
 		return Done // home — the service activities take it from here
 	}
 	// A portal down is the decision already made: use it (approach until clickable).
-	if len(s.Portals) > 0 {
-		best, bd := s.Portals[0], chebyshev(s.Me.Pos, s.Portals[0].Pos)
-		for _, pt := range s.Portals[1:] {
-			if d := chebyshev(s.Me.Pos, pt.Pos); d < bd {
-				best, bd = pt, d
-			}
+	// P-2.4: a dead door is ABSENT — fall through and cast a fresh one.
+	var best percept.PortalRef
+	bd := 1 << 30
+	for _, pt := range s.Portals {
+		if verbs.IsDeadDoor(pt.ID) {
+			continue
 		}
+		if d := chebyshev(s.Me.Pos, pt.Pos); d < bd {
+			best, bd = pt, d
+		}
+	}
+	if bd < 1<<30 {
 		if bd > 20 {
 			verbs.Stride{To: best.Pos, Hold: 1200 * time.Millisecond, MinGain: 1}.
 				Do(ctx.M, ctx.GR, ctx.P, ctx.Led, w.Name())

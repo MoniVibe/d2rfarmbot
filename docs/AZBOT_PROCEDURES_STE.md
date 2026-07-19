@@ -197,7 +197,16 @@ region; the cursor-empty read is the only proof of success.
 3. With an empty belt, a RETREAT has a destination: plant the portal when
    the gap opens, run to it, ENTER it. Fleeing is not a lifestyle.
 4. A portal that exists is a decision already made. Breakout stepping at all
-   means emergency: ENTER, desperately if needed.
+   means emergency: ENTER, desperately if needed. BUT A DEAD DOOR UN-MAKES
+   THE DECISION (measured 21:35: twenty desperate dives into a portal that
+   never transitioned — 84 blood to 0 with 119 at the mouth, the owner's
+   "she dies to idleness"): three deaf entries retire the portal, the
+   commitment dissolves, and the emergency continues WITHOUT it — fight
+   the ring, cast a NEW portal, never dive a door that provably does not
+   open. No blood floor overrides a dead door. This rule binds EVERY user
+   of a portal — Flee, Breakout, Return, Withdraw: to each of them a dead
+   door is ABSENT from the world (the blacklist ages out after 45 s, so a
+   lag spike does not retire a good portal forever).
 5. If DOORMEN crowd the mouth and blood is above the hard floor: VOLLEY the
    nearest DOORMAN until the mouth thins. Never a mute cycle.
 6. At the hard floor (18%): dive blind. A missed click costs one swing; a

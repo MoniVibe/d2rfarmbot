@@ -517,18 +517,27 @@ func (f *Flee) Step(ctx *Ctx) Verdict {
 	// town or in a corpse: the moment the gap opens, Flee itself casts the portal —
 	// and USES it. Fleeing is not a lifestyle; it has a destination.
 	if s.Me.HealPots == 0 && len(s.Portals) > 0 {
-		best, bd := s.Portals[0], chebyshev(s.Me.Pos, s.Portals[0].Pos)
-		for _, pt := range s.Portals[1:] {
+		// P-2.4: dead doors are ABSENT — a flee must never bind to a portal
+		// that provably does not open (the 21:35 death).
+		var best percept.PortalRef
+		bd := 1 << 30
+		for _, pt := range s.Portals {
+			if verbs.IsDeadDoor(pt.ID) {
+				continue
+			}
 			if d := chebyshev(s.Me.Pos, pt.Pos); d < bd {
 				best, bd = pt, d
 			}
 		}
-		if bd > 20 {
-			slideStride(ctx, best.Pos, 1500*time.Millisecond, 1, f.Name())
-		} else {
-			verbs.EnterPortal{Target: best.ID, TargetPos: best.Pos, Desperate: true}.Do(ctx.M, ctx.GR, ctx.P, ctx.Led, f.Name())
+		if bd < 1<<30 {
+			if bd > 20 {
+				slideStride(ctx, best.Pos, 1500*time.Millisecond, 1, f.Name())
+			} else {
+				verbs.EnterPortal{Target: best.ID, TargetPos: best.Pos, Desperate: true}.Do(ctx.M, ctx.GR, ctx.P, ctx.Led, f.Name())
+			}
+			return Running
 		}
-		return Running
+		// every door is dead: fall through — cast a new one or flee on foot
 	}
 	if s.Me.HealPots == 0 && ctx.Cap != nil && ctx.Cap.TownTP != nil &&
 		closest > 10 && time.Since(f.castAt) > 2500*time.Millisecond {
@@ -651,7 +660,15 @@ func (b *Breakout) Demand(s *percept.Snapshot) *arbiter.Demand {
 	trapped := s.Me.HPPct < 45 && s.Me.HealPots == 0 && near >= 3
 	// COMMITMENT: an engaged escape keeps bidding while its portal stands — one
 	// potion tick dropping 'surrounded' must not strand a half-used exit.
-	if b.engaged && len(s.Portals) > 0 && !s.Me.InTown {
+	// A DEAD DOOR does not sustain the commitment (P-2.4).
+	livePortal := false
+	for _, pt := range s.Portals {
+		if !verbs.IsDeadDoor(pt.ID) {
+			livePortal = true
+			break
+		}
+	}
+	if b.engaged && livePortal && !s.Me.InTown {
 		return &arbiter.Demand{Who: b.Name(), Class: arbiter.ClassSurvive,
 			Urgency: 1.45,
 			Commit:  arbiter.Commitment{MinHold: 3 * time.Second}}
@@ -680,8 +697,18 @@ func (b *Breakout) Step(ctx *Ctx) Verdict {
 			near++
 		}
 	}
-	if b.engaged && len(s.Portals) == 0 {
-		b.engaged = false // the portal fell out of the world (rooms unloaded / expired)
+	// P-2.4: A DEAD DOOR UN-MAKES THE DECISION — a portal with three deaf
+	// entries is ABSENT to every decision here (measured 21:35: twenty
+	// desperate dives into a portal that never transitioned, 84→0 with 119
+	// at the mouth). Fight the ring, cast a NEW portal, never re-commit.
+	livePortals := s.Portals[:0:0]
+	for _, pt := range s.Portals {
+		if !verbs.IsDeadDoor(pt.ID) {
+			livePortals = append(livePortals, pt)
+		}
+	}
+	if b.engaged && len(livePortals) == 0 {
+		b.engaged = false // the portal fell out of the world — or died as a door
 	}
 	if near == 0 && s.Me.HPPct >= 40 && !b.engaged {
 		// A capped cast counter must not survive the emergency it counted:
@@ -698,10 +725,10 @@ func (b *Breakout) Step(ctx *Ctx) Verdict {
 	// by then the label was buried under bodies and she died pinned at (5843,4847),
 	// 65->0 in 11s (run 24). Emergency + portal = ENTER, desperately.
 	hardFloor := s.Me.HPPct < 18
-	if len(s.Portals) > 0 {
-		b.engaged = true // a standing portal + Breakout stepping = the escape is OWNED
-		best, bd := s.Portals[0], chebyshev(s.Me.Pos, s.Portals[0].Pos)
-		for _, pt := range s.Portals[1:] {
+	if len(livePortals) > 0 {
+		b.engaged = true // a standing LIVE portal + Breakout stepping = the escape is OWNED
+		best, bd := livePortals[0], chebyshev(s.Me.Pos, livePortals[0].Pos)
+		for _, pt := range livePortals[1:] {
 			if d := chebyshev(s.Me.Pos, pt.Pos); d < bd {
 				best, bd = pt, d
 			}
@@ -761,7 +788,7 @@ func (b *Breakout) Step(ctx *Ctx) Verdict {
 	// no portal appearing = the tome is EMPTY (0 gold, 0 scrolls — the poverty
 	// spiral); stop pretending and fight the gap instead (measured: pinned 0x0
 	// re-casting into nothing while the ring closed).
-	if len(s.Portals) == 0 && ctx.Cap != nil && ctx.Cap.TownTP != nil && b.castTries < 3 &&
+	if len(livePortals) == 0 && ctx.Cap != nil && ctx.Cap.TownTP != nil && b.castTries < 3 &&
 		(hardFloor || s.Me.HealPots == 0 || near >= 5) &&
 		time.Since(b.castAt) > 2500*time.Millisecond {
 		if !b.castAt.IsZero() {

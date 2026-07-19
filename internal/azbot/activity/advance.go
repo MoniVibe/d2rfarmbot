@@ -594,7 +594,19 @@ type Return struct{}
 func (r *Return) Name() string { return "return" }
 
 func (r *Return) Demand(s *percept.Snapshot) *arbiter.Demand {
-	if !s.Valid || !s.Me.InTown || s.Me.HPPct < 70 || len(s.Portals) == 0 {
+	if !s.Valid || !s.Me.InTown || s.Me.HPPct < 70 {
+		return nil
+	}
+	// P-2.4: a dead door is ABSENT — never bid on a portal that provably
+	// does not open, or Return spins in town clicking a refusal forever.
+	live := false
+	for _, pt := range s.Portals {
+		if !verbs.IsDeadDoor(pt.ID) {
+			live = true
+			break
+		}
+	}
+	if !live {
 		return nil
 	}
 	// P-2.10: a HOT portal aims back at the jaws that forced the breakout —
@@ -624,14 +636,18 @@ func (r *Return) Step(ctx *Ctx) Verdict {
 	if !s.Me.InTown {
 		return Done // through — the field-side activities take over
 	}
-	if len(s.Portals) == 0 {
-		return Abandoned // it closed while we walked to it
-	}
-	best, bd := s.Portals[0], chebyshev(s.Me.Pos, s.Portals[0].Pos)
-	for _, pt := range s.Portals[1:] {
+	var best percept.PortalRef
+	bd := 1 << 30
+	for _, pt := range s.Portals {
+		if verbs.IsDeadDoor(pt.ID) {
+			continue // P-2.4: absent
+		}
 		if d := chebyshev(s.Me.Pos, pt.Pos); d < bd {
 			best, bd = pt, d
 		}
+	}
+	if bd == 1<<30 {
+		return Abandoned // it closed while we walked to it — or died as a door
 	}
 	if bd > 20 {
 		verbs.Stride{To: best.Pos, Hold: 1200 * time.Millisecond, MinGain: 1}.

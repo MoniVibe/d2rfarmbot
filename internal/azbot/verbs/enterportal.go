@@ -39,6 +39,21 @@ type portalDeafRec struct {
 
 var portalDeaf = map[data.UnitID]*portalDeafRec{}
 
+// IsDeadDoor reports whether a portal has earned its blacklist (P-2.4: a dead
+// door un-makes the decision) — callers treat such a portal as ABSENT: the
+// ring is fought, a new portal is cast, no commitment binds to it.
+func IsDeadDoor(id data.UnitID) bool {
+	r := portalDeaf[id]
+	if r == nil {
+		return false
+	}
+	if time.Since(r.at) > 45*time.Second {
+		delete(portalDeaf, id)
+		return false
+	}
+	return r.n >= 3
+}
+
 func (ep EnterPortal) Do(m *motor.Motor, gr *game.MemoryReader, p *percept.Perceptor, led *Ledger, holder string) Outcome {
 	win := ep.Window
 	if win <= 0 {
