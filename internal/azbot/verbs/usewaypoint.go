@@ -167,13 +167,59 @@ func (uw UseWaypoint) Do(m *motor.Motor, gr *game.MemoryReader, p *percept.Perce
 
 	// RIDE: row click scaled by the client height ratio, swept because no
 	// layout constant is trusted unverified. Believe only the area change.
+	// THE PANEL MUST STAND for every click (01:52 photo: she stood ON the pad,
+	// flag true, NO panel on screen — our own queued approach-click closed it
+	// within 300ms and the rows fired into the void). Verify before each
+	// click; re-open on evaporation.
 	addr := area.WPAddresses[dest]
 	scale := float64(gr.GameAreaSizeY) / 720.0
 	rx := int(200.0 * scale)
 	for _, dyOff := range []int{0, 12, -12, 24} {
+		if !gr.GetData().OpenMenus.Waypoint {
+			// Evaporated: one quiet re-open (the pad is at her feet), then verify.
+			time.Sleep(400 * time.Millisecond) // let any queued clicks land first
+			reopened := false
+			for r := 0; r < 2 && !reopened; r++ {
+				dd := gr.GetData()
+				me2 := dd.PlayerUnit.Position
+				rbx := int(float32((wp.Position.X-me2.X)-(wp.Position.Y-me2.Y))*19.8) + gr.GameAreaSizeX/2
+				rby := int(float32((wp.Position.X-me2.X)+(wp.Position.Y-me2.Y))*9.9) + gr.GameAreaSizeY/2
+				m.AimPhysical(rbx, rby)
+				time.Sleep(60 * time.Millisecond)
+				if hd := gr.GetData().HoverData; hd.IsHovered && hd.UnitID == wp.ID {
+					m.ClickLeft(rbx, rby)
+					dl := time.Now().Add(2500 * time.Millisecond)
+					for time.Now().Before(dl) {
+						time.Sleep(150 * time.Millisecond)
+						if gr.GetData().OpenMenus.Waypoint {
+							reopened = true
+							break
+						}
+					}
+				}
+			}
+			if !reopened {
+				continue // next sweep iteration retries the whole cycle
+			}
+			time.Sleep(250 * time.Millisecond)
+		}
 		ry := int((158.0+41.0*float64(addr.Row-1))*scale) + dyOff
 		m.AimPhysical(rx, ry)
 		time.Sleep(60 * time.Millisecond)
+		if !gr.GetData().OpenMenus.Waypoint {
+			continue // evaporated between aim and click: never click the void
+		}
+		// One photo per session under a VERIFIED-standing panel — the honest
+		// row measurement (the 01:52 photo showed grass because the panel had
+		// already evaporated).
+		if dyOff == 0 {
+			if img := gr.Screenshot(); img != nil {
+				if f, err := os.Create("logs/wp_panel_open.png"); err == nil {
+					_ = png.Encode(f, img)
+					f.Close()
+				}
+			}
+		}
 		m.BareClick(rx, ry)
 		dl := time.Now().Add(4 * time.Second)
 		extended := false
