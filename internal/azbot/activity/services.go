@@ -855,6 +855,7 @@ type Spend struct {
 	verified int // clicks proven by a points delta since the panel opened
 	frozen   int // consecutive clicks with no delta
 	clickAt  time.Time
+	doorAt   time.Time // when the New Stats door was clicked — the settle clock
 }
 
 // Screen geometry, client pixels (1920x1050): the New Stats button photographed
@@ -905,7 +906,12 @@ func (sp *Spend) Step(ctx *Ctx) Verdict {
 		ctx.M.MoveStop()
 		ctx.M.UIClick(newStatsBtnX, newStatsBtnY)
 		sp.opened = true
-		sp.clickAt = time.Now()
+		sp.clickAt, sp.doorAt = time.Now(), time.Now()
+		return Running
+	}
+	// SPEND (Lexicon): door settle 1 s — the panel's slide-in eats early clicks
+	// (measured 08:41: two clicks into the animation retired the whole belief).
+	if time.Since(sp.doorAt) < 1100*time.Millisecond {
 		return Running
 	}
 	// The recipient (P-8.3): strength to the gate, then dexterity, then vitality.

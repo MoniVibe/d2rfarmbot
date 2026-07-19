@@ -40,7 +40,7 @@ Code that performs the action must use the verb's name in its log line.
 | RECLAIM | Hover-confirmed click on her own corpse | Armed flips true | 4 spent rounds → cool and re-approach |
 | RELOG | Save+Exit, then Play, to materialize the corpse in town | The epistemics gate passes in a new world | Missed click → retry in 45 s; churn fail → 4 min |
 | PROBE | Press one candidate key once, then read the selection back | The right-skill selection changes | Unbound — the key is retired for this weapon set (not an error) |
-| SPEND | One click on a plus button while the points panel is provably open | The unspent count decreases AND the target's level rises | 2 frozen reads → close the panel, retire spending for the session |
+| SPEND | One click on a plus button while the points panel is provably open | The unspent count decreases AND the target's level rises | Door settle 1 s first (the slide-in eats early clicks — measured 08:41), then 2 frozen reads → close the panel, retire spending for the session |
 
 Approved nouns, one meaning each: TOOTH (an enemy in melee reach ≤3),
 PRESSURE (2+ enemies within 7), CROWD (12+ enemies within 25), DOORMAN
@@ -76,7 +76,12 @@ the second frozen delta. Never on the third.
 recovery procedures may hold the actuator. Travel of any kind is forbidden.
 
 **WARNING 4 — THE PAUSE TRAP.** ESC with no panel open raises the pause menu
-and stops the world. Press ESC only when a panel is provably open.
+and stops the world. Press ESC only when a panel is provably open. THE MENU
+IS BYTE-BLIND (0xF4 shows NPC menus only) and can arrive from OUTSIDE: a
+binary swapped mid-relog leaves it up for the next process (measured 08:41:
+100 s of invisible wall — strides refused, panel clicks eaten). Its only
+shadow: town strides refused at zero gain with no enemy near. The cure: one
+ESC, then a stride test; the toggle converges in two probes.
 
 **WARNING 5 — PANEL HOTKEYS.** Panel hotkeys are deaf to every synthetic
 input class (four photographed failures). Open the inventory only through the
@@ -85,6 +90,9 @@ IDENTIFY side door. Do not add a fifth attempt.
 **WARNING 6 — SWAP DISCIPLINE.** Deploy a new binary only when she is in
 town, dead, or the owner holds the controls. A field swap freezes her inside
 whatever is chasing her. (Run 41: eighty-four monsters, seventeen seconds.)
+Dead is lawful EXCEPT mid-relog: a kill between relog's first ESC and the
+new world's load leaves the pause menu up for the successor (WARNING 4,
+measured 08:41).
 
 **WARNING 7 — THE FOCUS LAW.** An unfocused world is UNKNOWN. It may
 freeze (measured: zero-gain strides, 2026-07-19 before dawn), or it may keep

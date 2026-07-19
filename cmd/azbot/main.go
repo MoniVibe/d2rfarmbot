@@ -1694,6 +1694,7 @@ func main() {
 		return "-"
 	}
 	lastRefocus := time.Time{}
+	lastUnpause := time.Time{}
 	for time.Now().Before(deadline) {
 		// WARNING 7: an unfocused world is UNKNOWN — it froze before dawn (zero-gain
 		// strides) and it RAN at 07:26 (131→55 blood across an 11-minute "pause"
@@ -1868,7 +1869,25 @@ func main() {
 				// One decisive displacement in a fresh bearing breaks the physical loop.
 				esc := data.Position{X: s.Me.Pos.X - 20, Y: s.Me.Pos.Y - 20}
 				if v.Pathology == watchdog.Stuck {
-					verbs.Stride{To: esc, Hold: 2 * time.Second, MinGain: 3}.Do(m, gr, p, led, "watchdog")
+					o := verbs.Stride{To: esc, Hold: 2 * time.Second, MinGain: 3}.Do(m, gr, p, led, "watchdog")
+					// WARNING 4: the pause menu is byte-blind and can arrive from
+					// outside (a swap mid-relog, measured 08:41) — a REFUSED watchdog
+					// stride in a safe town is its only shadow. One ESC, retest next
+					// cycle; the toggle converges in two probes and costs nothing here.
+					if o.Result != verbs.ResDone && s.Me.InTown && time.Since(lastUnpause) > 8*time.Second {
+						safeTown := true
+						for _, e := range s.Enemies {
+							if chebyshev(s.Me.Pos, e.Pos) <= 12 {
+								safeTown = false
+								break
+							}
+						}
+						if safeTown {
+							m.KeyLane().Press(0x1B)
+							lastUnpause = time.Now()
+							logger.Info("watchdog: ESC probe — town stride refused, the pause menu's only shadow")
+						}
+					}
 				}
 				continue
 			}
