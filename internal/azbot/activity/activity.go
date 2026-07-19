@@ -159,6 +159,11 @@ func absInt(v int) int {
 // walk is one walk whoever holds it).
 var carryReachAt time.Time
 
+// hotPortalUntil — P-2.10 THE PORTAL REMEMBERS THE JAWS: a breakout entered
+// with a CROWD at the mouth marks the standing portal HOT; Return leaves hot
+// portals alone and the march re-enters by the gate on its own ground.
+var hotPortalUntil time.Time
+
 // CarryReach — P-5.9 THE MARCH CARRIES THE REACH TOOL (the owner, at the
 // corner: "she's not pulling her bow out"): walking with no enemy within 8,
 // a REACH set that exists and is not dry is the set in hand. One rate-limited
@@ -523,6 +528,18 @@ func (b *Breakout) Step(ctx *Ctx) Verdict {
 		if bd > 20 {
 			verbs.Stride{To: best.Pos, Hold: 1500 * time.Millisecond, MinGain: 1}.Do(ctx.M, ctx.GR, ctx.P, ctx.Led, b.Name())
 		} else {
+			// P-2.10: a portal entered with a CROWD at the mouth is HOT — Return
+			// must not feed her back into the same jaws (the sortie loop,
+			// 11:03-11:08: out by portal, in by portal, out by portal).
+			near := 0
+			for _, e := range s.Enemies {
+				if chebyshev(s.Me.Pos, e.Pos) <= 25 {
+					near++
+				}
+			}
+			if near >= 8 {
+				hotPortalUntil = time.Now().Add(3 * time.Minute)
+			}
 			verbs.EnterPortal{Target: best.ID, TargetPos: best.Pos, Desperate: true}.Do(ctx.M, ctx.GR, ctx.P, ctx.Led, b.Name())
 		}
 		return Running

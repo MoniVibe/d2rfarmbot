@@ -171,6 +171,11 @@ region; the cursor-empty read is the only proof of success.
    blood 51→24, no swing answered): when the retreat stride gains no
    ground and a TOOTH is on her, strike the nearest TOOTH between
    strides. The wall has declared CORNERED for her. Never a mute cycle.
+10. THE PORTAL REMEMBERS THE JAWS (measured 11:03–11:08, the sortie
+    loop): a breakout entered with a CROWD at the mouth marks its
+    portal HOT for three minutes. Return does not walk a hot portal —
+    the march re-enters by the gate and picks its own ground. An escape
+    valve that feeds her back to the same jaws is not an escape.
 
 ### P-3 RECOVER
 

@@ -597,6 +597,11 @@ func (r *Return) Demand(s *percept.Snapshot) *arbiter.Demand {
 	if !s.Valid || !s.Me.InTown || s.Me.HPPct < 70 || len(s.Portals) == 0 {
 		return nil
 	}
+	// P-2.10: a HOT portal aims back at the jaws that forced the breakout —
+	// let it expire; the march re-enters by the gate on its own ground.
+	if time.Now().Before(hotPortalUntil) {
+		return nil
+	}
 	// NEVER portal a naked amazon back into the swarm that killed her (run 24: relog's
 	// exit click missed and Return was next in line with the death-portal standing).
 	// The corpse run — relog or reclaim — owns every moment until the gear is back.
