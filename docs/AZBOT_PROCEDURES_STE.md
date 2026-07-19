@@ -304,7 +304,12 @@ procedure may ask "which class is this?" — only "what has she proven?"
 ### P-9 JUDGE — CLASS-AGNOSTIC ITEM VALUATION
 
 1. An item is judged by readable facts: slot, quality, type code, and
-   requirements. Names have no vote (the table is scrambled).
+   requirements. Names have no vote (the table is scrambled). A unique's
+   or set piece's REAL level gate lives in the mod's own excel row
+   (uniqueitems/setitems, keyed by UniqueSetID) — the base item and the
+   stats both lie silent (measured 10:11: a unique armor burned three
+   refusals learning what the table knew). Tables are priors; the
+   refusal oracle (P-4.4) remains the final judge.
 2. A DRAWABLE magic+ item is held for judgment; identified non-DRAWABLE
    non-keepers are merchandise. LIFELINES stand outside all valuation
    (WARNING 1).

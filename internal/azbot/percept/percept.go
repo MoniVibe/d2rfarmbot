@@ -424,6 +424,20 @@ func (p *Perceptor) Capture() *Snapshot {
 		if v, ok := it.FindStat(stat.LevelRequire, 0); ok && v.Value > reqLvl {
 			reqLvl = v.Value
 		}
+		// HIDDEN REQUIREMENT PRIOR (P-9.1): a unique's or set piece's real
+		// level gate lives in the mod's own excel row, keyed by UniqueSetID —
+		// the base item and the stats both lie silent on this repack.
+		hiddenReqOnce.Do(loadHiddenReqs)
+		switch it.Quality {
+		case item.QualityUnique:
+			if rq, ok := uniqueLvlReq[int(it.UniqueSetID)]; ok && rq > reqLvl {
+				reqLvl = rq
+			}
+		case item.QualitySet:
+			if rq, ok := setLvlReq[int(it.UniqueSetID)]; ok && rq > reqLvl {
+				reqLvl = rq
+			}
+		}
 		if reqLvl > lvl || desc.RequiredStrength > str || desc.RequiredDexterity > dex {
 			// The game would refuse the click — so we refuse the attempt. But a
 			// piece gated ONLY by str/dex is a SPEND target (P-8.3): record the

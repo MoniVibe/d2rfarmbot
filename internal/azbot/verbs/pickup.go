@@ -34,6 +34,14 @@ func (pk Pickup) Do(m *motor.Motor, gr *game.MemoryReader, p *percept.Perceptor,
 	}
 	m.MoveStop()
 	d := gr.GetData()
+	// P-6.2: evidence names its item — "why did she pick THAT up" must be
+	// answerable from the ledger (the owner asked and the log had no answer).
+	for _, it := range d.Inventory.ByLocation(item.LocationGround) {
+		if it.UnitID == pk.Target {
+			o.Target = fmt.Sprintf("item=%d type=%d qual=%d", pk.Target, int(it.ID), int(it.Quality))
+			break
+		}
+	}
 	me := d.PlayerUnit.Position
 	bx := int(float32((pk.TargetPos.X-me.X)-(pk.TargetPos.Y-me.Y))*19.8) + gr.GameAreaSizeX/2
 	by := int(float32((pk.TargetPos.X-me.X)+(pk.TargetPos.Y-me.Y))*9.9) + gr.GameAreaSizeY/2
