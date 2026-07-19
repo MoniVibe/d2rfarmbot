@@ -45,15 +45,16 @@ type errand struct {
 	// that had presumably changed shape. The errand now self-discovers the trade
 	// slot: each failed attempt tries a different Down-count (1,2,0,3), and the
 	// vendor-stock oracle judges. What works is what's true.
-	menuTry int
-	blocked int // consecutive blocked approach strides — the fire-pit-wall detector
+	menuTry    int
+	blocked    int // consecutive blocked approach strides — the fire-pit-wall detector
+	hoverFails int // consecutive hover-sweep misses — the torch-owns-this-bearing detector
 	j       *journey.Journey // the PLANNER for far movement — town walls live in the
 	// static grid, and local slides can never round a real wall (run 38: fence paced
 	// the north wall at y=4897 while every ring waypoint sat past y=4930)
 }
 
 func (e *errand) reset() {
-	e.phase, e.ringIdx, e.tries, e.menuTry, e.blocked = 0, 0, 0, 0, 0
+	e.phase, e.ringIdx, e.tries, e.menuTry, e.blocked, e.hoverFails = 0, 0, 0, 0, 0, 0
 	e.j = nil
 }
 
@@ -121,8 +122,16 @@ func (e *errand) step(ctx *Ctx, who string) (shopOpen bool, dead bool) {
 			return false, false
 		}
 		if dist < 4 {
-			back := data.Position{X: s.Me.Pos.X + (s.Me.Pos.X-target.Position.X)*3,
-				Y: s.Me.Pos.Y + (s.Me.Pos.Y-target.Position.Y)*3}
+			// Proportional backstep TO THE BAND, not a triple-distance fling —
+			// the old *3 threw her from the clinch past 7 and the approach
+			// re-overshot: the torch dance (the owner, 10:2x: "walks back and
+			// forth to Charsi's torch").
+			adx, ady := s.Me.Pos.X-target.Position.X, s.Me.Pos.Y-target.Position.Y
+			m := maxInt(absInt(adx), absInt(ady))
+			if m == 0 {
+				m = 1
+			}
+			back := data.Position{X: target.Position.X + adx*5/m, Y: target.Position.Y + ady*5/m}
 			verbs.Stride{To: back, Hold: 400 * time.Millisecond}.Do(ctx.M, ctx.GR, ctx.P, ctx.Led, who)
 			return false, false
 		}
@@ -134,13 +143,22 @@ func (e *errand) step(ctx *Ctx, who string) (shopOpen bool, dead bool) {
 			}
 			return false, false
 		}
+		// AIM AT THE BAND, never the body: sliding at the NPC's center lands in
+		// the hover-breaking clinch and the backstep oscillates. A point 5 out
+		// on the current bearing IS the destination.
+		adx, ady := s.Me.Pos.X-target.Position.X, s.Me.Pos.Y-target.Position.Y
+		bm := maxInt(absInt(adx), absInt(ady))
+		if bm == 0 {
+			bm = 1
+		}
+		bandPt := data.Position{X: target.Position.X + adx*5/bm, Y: target.Position.Y + ady*5/bm}
 		hold := 500 * time.Millisecond
 		// SLIDE, and on a wall streak ARC: the camps put fire pits and tables between
 		// her and the NPC — none of it in any collision grid. A straight stride beat
 		// its head on Akara's fire 28 times in a row (run 31, the owner: "she is
 		// circling akara... goes back and forth"). Three blocked slides = walk the
 		// arc 90° around the NPC and come at them from a new bearing.
-		o := slideStride(ctx, target.Position, hold, 1, who)
+		o := slideStride(ctx, bandPt, hold, 1, who)
 		if o.Result == verbs.ResBlocked {
 			e.blocked++
 		} else {
@@ -196,9 +214,19 @@ func (e *errand) step(ctx *Ctx, who string) (shopOpen bool, dead bool) {
 		}
 		e.tries++
 		if !confirmed {
+			// The same bearing that failed hover will fail it again — the torch
+			// owns this line of sight, not the town. Two hover misses walk the
+			// 90° arc before re-approaching.
+			if e.hoverFails++; e.hoverFails >= 2 {
+				e.hoverFails = 0
+				adx, ady := s.Me.Pos.X-target.Position.X, s.Me.Pos.Y-target.Position.Y
+				arc := data.Position{X: target.Position.X + ady, Y: target.Position.Y - adx}
+				slideStride(ctx, arc, 900*time.Millisecond, 1, who+"/hoverarc")
+			}
 			e.phase = 1 // re-approach fresh — never click blind
 			return false, false
 		}
+		e.hoverFails = 0
 		ctx.M.BareClick(px, py)
 		e.clickAt = time.Now()
 	case 3: // menu open: HOME normalizes, then ENTER the menuTry'th candidate slot

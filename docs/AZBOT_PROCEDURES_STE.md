@@ -224,6 +224,12 @@ precondition.
    (WARNING 2).
 8. The march waits while any DOCKET pends. Travel outranks Service by class;
    the pending check is the treaty that keeps errands alive.
+9. THE APPROACH AIMS AT THE BAND, never the body (measured 10:2x, the
+   torch dance): sliding at an NPC's center lands in the hover-breaking
+   clinch, and a backstep flung past the band re-overshoots forever. The
+   destination is a point 5 out on the current bearing; the backstep
+   returns TO the band, proportionally. Two hover misses on one bearing
+   walk the 90° arc — the torch owns that line of sight, not the town.
 
 ### P-5 MARCH
 
