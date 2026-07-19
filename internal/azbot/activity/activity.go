@@ -1102,8 +1102,19 @@ func (f *Fight) Step(ctx *Ctx) Verdict {
 		// EVERY shot above 10% mana — the basic arrow is the reserve below
 		// that line, not the default. The steal refills the pool.
 		var key byte
-		if !f.rangedDead && ctx.Cap != nil && ctx.Cap.Reach != nil && s.Me.MPPct > 10 {
-			key = ctx.Cap.Reach.Key
+		if ctx.Cap != nil && ctx.Cap.Reach != nil {
+			switch {
+			case s.Me.MPPct > 75:
+				// P-1.13 ABOVE 75% THE SKILL IS LAW (the owner, 23:00): a full
+				// pool fires the skill on every shot — a demotion-benched skill
+				// re-arms here and re-proves, never mutes a full pool for a run.
+				if f.rangedDead {
+					f.rangedDead, f.rangedShots, f.rangedFlinch = false, 0, 0
+				}
+				key = ctx.Cap.Reach.Key
+			case !f.rangedDead && s.Me.MPPct > 10:
+				key = ctx.Cap.Reach.Key
+			}
 		}
 		if contact <= 3 {
 			// P-1.7 (the owner, 11:50: "drop her javelin cqb switch, her bow is

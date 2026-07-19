@@ -189,6 +189,12 @@ region; the cursor-empty read is the only proof of success.
     TOOL's skill fires on EVERY shot while mana holds above 10% — the
     basic arrow is the reserve below that line, not the default. No
     thrift bars, no stack arithmetic; the steal refills the pool.
+    ABOVE 75% MANA THE SKILL IS LAW (the owner, 23:00: "force her to
+    use only magic arrows if mana is above 75%"): a full pool fires
+    the skill on EVERY shot, no exception — even a demotion-benched
+    skill re-arms at the 75 line and re-proves itself, because a false
+    silent streak must never mute a full pool for the rest of a run.
+    The demotion audit binds only below 75.
 14. THE CORNERED VERDICT (the owner, 11:45, the last law before sleep:
     "if she remains in spot for more than 3 seconds and enemies are
     nearby, shift to maximum killing"): the same ground held 3 seconds
