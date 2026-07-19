@@ -123,6 +123,12 @@ type Advance struct {
 	wpWalkAt  time.Time
 	wpLogAt   time.Time
 	wpTouched map[area.ID]time.Time
+	// P-5.3a THE CROSSING DRIVE: between the door facts the area read is
+	// NOISE — while driving, geometry is the only truth.
+	driving   bool
+	driveTgt  data.Position
+	driveFrom data.Position
+	driveAt   time.Time
 }
 
 // FrontierFor is the P-5F hint: the itinerary leg the march owns at this
@@ -221,6 +227,27 @@ func (a *Advance) Step(ctx *Ctx) Verdict {
 	if a.lastArea == 0 {
 		a.lastArea = s.Me.Area
 	}
+	// P-5.3a THE CROSSING DRIVE: between the door facts the AREA READ IS
+	// NOISE — the seam flickers faster than any push escapes it, and every
+	// read-driven reaction becomes an oscillator (00:58: push-pong, path 233,
+	// three engines). While driving, geometry is the only truth: run at a
+	// point beyond the far fact, ignore the flicker entirely; 14 tiles past
+	// the near fact the reads are stable and the adopt believes at leisure.
+	if a.driving {
+		me := s.Me.Pos
+		dot := (me.X-a.driveFrom.X)*(a.driveTgt.X-a.driveFrom.X) +
+			(me.Y-a.driveFrom.Y)*(a.driveTgt.Y-a.driveFrom.Y)
+		switch {
+		case time.Since(a.driveAt) > 25*time.Second:
+			a.driving = false // the door won this round; the leg clock judges
+		case chebyshev(me, a.driveFrom) >= 14 && dot > 0:
+			a.driving = false // geometrically THROUGH — reads can settle now
+		default:
+			crossingBracketUntil = time.Now().Add(3 * time.Second)
+			slideStride(ctx, a.driveTgt, 900*time.Millisecond, 1, a.Name())
+			return Running
+		}
+	}
 	// Adopt where the world says we are (crossings, deaths, portals all land here) —
 	// but only an area STABLE for 3 consecutive reads. The ribbon flickers a single
 	// read; a real crossing holds. Town is just another node: the BFS routes
@@ -232,18 +259,9 @@ func (a *Advance) Step(ctx *Ctx) Verdict {
 			a.pendArea, a.pendN = s.Me.Area, 1
 		}
 		if a.pendN < 3 {
-			// THE SEAM IS PUSHED, NEVER STOOD ON (00:56: pend ticks did
-			// nothing — on the flickering seam half her ticks were stands,
-			// the push never sustained, and the orbit circled the door fact
-			// she was standing on). Keep driving at the far-side fact while
-			// the reads settle; believe nothing, but never stop moving.
-			if ctx.Mem != nil {
-				var far data.Position
-				if ctx.Mem.GetJSON(BorderKey(ctx.GR.MapSeed(), s.Me.Area, a.lastArea), &far) && far.X != 0 {
-					slideStride(ctx, far, 700*time.Millisecond, 1, a.Name())
-				}
-			}
-			return Running // hold the grant; believe nothing yet
+			return Running // hold the grant; believe nothing yet (the DRIVE
+			// owns seam motion now — a read-driven push here was the east
+			// engine of the 00:58 push-pong oscillator)
 		}
 		prev := a.lastArea
 		a.idx = i
@@ -607,6 +625,16 @@ func (a *Advance) cross(ctx *Ctx, d game.Data, me data.Position, tgt data.Positi
 			if ctx.Mem.GetJSON(BorderKey(ctx.GR.MapSeed(), hop, d.PlayerUnit.Area), &far) && far.X != 0 {
 				through, haveFar = far, true
 			}
+		}
+		if haveFar {
+			// P-5.3a: a known far side arms THE DRIVE — one committed run at a
+			// point beyond it, deaf to the flickering reads, instead of 300ms
+			// read-reactive pushes that the seam turns into an oscillator.
+			a.driving = true
+			a.driveFrom = tgt
+			a.driveTgt = data.Position{X: through.X + (through.X - tgt.X), Y: through.Y + (through.Y - tgt.Y)}
+			a.driveAt = time.Now()
+			return
 		}
 		if !haveFar {
 			from := a.legStart
