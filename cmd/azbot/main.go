@@ -4,6 +4,8 @@
 package main
 
 import (
+	"bufio"
+	"encoding/json"
 	"flag"
 	"fmt"
 	"image"
@@ -88,6 +90,69 @@ func findHWND(pid uint32) win.HWND {
 	return hwnd
 }
 
+// runReplay drives the DEMAND layer + arbiter over a recorded snapshot stream.
+// Step never runs (no world to act on), so grants churn on rule-zero eviction —
+// exactly the layer where tonight's decision bugs lived (starvation, dead bands,
+// class wars). Output: one line per grant change, with the self-model beside it.
+func runReplay(logger *slog.Logger, path string, legs []activity.Leg) {
+	f, err := os.Open(path)
+	if err != nil {
+		logger.Error("replay: open failed", "err", err)
+		return
+	}
+	defer f.Close()
+	acts := []activity.Activity{&activity.Breakout{}, &activity.Flee{}, activity.NewDodge(),
+		&activity.Respawn{}, activity.NewRelog(), activity.NewReclaim(), activity.NewFight(),
+		activity.NewLoot(), activity.NewFence(), activity.NewRestock(), activity.NewRepair(),
+		activity.NewHeal(), activity.NewIdentify(), activity.NewEquip(), activity.NewAdvance(legs),
+		&activity.Return{}, &activity.Explore{}}
+	arb := &arbiter.Arbiter{}
+	sc := bufio.NewScanner(f)
+	sc.Buffer(make([]byte, 1024*1024), 1024*1024)
+	frame, last := 0, ""
+	for sc.Scan() {
+		frame++
+		var s percept.Snapshot
+		if err := json.Unmarshal(sc.Bytes(), &s); err != nil {
+			continue
+		}
+		var demands []arbiter.Demand
+		for _, a := range acts {
+			if d := a.Demand(&s); d != nil {
+				demands = append(demands, *d)
+			}
+		}
+		grant, changed := arb.Decide(demands)
+		if changed || (grant == nil && last != "-") {
+			holder, urg := "-", 0.0
+			if grant != nil {
+				holder, urg = grant.Demand.Who, grant.Demand.Urgency
+			}
+			if holder != last {
+				near := 0
+				for _, e := range s.Enemies {
+					if abs(s.Me.Pos.X-e.Pos.X) <= 25 || abs(s.Me.Pos.Y-e.Pos.Y) <= 25 {
+						near++
+					}
+				}
+				logger.Info("replay", "frame", frame, "t", s.At.Format("15:04:05"),
+					"grant", holder, "urgency", fmt.Sprintf("%.2f", urg),
+					"hp", s.Me.HPPct, "area", int(s.Me.Area), "near", near,
+					"weapon", s.Me.WeaponKind, "bids", len(demands))
+				last = holder
+			}
+		}
+	}
+	logger.Info("replay: done", "frames", frame)
+}
+
+func abs(v int) int {
+	if v < 0 {
+		return -v
+	}
+	return v
+}
+
 func vkOf(name string) int {
 	switch strings.ToLower(name) {
 	case "pause", "break":
@@ -139,11 +204,22 @@ func main() {
 	exitProbe := flag.Bool("exitprobe", false, "PURE READ: dump the current area's AdjacentLevels (raw + live-translated), live entrance units, and the BFS hop toward the next Act 1 leg — validates the crossing knowledge before the Advance activity trusts it")
 	missileProbe := flag.Int("missileprobe", 0, "PURE READ: sample the missile table for N seconds and print every projectile with measured velocity — validates the dodge oracle (stand near something that shoots)")
 	relogTest := flag.Bool("relogtest", false, "manual harness, staged: alone = open the pause menu, screenshot it (logs/relog_pausemenu.png), close it. With -exitxy = click Save+Exit, screenshot the main menu (logs/relog_mainmenu.png). With -playxy too = full relog loop, verify the corpse materialized in town")
+	replayF := flag.String("replay", "", "OFFLINE DECISION REPLAY: path to a flight .jsonl — every frame runs Demand + arbiter and prints the grant timeline. No game needed; live failures become desk-checkable evidence (the STE mentality: verify against recorded reality, not her blood)")
 	exitXY := flag.String("exitxy", "", "relogtest: screenshot x,y of the pause menu's Save and Exit button")
 	playXY := flag.String("playxy", "", "relogtest: screenshot x,y of the main menu's Play button")
 	logger := slog.New(slog.NewTextHandler(os.Stdout, nil))
 
 	flag.Parse()
+
+	// ---- OFFLINE REPLAY: no attach, no injector, no game — pure decision review ----
+	if *replayF != "" {
+		legs := activity.FarmItinerary()
+		if *goal == "campaign" || *goal == "rampage" {
+			legs = activity.Act1Itinerary()
+		}
+		runReplay(logger, *replayF, legs)
+		return
+	}
 
 	// ---- attach (recipe proven by farmbot) ----
 	if err := config.Load(); err != nil {
@@ -1585,6 +1661,18 @@ func main() {
 		}
 		return grid
 	}
+	// FLIGHT RECORDER: 1 Hz snapshot samples — the replay corpus (-replay reads it) —
+	// plus a rolling ring dumped as a BLACK BOX on death. Live failures become
+	// desk-checkable; fixes get verified against recorded reality, not her blood.
+	flightPath := fmt.Sprintf("logs/flight_%d.jsonl", time.Now().Unix())
+	var flightW *bufio.Writer
+	if ff, err := os.Create(flightPath); err == nil {
+		flightW = bufio.NewWriter(ff)
+		defer func() { flightW.Flush(); ff.Close() }()
+		logger.Info("flight recorder live", "path", flightPath)
+	}
+	var flightAt time.Time
+	var ring []*percept.Snapshot
 	wasArmed := false
 	wasDead := false
 	wd := watchdog.New()
@@ -1673,12 +1761,39 @@ func main() {
 				trail = trail[1:]
 			}
 		}
+		// Flight recorder: ring every cycle, sampled line every second.
+		ring = append(ring, s)
+		if len(ring) > 300 {
+			ring = ring[1:]
+		}
+		if flightW != nil && time.Since(flightAt) >= time.Second {
+			if b, err := json.Marshal(s); err == nil {
+				flightW.Write(b)
+				flightW.WriteByte('\n')
+				flightW.Flush()
+			}
+			flightAt = time.Now()
+		}
 		// Self-model events: armed flip OR back-from-death → recalibrate capability.
 		deadNow := s.Me.HPPct <= 0
 		if deadNow && !wasDead {
 			logger.Warn("DEATH REPORT — the last moments:")
 			for _, ln := range trail {
 				logger.Warn("  " + ln)
+			}
+			// BLACK BOX: the full snapshot ring around the death — replayable evidence.
+			bbPath := fmt.Sprintf("logs/blackbox_%d.jsonl", time.Now().Unix())
+			if bf, err := os.Create(bbPath); err == nil {
+				w := bufio.NewWriter(bf)
+				for _, snap := range ring {
+					if b, err := json.Marshal(snap); err == nil {
+						w.Write(b)
+						w.WriteByte('\n')
+					}
+				}
+				w.Flush()
+				bf.Close()
+				logger.Warn("BLACK BOX dumped", "path", bbPath, "frames", len(ring))
 			}
 		}
 		if (s.Me.Armed != wasArmed || (wasDead && !deadNow)) && !deadNow {

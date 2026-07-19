@@ -265,8 +265,11 @@ func ServicesPending(s *percept.Snapshot) bool {
 	}
 	// Dressing and identifying are errands too — Travel outranks Service by class,
 	// and without these lines Advance marched her out with a unique bow still bagged
-	// the moment the potions were paid for (run 34: Equip got ONE step).
-	if s.Me.EquipCandCount > 0 && equipWorks.Load() {
+	// the moment the potions were paid for (run 34: Equip got ONE step). P-4.8 with
+	// the escape clause run 42 taught: a pending docket whose service CANNOT run
+	// (no landing room, nothing left to sell) must not gate the march — she idled
+	// in town 12 minutes on that deadlock.
+	if s.Me.EquipCandCount > 0 && equipWorks.Load() && s.Me.InvFree >= 6 {
 		return true
 	}
 	if s.Me.UnidentCount > 0 && identifyWorks.Load() {
