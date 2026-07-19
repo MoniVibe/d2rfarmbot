@@ -214,6 +214,15 @@ region; the cursor-empty read is the only proof of success.
 
 ### P-2 RETREAT
 
+-1. THE FLEE FLOOR (the owner, 23:20: "that flee at any hp is messing
+   with my vibes — not flee unless she has less than 33% hp"): FLEE
+   DOES NOT EXIST AT 33 BLOOD OR ABOVE. No crowd bar, no density
+   backstop, no runway arithmetic bids Flee while the blood holds —
+   the bow answers crowds (P-1.8, P-1.13), and Fight's own stand-down
+   honors the same floor so no dead band opens. The owner accepts the
+   run-41 density risk knowingly; BREAKOUT alone keeps the eject seat
+   (critical 24, surrounded-with-collapsing-runway, trapped) for the
+   true collapse. Below 33 the retreat doctrine applies unchanged.
 0. THE BLOOD ORACLE (the owner, 11:40: "can we have a survival hp oracle"):
    retreat is judged by MEASURED survivability, never by counting heads.
    A sliding 5 s window yields the blood drop rate; each belt heal extends

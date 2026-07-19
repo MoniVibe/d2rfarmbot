@@ -451,6 +451,13 @@ func (f *Flee) Demand(s *percept.Snapshot) *arbiter.Demand {
 	if s.Me.WeaponKind == "none" && s.Me.CorpseFound {
 		return nil
 	}
+	// P-2.-1 THE FLEE FLOOR (the owner, 23:20): flee does not exist at 33
+	// blood or above — no crowd bar, no density backstop, no runway math.
+	// The bow answers crowds; Breakout alone keeps the eject seat.
+	if s.Me.HPPct >= 33 {
+		f.denseN = 0
+		return nil
+	}
 	// P-2.0: DENSITY BACKSTOP first — 20+ is fled at any oracle verdict and
 	// through any fatigue (density kills before HP moves; run 41). The count
 	// must hold TWO consecutive reads: corridor sight-lines flap it (Flavie's
@@ -990,7 +997,9 @@ func (f *Fight) Demand(s *percept.Snapshot) *arbiter.Demand {
 	// (TTD < 8 s) with real pressure hands the moment to Flee. The lone
 	// chaser is fought at any blood; fatigue (P-2.11) suspends the stand-down
 	// entirely so she blasts instead of orbiting.
-	if TimeToDie(s) < 8 && !time.Now().Before(fleeFatigueUntil) {
+	// P-2.-1: the stand-down honors the FLEE FLOOR — above 33 blood Flee
+	// cannot bid, so Fight never hands it the moment (a dead band otherwise).
+	if TimeToDie(s) < 8 && s.Me.HPPct < 33 && !time.Now().Before(fleeFatigueUntil) {
 		near25 := 0
 		for _, e := range s.Enemies {
 			if e.Walled { // WARNING 10
