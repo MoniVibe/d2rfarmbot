@@ -104,14 +104,17 @@ stride test then tells whether it closed a panel or raised the pause
 menu, and a RealEsc restores the difference. Self-contained, before
 calibration, every launch.
 
-**WARNING 7 — THE FOCUS LAW.** An unfocused world is UNKNOWN. It may
-freeze (measured: zero-gain strides, 2026-07-19 before dawn), or it may keep
-running (measured: 131→55 blood across an 11-minute "pause", 2026-07-19
-07:26–07:38 — the sentinel's drink landed; the executive stood by while
-she was eaten). Do not aim input at an unfocused window. DO request the
-window back — the foreground trick, rate-limited, only while the bot
-holds the controls. Standing by without a refocus request is paralysis
-under fire, the same death class as the field swap (WARNING 6).
+**WARNING 7 — THE FOCUS LAW.** The bot NEVER steals focus (the owner,
+2026-07-19 evening: "I intended the bot to work in the background"). An
+unfocused window is the owner's to use — offline D2R pauses when unfocused,
+so standing by costs nothing but a paused clock. The refocus-grab (added
+mid-day when the world was seen running unfocused) STOLE Diablo to the
+front every ten seconds and is REMOVED: the owner's window use outranks
+the bot's impatience. Menus are the one exception — they force+verify
+foreground for a single brief click (menu input needs foreground). True
+background PROGRESS (the game running while the owner works elsewhere)
+needs D2R's own background-run setting plus, for menus, the Interception
+driver installed — a config task, not a code one.
 
 **WARNING 8 — SEED NAMESPACE.** The world re-rolls per game. Geometry facts
 from one seed must never steer another.

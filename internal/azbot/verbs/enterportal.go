@@ -27,6 +27,18 @@ type EnterPortal struct {
 	Desperate bool
 }
 
+// portalDeaf tracks per-portal deaf streaks — a portal that clicks but never
+// transitions is a DEAD DOOR. Hammering it is the in/out loop the owner
+// watched (2026-07-19 evening: "in and out of a town portal... rinse
+// repeat"). Three deaf clicks blacklist the portal for 45 s so the caller
+// (Flee/Return) falls through to marching or fighting instead.
+type portalDeafRec struct {
+	n  int
+	at time.Time
+}
+
+var portalDeaf = map[data.UnitID]*portalDeafRec{}
+
 func (ep EnterPortal) Do(m *motor.Motor, gr *game.MemoryReader, p *percept.Perceptor, led *Ledger, holder string) Outcome {
 	win := ep.Window
 	if win <= 0 {
@@ -41,6 +53,17 @@ func (ep EnterPortal) Do(m *motor.Motor, gr *game.MemoryReader, p *percept.Perce
 		o.Evidence = "motor disengaged"
 		led.Append(o)
 		return o
+	}
+	// A DEAD DOOR is refused, not hammered (the portal loop-breaker).
+	if r := portalDeaf[ep.Target]; r != nil {
+		if time.Since(r.at) > 45*time.Second {
+			delete(portalDeaf, ep.Target) // the blacklist ages out; try once more
+		} else if r.n >= 3 {
+			o.Result = ResRefused
+			o.Evidence = "dead door — refused (3 deaf clicks, no transition)"
+			led.Append(o)
+			return o
+		}
 	}
 	m.MoveStop()       // the sweep aims the cursor — a held move would walk toward every probe
 	m.ModifierAmnesty() // a latched shift turns the portal click into an air-swing beside it
@@ -102,12 +125,21 @@ sweep:
 		if now != start && now != 0 {
 			o.Result = ResDone
 			o.Evidence = fmt.Sprintf("area %d -> %d", int(start), int(now))
+			delete(portalDeaf, ep.Target) // a live door clears its record
 			led.Append(o)
 			return o
 		}
 	}
+	// Count this deaf click toward the dead-door blacklist (loop-breaker).
+	r := portalDeaf[ep.Target]
+	if r == nil {
+		r = &portalDeafRec{}
+		portalDeaf[ep.Target] = r
+	}
+	r.n++
+	r.at = time.Now()
 	o.Result = ResDeaf
-	o.Evidence = "clicked portal but area never changed"
+	o.Evidence = fmt.Sprintf("clicked portal but area never changed (deaf %d/3)", r.n)
 	led.Append(o)
 	return o
 }

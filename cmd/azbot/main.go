@@ -446,15 +446,53 @@ func main() {
 				time.Sleep(250 * time.Millisecond)
 				continue
 			}
-			if chebyshev(s.Me.Pos, wp.Position) <= 3 {
+			if chebyshev(s.Me.Pos, wp.Position) <= 2 {
 				break
 			}
 			verbs.Stride{To: wp.Position, Hold: 700 * time.Millisecond, MinGain: 1}.Do(m, gr, p, led, "wpcal")
 		}
-		// The WP is a tall clickable object — EnterPortal's hover-sweep click
-		// opens its panel; the area-change postcondition reads deaf, ignored.
-		verbs.EnterPortal{Target: wp.ID, TargetPos: wp.Position, Window: 1500 * time.Millisecond}.Do(m, gr, p, led, "wpcal")
-		time.Sleep(900 * time.Millisecond)
+		// A WAYPOINT IS A FLAT GROUND PAD, not a tall portal — its clickable
+		// hover sits AT the base, so the sweep centers on the projection
+		// (dy -34..+34), not 80px above it. Hover-confirm against wp.ID, then
+		// click; the blueness read below is the panel-open proof.
+		m.MoveStop()
+		m.ModifierAmnesty()
+		func() {
+			for tryOpen := 0; tryOpen < 6; tryOpen++ {
+				dd := gr.GetData()
+				meNow := dd.PlayerUnit.Position
+				bx := int(float32((wp.Position.X-meNow.X)-(wp.Position.Y-meNow.Y))*19.8) + gr.GameAreaSizeX/2
+				by := int(float32((wp.Position.X-meNow.X)+(wp.Position.Y-meNow.Y))*9.9) + gr.GameAreaSizeY/2
+				for dy := -34; dy <= 34; dy += 6 {
+					for _, dx := range []int{0, -10, 10, -20, 20, -32, 32} {
+						cx, cy := bx+dx, by+dy
+						if cx < 20 || cy < 20 || cx > gr.GameAreaSizeX-20 || cy > gr.GameAreaSizeY-20 {
+							continue
+						}
+						hid.AimPhysical(cx, cy)
+						time.Sleep(45 * time.Millisecond)
+						hd := gr.GetData().HoverData
+						if !hd.IsHovered || hd.UnitID != wp.ID {
+							continue
+						}
+						hid.AimPhysical(cx, cy)
+						time.Sleep(60 * time.Millisecond)
+						hd = gr.GetData().HoverData
+						if hd.IsHovered && hd.UnitID == wp.ID {
+							logger.Info("wpcal: WP hover confirmed", "screen", fmt.Sprintf("(%d,%d)", cx, cy))
+							gi.OverrideGetKeyState(0x01)
+							gi.OverrideGetAsyncKeyState(0x01)
+							hid.LeftClickNoMove(cx, cy)
+							time.Sleep(900 * time.Millisecond)
+							return
+						}
+					}
+				}
+				logger.Info("wpcal: no WP hover this pass, re-approaching", "attempt", tryOpen+1)
+				verbs.Stride{To: wp.Position, Hold: 500 * time.Millisecond, MinGain: 1}.Do(m, gr, p, led, "wpcal")
+			}
+		}()
+		time.Sleep(400 * time.Millisecond)
 		img := gr.Screenshot()
 		if f, err := os.Create("logs/wp_panel.png"); err == nil {
 			_ = png.Encode(f, img)
@@ -1842,23 +1880,21 @@ func main() {
 		}
 		return "-"
 	}
-	lastRefocus := time.Time{}
 	lastUnpause := time.Time{}
 	for time.Now().Before(deadline) {
-		// WARNING 7: an unfocused world is UNKNOWN — it froze before dawn (zero-gain
-		// strides) and it RAN at 07:26 (131→55 blood across an 11-minute "pause"
-		// while the executive stood by). Never aim input at an unfocused window;
-		// instead REQUEST THE WINDOW BACK, rate-limited, only while the bot holds
-		// the controls (the owner's F10 and their alt-tab are respected).
+		// WARNING 7 (revised, the owner 2026-07-19 evening: "I intended the bot to
+		// work in the background"): the bot NEVER steals focus. Offline D2R pauses
+		// when unfocused and in-game input rides the injector's patched cursor, not
+		// SendInput — so an unfocused window is simply the owner's to use. Stand by,
+		// quietly, until they hand it back. (The refocus-grab that stole Diablo to
+		// the front every ten seconds is gone; menus still force+verify foreground
+		// for their one click, which is unavoidable and brief.) True background
+		// PROGRESS — the game running while unfocused — needs D2R's own
+		// background-run setting and, for menus, the Interception driver installed.
 		if !m.GameFocused() {
 			if wasFocused {
-				logger.Info("executive: game unfocused — world state UNKNOWN, requesting focus back")
+				logger.Info("executive: game unfocused — standing by (the window is yours)")
 				wasFocused = false
-			}
-			if m.Engage.Engaged() && time.Since(lastRefocus) > 10*time.Second {
-				game.ForceForegroundHWND(gr.HWND)
-				lastRefocus = time.Now()
-				logger.Info("executive: refocus requested", "verdict", m.GameFocused())
 			}
 			time.Sleep(400 * time.Millisecond)
 			continue
