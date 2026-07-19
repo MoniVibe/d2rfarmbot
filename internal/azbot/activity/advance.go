@@ -80,6 +80,15 @@ type Advance struct {
 	// border-room cache (the room-graph read is a few hundred RPMs; 2s is plenty fresh)
 	extRooms map[area.ID][]game.TileRect
 	extAt    time.Time
+	// Ribbon defense (run 16, measured: crossed 04:00:14, bounced back 04:00:16,
+	// orbited the gate 15s): the gate zone FLICKERS area reads 1<->2, and adopting a
+	// leg on one flickered read whipsawed the itinerary at the door.
+	lastArea area.ID       // area seen by the previous Step (the crossing's from-side)
+	pendArea area.ID       // area change waiting to be believed
+	pendN    int           // consecutive reads agreeing on pendArea
+	clearing bool          // adopted a crossing; pushing clear of the ribbon
+	clearDoor data.Position // where the crossing fired
+	clearDir  data.Position // the crossing's direction — onward is THROUGH, not back
 }
 
 func NewAdvance(legs []Leg) *Advance {
@@ -141,12 +150,50 @@ func (a *Advance) Step(ctx *Ctx) Verdict {
 	if !s.Valid {
 		return Running
 	}
-	// Adopt where the world says we are (crossings, deaths, portals all land here).
-	// Town is just another node: the BFS routes town→BloodMoor→... like any other hop.
+	if a.lastArea == 0 {
+		a.lastArea = s.Me.Area
+	}
+	// Adopt where the world says we are (crossings, deaths, portals all land here) —
+	// but only an area STABLE for 3 consecutive reads. The ribbon flickers a single
+	// read; a real crossing holds. Town is just another node: the BFS routes
+	// town→BloodMoor→... like any other hop.
 	if i := a.place(s.Me.Area); i != a.idx {
+		if s.Me.Area == a.pendArea {
+			a.pendN++
+		} else {
+			a.pendArea, a.pendN = s.Me.Area, 1
+		}
+		if a.pendN < 3 {
+			return Running // hold the grant; believe nothing yet
+		}
+		prev := a.lastArea
 		a.idx = i
 		a.resetLeg(s.Me.Pos)
-		return Done // leg complete — release the grant; the next leg re-bids next cycle
+		a.lastArea, a.pendN = s.Me.Area, 0
+		// CROSSING IS NOT ARRIVAL (Travel's ribbon law, finally ported): before the
+		// next leg gets a thought, push CLEAR of the door — onward, in the crossing's
+		// own measured direction (from the far side's fact through to here).
+		a.clearing, a.clearDoor = true, s.Me.Pos
+		a.clearDir = data.Position{X: 1}
+		if ctx.Mem != nil && prev != 0 {
+			var far data.Position
+			if ctx.Mem.GetJSON(BorderKey(ctx.GR.MapSeed(), prev, s.Me.Area), &far) && far.X != 0 {
+				a.clearDir = stepDir(far, s.Me.Pos)
+			}
+		}
+		return Running
+	}
+	a.pendN = 0
+	a.lastArea = s.Me.Area
+	if a.clearing {
+		me := s.Me.Pos
+		if chebyshev(me, a.clearDoor) >= 12 {
+			a.clearing = false
+			return Done // adopted AND clear of the ribbon — the next leg re-bids fresh
+		}
+		out := data.Position{X: me.X + a.clearDir.X*14, Y: me.Y + a.clearDir.Y*14}
+		slideStride(ctx, out, 1200*time.Millisecond, 1, a.Name())
+		return Running
 	}
 	if a.idx >= len(a.Itinerary)-1 && s.Me.Area == a.Itinerary[a.idx].Area {
 		return Done
@@ -207,7 +254,7 @@ func (a *Advance) Step(ctx *Ctx) Verdict {
 
 	// NEAR the door: an entrance UNIT nearby means a warp (ritual); none means a
 	// walkable border (push through). Live units decide — never a map-data flag.
-	a.cross(ctx, d, me, tgt)
+	a.cross(ctx, d, me, tgt, hop)
 	return Running
 }
 
@@ -254,7 +301,7 @@ func (a *Advance) search(ctx *Ctx, d game.Data, me data.Position) {
 		}
 	}
 	if ent != nil {
-		a.cross(ctx, d, me, ent.Position)
+		a.cross(ctx, d, me, ent.Position, 0) // unknown door: no far-side fact to aim at
 		return
 	}
 	if a.legStart == me || a.heading == 0 && a.legStart != (data.Position{}) {
@@ -295,7 +342,7 @@ func (a *Advance) knownDoor(ctx *Ctx, d game.Data, pos data.Position) bool {
 // on a confirmed entrance-class hover, UnitType 5 or 2). Ported from the machinery
 // farmbot proved on this laptop: entrance units sit ~30 subtiles off mapped points,
 // clicks from range never close, and a bounce must not zero the ritual timer.
-func (a *Advance) cross(ctx *Ctx, d game.Data, me data.Position, tgt data.Position) {
+func (a *Advance) cross(ctx *Ctx, d game.Data, me data.Position, tgt data.Position, hop area.ID) {
 	// Steer at the LIVE entrance unit when one is near the target; else the target.
 	for i := range d.Entrances {
 		if chebyshev(d.Entrances[i].Position, tgt) <= 15 {
@@ -315,19 +362,36 @@ func (a *Advance) cross(ctx *Ctx, d game.Data, me data.Position, tgt data.Positi
 		a.contactAt = time.Now()
 	}
 	if time.Since(a.contactAt) < 5*time.Second {
-		// CONTACT PUSH: through-aim past the door AWAY FROM THE AREA CENTER — doors sit
-		// on the level's edge, so outward IS across. (The old legStart vector went stale
-		// after town errands and shoved her EAST into town at the west gate, oscillating
-		// on the ribbon forever — measured 03:12, pinned at the door fact itself.)
-		from := a.legStart
-		if g := a.grid; g != nil {
-			from = data.Position{X: g.OffsetX + g.Width/2, Y: g.OffsetY + g.Height/2}
-		} else if ctx.Grid != nil {
-			from = data.Position{X: ctx.Grid.OffsetX + ctx.Grid.Width/2, Y: ctx.Grid.OffsetY + ctx.Grid.Height/2}
+		// CONTACT PUSH — direction by knowledge ladder:
+		//   1. MEASURED: the cartographer records BOTH sides of every door; if the far
+		//      side of THIS door is on record, push at it — the one direction that
+		//      cannot be wrong. (Run 15: the center guess aimed SOUTH-west at the west
+		//      gate while the recorded far side sits NORTH-west; she rubber-banded on
+		//      the fence beside the opening, back and forth, until the owner pulled F10.)
+		//   2. GUESS: away from the grid's bounding-box center — doors sit on the
+		//      level's edge, so outward is USUALLY across (the 03:12 fix). Fragile:
+		//      streamed-in rooms drift the center.
+		var through data.Position
+		haveFar := false
+		if hop != 0 && ctx.Mem != nil {
+			var far data.Position
+			if ctx.Mem.GetJSON(BorderKey(ctx.GR.MapSeed(), hop, d.PlayerUnit.Area), &far) && far.X != 0 {
+				through, haveFar = far, true
+			}
 		}
-		dir := stepDir(from, tgt)
-		through := data.Position{X: tgt.X + dir.X*6, Y: tgt.Y + dir.Y*6}
-		verbs.Stride{To: through, Hold: 300 * time.Millisecond}.Do(ctx.M, ctx.GR, ctx.P, ctx.Led, a.Name())
+		if !haveFar {
+			from := a.legStart
+			if g := a.grid; g != nil {
+				from = data.Position{X: g.OffsetX + g.Width/2, Y: g.OffsetY + g.Height/2}
+			} else if ctx.Grid != nil {
+				from = data.Position{X: ctx.Grid.OffsetX + ctx.Grid.Width/2, Y: ctx.Grid.OffsetY + ctx.Grid.Height/2}
+			}
+			dir := stepDir(from, tgt)
+			through = data.Position{X: tgt.X + dir.X*6, Y: tgt.Y + dir.Y*6}
+		}
+		// MinGain 1: a 300ms push covers 2-3 tiles by design — the default 4 branded
+		// every honest push "blocked" (cosmetic, but the log must not lie).
+		verbs.Stride{To: through, Hold: 300 * time.Millisecond, MinGain: 1}.Do(ctx.M, ctx.GR, ctx.P, ctx.Led, a.Name())
 		return
 	}
 	// SPIRAL HOVER-CLICK for the rare click-to-open stairs.

@@ -298,23 +298,17 @@ func (p *Perceptor) Capture() *Snapshot {
 			s.Me.BeltMana++
 		}
 	}
-	// Sellable junk audit: inventory items that are neither her one TP tome, one ID
-	// tome, nor potions. Plain gear and DUPLICATE tomes (two 300g spares ride along
-	// from the probe-click era) are the Fence's stock.
-	seenTP, seenID := false, false
+	// Sellable junk audit: inventory items that are neither tomes nor potions. TOMES
+	// ARE LIFELINES, NEVER STOCK — all of them, spares included. The old "keep exactly
+	// one" rule marked duplicate tomes junk, and WHICH copy survived hung on inventory
+	// iteration order: the audit could keep an empty probe-era spare and fence the
+	// real, scroll-loaded book (the owner: "she simply dropped her tp book again").
+	// A spare tome's 150g is never worth the escape hatch.
 	for _, it := range d.Inventory.ByLocation(item.LocationInventory) {
 		id := int(it.ID)
 		switch {
-		case id == 533: // TP tome: keep exactly one
-			if !seenTP {
-				seenTP = true
-				continue
-			}
-		case id == 534: // ID tome: keep exactly one
-			if !seenID {
-				seenID = true
-				continue
-			}
+		case id == 533 || id == 534: // TP/ID tomes: untouchable, every copy
+			continue
 		case id == 602 || id == 607: // potions are fuel, not stock
 			continue
 		case int(it.Quality) >= 4: // magic+ might be gear-oracle food later — hold

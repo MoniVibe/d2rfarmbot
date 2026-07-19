@@ -5,6 +5,7 @@
 package activity
 
 import (
+	"fmt"
 	"time"
 
 	"github.com/hectorgimenez/d2go/pkg/data"
@@ -278,15 +279,33 @@ func (r *Restock) Step(ctx *Ctx) Verdict {
 // gold → repair/potions. A bot with an empty purse cannot take care of itself (the
 // owner, 03:08: "she doesn't repair either but she's out of gold i guess?"). One
 // ctrl-click quick-sell per Step, gold delta as the postcondition.
+//
+// THE TOME OATH (the owner: "she simply dropped her tp book again. i'd like her to
+// stop that"): a tome must never leave the bag at the Fence. Three layers —
+// percept never marks tomes junk; every cell is re-identified against LIVE memory
+// the instant before the ctrl-click; and the tome count is audited across the
+// session — a missing tome aborts the errand with a loud ledger entry.
 type Fence struct {
-	e     errand
-	sold  int
-	gold0 int
+	e      errand
+	sold   int
+	gold0  int
+	tomes0 int // tome census when the shop opened; -1 = not yet taken
 }
 
 func NewFence() *Fence {
-	return &Fence{e: errand{npcID: npc.Akara,
+	return &Fence{tomes0: -1, e: errand{npcID: npc.Akara,
 		ring: []data.Position{{X: 6023, Y: 4933}, {X: 6070, Y: 4960}, {X: 6100, Y: 4990}, {X: 6050, Y: 5010}, {X: 6110, Y: 4930}}}}
+}
+
+// tomeCensus counts TP+ID tomes in the live inventory read — the Fence's oath audit.
+func tomeCensus(ctx *Ctx) int {
+	n := 0
+	for _, it := range ctx.GR.GetData().Inventory.ByLocation(item.LocationInventory) {
+		if int(it.ID) == 533 || int(it.ID) == 534 {
+			n++
+		}
+	}
+	return n
 }
 
 func (fc *Fence) Name() string { return "fence" }
@@ -316,7 +335,7 @@ func (fc *Fence) Step(ctx *Ctx) Verdict {
 			closeShop(ctx)
 		}
 		fc.e.reset()
-		fc.sold = 0
+		fc.sold, fc.tomes0 = 0, -1
 		return Done // the bag is honest merchandise no more
 	}
 	open, dead := fc.e.step(ctx, fc.Name())
@@ -327,9 +346,36 @@ func (fc *Fence) Step(ctx *Ctx) Verdict {
 	if !open {
 		return Running
 	}
+	// TOME OATH, audit layer: census on shop-open, verified before every sell. A tome
+	// that vanished mid-errand means a click went somewhere it must never go — stop
+	// selling IMMEDIATELY and say so; silence is never success.
+	census := tomeCensus(ctx)
+	if fc.tomes0 < 0 {
+		fc.tomes0 = census
+	} else if census < fc.tomes0 {
+		ctx.Led.Append(verbs.Outcome{Verb: "fence", Holder: fc.Name(), Result: verbs.ResDeaf,
+			Evidence: fmt.Sprintf("TOME LOST mid-errand (%d -> %d) — fencing aborted", fc.tomes0, census)})
+		closeShop(ctx)
+		fc.e.reset()
+		fc.sold, fc.tomes0 = 0, -1
+		return Abandoned
+	}
 	// Shop open: quick-sell ONE junk item per step; the next snapshot's Junk list and
 	// gold are the postcondition.
 	it := s.Junk[0]
+	// TOME OATH, identity layer: the snapshot called this cell junk — re-identify it
+	// against LIVE memory the instant before the ctrl-click. Percept and reality
+	// disagreeing on a tome cell is a refusal, not a sale.
+	for _, inv := range ctx.GR.GetData().Inventory.ByLocation(item.LocationInventory) {
+		if inv.Position.X == it.GX && inv.Position.Y == it.GY && (int(inv.ID) == 533 || int(inv.ID) == 534) {
+			ctx.Led.Append(verbs.Outcome{Verb: "fence", Holder: fc.Name(), Result: verbs.ResRefused,
+				Evidence: fmt.Sprintf("cell (%d,%d) holds a TOME (id %d) — sell refused", it.GX, it.GY, int(inv.ID))})
+			closeShop(ctx)
+			fc.e.reset()
+			fc.sold, fc.tomes0 = 0, -1
+			return Abandoned
+		}
+	}
 	cx, cy := invCell(it.GX, it.GY)
 	ctx.M.SellClick(cx, cy)
 	fc.sold++
