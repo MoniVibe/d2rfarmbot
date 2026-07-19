@@ -34,6 +34,12 @@ func (rc *Reclaim) Demand(s *percept.Snapshot) *arbiter.Demand {
 	if !s.Valid || s.Me.HPPct <= 0 || !s.Me.CorpseFound {
 		return nil
 	}
+	// P-3.2b THE HUSK RULE: an armed girl's corpses are cosmetic — gear rides
+	// the newest death only and she already wears it. Recovery exists for
+	// nakedness (old husks outbid the march at 23:58, bow in hand).
+	if s.Me.Armed {
+		return nil
+	}
 	// In town, bid only for a body that is HERE (the relog materializes it at the
 	// spawn); a far body from town is Relog's problem — Recover outranks Travel, so
 	// bidding on an unreachable corpse would deadlock her at the gate.

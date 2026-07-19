@@ -297,6 +297,11 @@ region; the cursor-empty read is the only proof of success.
 2. In town, unarmed, corpse far: RELOG. The corpse materializes at the spawn.
 3. In town, unarmed, corpse near: RECLAIM it. Step off the body first; her
    own sprite owns the cursor.
+2b. THE HUSK RULE (measured 23:58: old husks from the recovery wall
+   outbid the march at 0.90 while the bow sat in her hands): an ARMED
+   girl's corpses are cosmetic — gear rides the newest death only, and
+   she already wears it. RECLAIM exists for nakedness; while Armed
+   reads true it does not bid at all.
 3a. A BODY IN ANOTHER AREA IS AN AREA PROBLEM BEFORE IT IS A BODY
    PROBLEM. Chebyshev counts THROUGH walls (measured 22:45: pinned in
    the hub corner striding at a corpse "that way" across the town
