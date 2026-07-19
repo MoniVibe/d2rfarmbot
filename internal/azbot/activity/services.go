@@ -747,7 +747,10 @@ func NewHeal() *Heal {
 func (h *Heal) Name() string { return "heal" }
 
 func (h *Heal) Demand(s *percept.Snapshot) *arbiter.Demand {
-	if !s.Valid || !s.Me.InTown || s.Me.HPPct > 55 || !healerHeals.Load() {
+	// P-4.1: in town she tops up below 75 — free is free, and idling at 57
+	// kept Breakout's eject seat armed all morning (11:06). Only below 55
+	// does the wound GATE the march (ServicesPending keeps that line).
+	if !s.Valid || !s.Me.InTown || s.Me.HPPct > 75 || !healerHeals.Load() {
 		return nil
 	}
 	return &arbiter.Demand{Who: h.Name(), Class: arbiter.ClassService,

@@ -152,8 +152,12 @@ region; the cursor-empty read is the only proof of success.
 
 ### P-2 RETREAT
 
-1. A CROWD is fled at any HP. Blood is a lagging indicator inside a horde.
-2. Clearance from a CROWD is: fewer than 8 within 25.
+1. A CROWD is fled — at 12 wounded (below 75), at 16 healthy (the owner,
+   11:15: "shoot more than moving"; run 41's eighty-four remain the law's
+   floor, not its ceiling). Blood is a lagging indicator inside a horde.
+2. Clearance from a CROWD is: fewer than 8 within 25. The eject seat
+   (Breakout) arms at 6 surrounding below half blood — not at four
+   nuisances under a scratch (the 57-HP sortie loop, 11:06).
 3. With an empty belt, a RETREAT has a destination: plant the portal when
    the gap opens, run to it, ENTER it. Fleeing is not a lifestyle.
 4. A portal that exists is a decision already made. Breakout stepping at all
@@ -165,7 +169,10 @@ region; the cursor-empty read is the only proof of success.
 7. A started escape binds its owner until she is THROUGH or the portal is
    provably gone. One potion tick does not un-declare an emergency.
 8. Dodge yields when body-locked (2+ adjacent). Inside a ring the answer is
-   violence, not footwork.
+   violence, not footwork. DODGE IS A WOUNDED ART: healthy blood (65+)
+   trades — eat the arrow and answer with one; the sidestep only earns
+   its 400 ms when the pool is already low (the owner: the archer-camp
+   wiggle was footwork between every volley).
 9. A PINNED RETREAT IS A FIGHT (measured 08:12–08:13: breakout and flee
    pinned at a wall in rotating 15 s cooldowns, striding into the stone,
    blood 51→24, no swing answered): when the retreat stride gains no
@@ -192,7 +199,9 @@ region; the cursor-empty read is the only proof of success.
 The order is causal, not stylistic. Each step creates the next step's
 precondition.
 
-1. HEAL first. Akara refills for free on TALK. Wounded below 55 pends.
+1. HEAL first. Akara refills for free on TALK. In town she tops up below
+   75 (free is free; idling at 57 kept the eject seat armed all morning,
+   11:06); only below 55 does the wound GATE the march.
 2. IDENTIFY second. Unknown items cannot be judged. AN EMPTY TOME
    IDENTIFIES NOTHING (measured 09:50: the cast fizzles, the follow-up
    click GRABS the item, the next click throws it — WARNING 9 on
@@ -249,11 +258,12 @@ precondition.
 6. On ground that does not pay (gap > 4), the march urgency doubles. The
    march is the experience.
 7. FORCED MARCH (the owner, 2026-07-19: "ignore far away monsters and
-   punch through"): on ground that does not pay, the march owns the
-   ground. FIGHT engages only a TOOTH or a blocker within 4. A retreat
-   that backtracks refunds nothing: when the march direction is not into
-   the crowd, Flee retreats FORWARD along it — the moor is crossed, not
-   orbited. P-2's triggers and clearances stand unchanged.
+   punch through"; refined 11:15: "shoot more than moving if enemies are
+   nearby"): on ground that does not pay, the march owns the ground.
+   FIGHT engages anything within 10 — nearby aggro is SHOT, the far
+   field is ignored. A retreat that backtracks refunds nothing: when the
+   march direction is not into the crowd, Flee retreats FORWARD along
+   it — the moor is crossed, not orbited.
 8. THE DOOR MOUTH IS SHOT OPEN (the owner, 2026-07-19, at the bridge:
    "I'd rather she shoot her way through with the bow"): within 12 of
    the march door, the REACH TOOL holds. The clinch swap is suppressed

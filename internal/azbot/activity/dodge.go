@@ -120,6 +120,12 @@ func (dg *Dodge) Demand(s *percept.Snapshot) *arbiter.Demand {
 	if adjacent >= 2 {
 		return nil
 	}
+	// P-2.8: DODGE IS A WOUNDED ART — healthy blood trades: eat the arrow,
+	// answer with one (the owner: the archer-camp wiggle was a sidestep
+	// between every volley). The 400 ms only earns itself when the pool is low.
+	if s.Me.HPPct >= 65 {
+		return nil
+	}
 	dg.observe(s)
 	if !dg.hasThreat {
 		return nil

@@ -232,10 +232,14 @@ func (f *Flee) Demand(s *percept.Snapshot) *arbiter.Demand {
 			near++
 		}
 	}
-	// P-2.1: a CROWD is fled at any HP — blood is a lagging indicator inside a
-	// horde (run 41: near=84, dead in 17s from full). Above Dodge's urgency so
-	// footwork doesn't preempt the retreat.
-	if near >= 12 {
+	// P-2.1: a CROWD is fled — at 12 wounded, at 16 healthy (the owner, 11:15:
+	// "shoot more than moving"; run 41's eighty-four remain the floor of this
+	// law, not its ceiling). Blood is a lagging indicator inside a horde.
+	crowdBar := 16
+	if s.Me.HPPct < 75 {
+		crowdBar = 12
+	}
+	if near >= crowdBar {
 		return &arbiter.Demand{Who: f.Name(), Class: arbiter.ClassSurvive,
 			Urgency: 1.35,
 			Commit:  arbiter.Commitment{MinHold: 2 * time.Second}}
@@ -440,8 +444,11 @@ func (b *Breakout) Demand(s *percept.Snapshot) *arbiter.Demand {
 			near++
 		}
 	}
+	// P-2.2: the eject seat arms at 6 surrounding below half blood — four
+	// nuisances under a scratch kept her porting out of winnable fights all
+	// morning (the 57-HP sortie loop, 11:06).
 	critical := s.Me.HPPct < 24
-	surrounded := near >= 4 && s.Me.HPPct < 60
+	surrounded := near >= 6 && s.Me.HPPct < 50
 	trapped := s.Me.HPPct < 45 && s.Me.HealPots == 0 && near >= 3
 	// COMMITMENT: an engaged escape keeps bidding while its portal stands — one
 	// potion tick dropping 'surrounded' must not strand a half-used exit.
@@ -700,13 +707,13 @@ func (f *Fight) Demand(s *percept.Snapshot) *arbiter.Demand {
 		return nil
 	}
 	// THE EXP ORACLE shrinks the hunt: on outleveled ground (mlvl 5+ below her),
-	// killing pays nothing — P-1.3/P-5.7 FORCED MARCH (the owner: "ignore far away
-	// monsters and punch through"): engage only a TOOTH or a blocker within 4;
-	// chasers that have not reached her are outrun, not fought. Advance's raised
-	// urgency marches her toward monsters that still teach.
+	// killing pays nothing — P-5.7 FORCED MARCH, refined 11:15 (the owner:
+	// "shoot more than moving if enemies are nearby"): anything within 10 is
+	// SHOT — nearby aggro dies, the far field is ignored, and the march owns
+	// the ground between camps.
 	radius := 45
 	if !ExpWorthwhile(s.Me.Level, s.Me.Area) {
-		radius = 4
+		radius = 10
 	}
 	best := radius + 1
 	for _, e := range s.Enemies {
