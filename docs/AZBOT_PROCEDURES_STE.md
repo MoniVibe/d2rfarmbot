@@ -41,6 +41,8 @@ Code that performs the action must use the verb's name in its log line.
 | RELOG | Save+Exit, then Play, to materialize the corpse in town | The epistemics gate passes in a new world | Missed click → retry in 45 s; churn fail → 4 min |
 | PROBE | Press one candidate key once, then read the selection back | The right-skill selection changes | Unbound — the key is retired for this weapon set (not an error) |
 | SPEND | One click on a plus button while the points panel is provably open | The unspent count decreases AND the target's level rises | Door settle 1 s first (the slide-in eats early clicks — measured 08:41), then 2 frozen reads → close the panel, retire spending for the session |
+| ACTIVATE | Touch her own-area waypoint object once on entering the area | The area joins AvailableWaypoints | Not near a WP, or none in this area — skip, never chase |
+| WAYPOINT | Open a WP panel and click an ACTIVATED destination row | Area id changes to the destination | Panel not lit (no blue compass) → re-open; area unchanged after the row click → recalibrate the row, then abandon |
 
 Approved nouns, one meaning each: TOOTH (an enemy in melee reach ≤3),
 PRESSURE (2+ enemies within 7), CROWD (12+ enemies within 25), DOORMAN
@@ -404,6 +406,34 @@ procedure may ask "which class is this?" — only "what has she proven?"
    requirements within reach — met now, or met by the SPEND already
    pending (P-8.3).
 4. The wardrobe defines the class; no judgment consults a class name.
+
+### P-10 WAYPOINT — THE NETWORK IS THE ROAD
+
+The owner, 2026-07-19 (after a corpse lost in Cold Plains): "she didn't
+take the waypoint either — I had to do it manually." She walked every
+area on foot; a death left her with no way back but the road or the
+(broken) relog. The waypoint network is the fix — for progress AND for
+recovery.
+
+1. ACTIVATE ON ARRIVAL. Entering an area with a waypoint, touch it once
+   (P-5 continues after). A touched waypoint is a saved return node; the
+   network is built by passing through, at almost no cost.
+2. TRAVEL WHEN IT PAYS. Standing at a waypoint or in town with the target
+   area (or the deepest itinerary area toward the goal) ALREADY in
+   AvailableWaypoints, WAYPOINT there — do not re-walk cleared ground.
+   The march owns only the UNMAPPED frontier past the last waypoint.
+3. RECOVERY RIDES THE NETWORK. After a town respawn with the gear back,
+   the return to the fight is a WAYPOINT to the deepest activated area on
+   the goal's path — never a naked or a full-length foot march. This is
+   what the manual intervention did by hand.
+4. ONLY ACTIVATED NODES. AvailableWaypoints is the whole truth of where a
+   WAYPOINT can go. An un-activated area is reached on foot (P-5), and
+   activating its waypoint (P-10.1) opens it for next time.
+5. THE PANEL IS PROVEN BY BLUE. The lit blue compass column is the panel-
+   open oracle; the destination row is chosen by it, not by a blind
+   count. Area-change is the only proof of arrival (WAYPOINT, Lexicon).
+   A row click that does not change the area recalibrates the row before
+   it abandons — never spends the trip clicking a dead coordinate.
 
 ---
 
