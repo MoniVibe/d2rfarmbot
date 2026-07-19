@@ -2198,6 +2198,17 @@ func main() {
 								break
 							}
 						}
+						// FROZEN-WORLD OVERRIDE (02:19: the quit menu stood by a
+						// pad with frozen monsters "nearby" — the safety gate
+						// blocked the probe FOREVER, because frozen enemies never
+						// leave). Six same-box stucks prove the world is not
+						// running; frozen teeth cannot bite, and if they are real
+						// after all, two minutes of paralysis is deadlier than
+						// one ESC. (The QuitMenu byte reads FALSE under this
+						// mod's menu — the behavioral probe is the only sentry.)
+						if !safeGround && stuckRunN >= 6 {
+							safeGround = true
+						}
 						if safeGround {
 							m.RealEsc()
 							time.Sleep(500 * time.Millisecond)

@@ -136,7 +136,9 @@ func (uw UseWaypoint) Do(m *motor.Motor, gr *game.MemoryReader, p *percept.Perce
 
 	// TOUCH mode: the open was the point — the pad is lit now and forever.
 	if len(uw.Want) == 0 {
-		m.KeyLane().Press(0x1B)
+		if gr.GetData().OpenMenus.Waypoint { // an ESC into a vanished panel raises the QUIT MENU (02:19)
+			m.KeyLane().Press(0x1B)
+		}
 		o.Result = ResDone
 		o.Evidence = "pad touched — the network grows"
 		led.Append(o)
@@ -158,7 +160,9 @@ func (uw UseWaypoint) Do(m *motor.Motor, gr *game.MemoryReader, p *percept.Perce
 		}
 	}
 	if dest == 0 {
-		m.KeyLane().Press(0x1B) // close what we opened — never leave a panel standing
+		if gr.GetData().OpenMenus.Waypoint { // conditional: the void must not be ESC'd (02:19)
+			m.KeyLane().Press(0x1B)
+		}
 		o.Result = ResWhiff
 		o.Evidence = fmt.Sprintf("no wanted destination lit (%d lit on this tab)", len(avail))
 		led.Append(o)
@@ -247,7 +251,9 @@ func (uw UseWaypoint) Do(m *motor.Motor, gr *game.MemoryReader, p *percept.Perce
 			f.Close()
 		}
 	}
-	m.KeyLane().Press(0x1B)
+	if gr.GetData().OpenMenus.Waypoint {
+		m.KeyLane().Press(0x1B)
+	}
 	o.Result = ResDeaf
 	o.Evidence = fmt.Sprintf("panel open, %s lit, but every row click left the area unchanged (photo saved)", area.Areas[dest].Name)
 	led.Append(o)
