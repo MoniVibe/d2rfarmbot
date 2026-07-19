@@ -105,16 +105,22 @@ menu, and a RealEsc restores the difference. Self-contained, before
 calibration, every launch.
 
 **WARNING 7 — THE FOCUS LAW.** The bot NEVER steals focus (the owner,
-2026-07-19 evening: "I intended the bot to work in the background"). An
-unfocused window is the owner's to use — offline D2R pauses when unfocused,
-so standing by costs nothing but a paused clock. The refocus-grab (added
-mid-day when the world was seen running unfocused) STOLE Diablo to the
-front every ten seconds and is REMOVED: the owner's window use outranks
-the bot's impatience. Menus are the one exception — they force+verify
-foreground for a single brief click (menu input needs foreground). True
-background PROGRESS (the game running while the owner works elsewhere)
-needs D2R's own background-run setting plus, for menus, the Interception
-driver installed — a config task, not a code one.
+2026-07-19 evening: "I intended the bot to work in the background") —
+AND it never stops playing for lack of it. Two facts, both bought:
+(1) In-game input rides posted window messages and the injector's
+patched cursor — it reaches D2R focused or not (the sentinel's drink
+LANDED during the 11-minute unfocus; the owner: "we didn't need to
+focus diablo before"). (2) The unfocused world may RUN (131 to 55
+blood while an executive "stood by"; and at 22:08 a dead amazon lay
+unrespawned behind a Discord window while the executive idled). So:
+the executive PLAYS regardless of focus — posted input lands in the
+game window only, never in the owner's apps, so there is no conflict
+to stand by for. The refocus-grab (STOLE Diablo to the front every
+ten seconds) stays REMOVED: the owner's window use outranks the bot's
+impatience. Menus are the one exception — hardware-only input — and
+they force+verify foreground for a single brief click (Relog). If a
+truly paused world swallows posted input, verbs read deaf and the
+ledger says so; deaf verbs into a paused world cost nothing.
 
 **WARNING 8 — SEED NAMESPACE.** The world re-rolls per game. Geometry facts
 from one seed must never steer another.

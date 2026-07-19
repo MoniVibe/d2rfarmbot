@@ -1882,27 +1882,23 @@ func main() {
 	}
 	lastUnpause := time.Time{}
 	for time.Now().Before(deadline) {
-		// WARNING 7 (revised, the owner 2026-07-19 evening: "I intended the bot to
-		// work in the background"): the bot NEVER steals focus. Offline D2R pauses
-		// when unfocused and in-game input rides the injector's patched cursor, not
-		// SendInput — so an unfocused window is simply the owner's to use. Stand by,
-		// quietly, until they hand it back. (The refocus-grab that stole Diablo to
-		// the front every ten seconds is gone; menus still force+verify foreground
-		// for their one click, which is unavoidable and brief.) True background
-		// PROGRESS — the game running while unfocused — needs D2R's own
-		// background-run setting and, for menus, the Interception driver installed.
-		if !m.GameFocused() {
-			if wasFocused {
-				logger.Info("executive: game unfocused — standing by (the window is yours)")
-				wasFocused = false
+		// WARNING 7 (revised twice; the owner 2026-07-19 night: "we didn't need to
+		// focus diablo before"): the bot NEVER steals focus AND never stops playing
+		// for lack of it. In-game input is posted window messages + the injector's
+		// patched cursor — it reaches D2R focused or not, and lands ONLY in the game
+		// window, so there is no conflict with the owner's apps to stand by for.
+		// The 22:08 lesson: a dead amazon lay unrespawned behind a Discord window
+		// while a stand-by gate idled the whole run. Menus (Relog) remain the one
+		// hardware-input exception and grab foreground for their single click.
+		// If the world is truly paused, verbs read deaf into a frozen game — free.
+		if focused := m.GameFocused(); focused != wasFocused {
+			if focused {
+				logger.Info("executive: game refocused")
+				wd = watchdog.New() // a pause-frozen position history would read as pathology
+			} else {
+				logger.Info("executive: game unfocused — playing on (posted input, your windows untouched)")
 			}
-			time.Sleep(400 * time.Millisecond)
-			continue
-		}
-		if !wasFocused {
-			logger.Info("executive: game refocused — resuming")
-			wasFocused = true
-			wd = watchdog.New() // pause-time position history would read as pathology
+			wasFocused = focused
 		}
 		s := p.Capture()
 		if !s.Valid || !m.Engage.Engaged() {
