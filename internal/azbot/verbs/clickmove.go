@@ -22,6 +22,10 @@ type ClickMove struct {
 	Hold time.Duration // judge window; default 1400ms
 }
 
+// LastWaystation: the point the last ClickMove actually clicked — the nav
+// debugger draws it so the owner can SEE where her clicks land.
+var LastWaystation data.Position
+
 func (cm ClickMove) Do(m *motor.Motor, gr *game.MemoryReader, p *percept.Perceptor, led *Ledger, holder string) Outcome {
 	hold := cm.Hold
 	if hold <= 0 {
@@ -34,7 +38,8 @@ func (cm ClickMove) Do(m *motor.Motor, gr *game.MemoryReader, p *percept.Percept
 		led.Append(o)
 		return o
 	}
-	m.MoveStop() // a held force-move key overrides the click's walk
+	m.MoveStop()        // a held force-move key overrides the click's walk
+	m.ModifierAmnesty() // a latched shift turns every click into an attack-in-place
 	d := gr.GetData()
 	start := d.PlayerUnit.Position
 	// THE WAYSTATION (01:39: direction-scaled clicks landed on the river bank
@@ -99,6 +104,7 @@ func (cm ClickMove) Do(m *motor.Motor, gr *game.MemoryReader, p *percept.Percept
 			return o
 		}
 	}
+	LastWaystation = way
 	m.BareClick(bx, by)
 	deadline := time.Now().Add(hold)
 	for time.Now().Before(deadline) {

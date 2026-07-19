@@ -244,6 +244,7 @@ func (a *Advance) Step(ctx *Ctx) Verdict {
 			a.driving = false // geometrically THROUGH — reads can settle now
 		default:
 			crossingBracketUntil = time.Now().Add(3 * time.Second)
+			NavDebug(ctx, a.driveTgt, "drive")
 			clickStride(ctx, a.driveTgt, 900*time.Millisecond, a.Name())
 			return Running
 		}
@@ -449,6 +450,7 @@ func (a *Advance) Step(ctx *Ctx) Verdict {
 	}
 	a.marchGoal, a.marchGoalAt = tgt, time.Now() // P-5.7: the retreat may lean on this
 	ed := chebyshev(me, tgt)
+	NavDebug(ctx, tgt, "march") // the owner's window (logs/nav.png + nav line)
 	// P-5.10 THE CROSSING BRACKET: holding a door contracts the hunt to
 	// contact — lingerers at the mouth cannot bid the actuator away. Re-armed
 	// each Step near the door; lapses 3 s after the march lets go.
