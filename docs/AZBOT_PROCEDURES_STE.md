@@ -423,6 +423,14 @@ drift-aggro through the ribbon). Fight still answers aggro anywhere —
 crossing a corridor is not pacifism — but the WANDER belongs to the
 frontier alone; everywhere else the march owns every idle moment.
 
+THE MAP TOUR (the owner, 23:58: "aint it weird that she needs to
+explore despite having a maphack?"): the seed server hands azbot every
+room of every area at attach — walking blind past a map oracle is
+absurd. The wander is a nearest-first TOUR of unvisited rooms; standing
+in a room marks it seen; a room unreached in 45 s is skipped, never
+besieged; a fully toured area returns the moment to the march. The
+blind heading-walk survives only where no map data exists.
+
 ### P-5R THE ROADSIDE RITES (the owner, 23:50: "intelligently take
 shrines and wells and other stuff")
 

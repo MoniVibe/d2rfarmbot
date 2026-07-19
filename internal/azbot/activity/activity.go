@@ -1608,6 +1608,13 @@ type Explore struct {
 	// corridor and the march owns every idle moment. Nil-safe: no itinerary,
 	// classic wander.
 	Frontier func(level int) area.ID
+	// P-5F map tour: the maphack knows every room (the owner, 23:58: "aint
+	// it weird that she needs to explore despite having a maphack?") — the
+	// wander is a nearest-first tour of unvisited rooms, not a wall-bounce.
+	tourArea area.ID
+	visited  map[int]bool
+	tourIdx  int
+	goalAt   time.Time
 }
 
 var bearings = []data.Position{{X: 35, Y: 0}, {X: 25, Y: 25}, {X: 0, Y: 35}, {X: -25, Y: 25},
@@ -1642,6 +1649,54 @@ func (x *Explore) Step(ctx *Ctx) Verdict {
 		return Running
 	}
 	CarryReach(ctx) // P-5.9: the wander walks with the bow out too
+
+	// P-5F THE MAP TOUR: the maphack already knows every room of this area —
+	// walking blind past a map oracle is absurd (the owner, 23:58). Tour the
+	// unvisited rooms nearest-first; a room unreached in 45 s is skipped; a
+	// fully toured area hands the moment back to the march.
+	if ad, ok := ctx.GR.GetData().Areas[s.Me.Area]; ok && len(ad.Rooms) > 0 {
+		if x.tourArea != s.Me.Area {
+			x.tourArea, x.visited, x.tourIdx = s.Me.Area, map[int]bool{}, -1
+		}
+		for i, r := range ad.Rooms {
+			if !x.visited[i] &&
+				s.Me.Pos.X >= r.Position.X && s.Me.Pos.X < r.Position.X+r.Width &&
+				s.Me.Pos.Y >= r.Position.Y && s.Me.Pos.Y < r.Position.Y+r.Height {
+				x.visited[i] = true // standing in it = streamed = seen
+			}
+		}
+		if x.tourIdx >= 0 && time.Since(x.goalAt) > 45*time.Second {
+			x.visited[x.tourIdx] = true // unreachable room: skipped, not besieged
+			x.tourIdx = -1
+		}
+		if x.tourIdx < 0 || x.visited[x.tourIdx] {
+			best, bd := -1, 1<<30
+			for i, r := range ad.Rooms {
+				if x.visited[i] {
+					continue
+				}
+				c := data.Position{X: r.Position.X + r.Width/2, Y: r.Position.Y + r.Height/2}
+				if dd := chebyshev(s.Me.Pos, c); dd < bd {
+					best, bd = i, dd
+				}
+			}
+			if best < 0 {
+				return Done // the area is toured — the march decides what's next
+			}
+			x.tourIdx, x.goalAt = best, time.Now()
+		}
+		r := ad.Rooms[x.tourIdx]
+		c := data.Position{X: r.Position.X + r.Width/2, Y: r.Position.Y + r.Height/2}
+		if chebyshev(s.Me.Pos, c) <= 6 {
+			x.visited[x.tourIdx] = true
+			x.tourIdx = -1
+			return Running
+		}
+		slideStride(ctx, c, 1500*time.Millisecond, 1, x.Name())
+		return Running
+	}
+
+	// No map data for this area: the blind heading walk survives as fallback.
 	if !x.set {
 		x.heading, x.set = 5, true // southwest-ish: away from the town gate into the moor
 	}
