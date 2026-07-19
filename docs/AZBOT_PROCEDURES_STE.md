@@ -423,6 +423,16 @@ precondition.
    within 8, a REACH set that exists and is not dry is the set in hand.
    The swap is rate-limited and verified by the next snapshot; contact
    arriving mid-swap hands the moment back to P-1.
+10. THE CROSSING BRACKET (the owner, 00:35: "monsters beyond the range
+   of say 5 won't affect how the bot decides to move... they happen to
+   linger around the passages' exit/entrance"): within 15 of the march
+   door, and while pushing clear of a ribbon, the hunt CONTRACTS to
+   CONTACT (5). A lingerer beyond the bracket cannot bid the actuator
+   away from the crossing — the door is crossed THROUGH, not besieged;
+   a bite inside the bracket is still answered (P-5.8 volleys it). The
+   bracket re-arms while the march holds the door and lapses 3 s after
+   it lets go, so a real fight at the mouth still opens the full hunt
+   when it is won.
 
 ### P-5F THE FRONTIER LAW (the owner, 23:52: "more driven in what she
 does rather than rampage aimlessly like a zerker")

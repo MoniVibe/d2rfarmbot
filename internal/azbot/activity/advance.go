@@ -255,6 +255,7 @@ func (a *Advance) Step(ctx *Ctx) Verdict {
 	a.lastArea = s.Me.Area
 	if a.clearing {
 		me := s.Me.Pos
+		crossingBracketUntil = time.Now().Add(3 * time.Second) // P-5.10: the push-clear is part of the crossing
 		if chebyshev(me, a.clearDoor) >= 12 {
 			a.clearing = false
 			return Done // adopted AND clear of the ribbon — the next leg re-bids fresh
@@ -393,6 +394,12 @@ func (a *Advance) Step(ctx *Ctx) Verdict {
 	}
 	a.marchGoal, a.marchGoalAt = tgt, time.Now() // P-5.7: the retreat may lean on this
 	ed := chebyshev(me, tgt)
+	// P-5.10 THE CROSSING BRACKET: holding a door contracts the hunt to
+	// contact — lingerers at the mouth cannot bid the actuator away. Re-armed
+	// each Step near the door; lapses 3 s after the march lets go.
+	if ed <= 15 {
+		crossingBracketUntil = time.Now().Add(3 * time.Second)
+	}
 
 	// Leg progress clock: closest-approach must improve or the leg is stuck (wall
 	// pocket, unwalkable door). 60s of no progress → hand the grant back honestly.

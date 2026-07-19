@@ -201,6 +201,11 @@ var hotPortalUntil time.Time
 // docket line so a dead vendor cell cannot gate the march (the 23:55 idle).
 var potionCoolUntil time.Time
 
+// crossingBracketUntil: P-5.10 — while the march holds a door, the hunt
+// contracts to CONTACT (5): passage lingerers cannot bid the actuator away
+// from the crossing. Advance re-arms this each Step near its door.
+var crossingBracketUntil time.Time
+
 // worldGhosts — P-4.8a: a wedged vendor outlives every retry. Ghost verdicts
 // accumulate per world; at three the world is POISONED and Relog cures it.
 var worldGhosts int
@@ -1032,6 +1037,9 @@ func (f *Fight) Demand(s *percept.Snapshot) *arbiter.Demand {
 	if !ExpWorthwhile(s.Me.Level, s.Me.Area) {
 		radius = 10
 	}
+	if time.Now().Before(crossingBracketUntil) {
+		radius = 5 // P-5.10 THE CROSSING BRACKET: lingerers don't own doors
+	}
 	best := radius + 1
 	for _, e := range s.Enemies {
 		if until, bl := f.blacklist[e.ID]; bl && time.Now().Before(until) {
@@ -1083,6 +1091,9 @@ func (f *Fight) Step(ctx *Ctx) Verdict {
 		radius := 45
 		if !ExpWorthwhile(s.Me.Level, s.Me.Area) {
 			radius = 10
+		}
+		if time.Now().Before(crossingBracketUntil) {
+			radius = 5 // P-5.10: the door is crossed THROUGH, not besieged
 		}
 		// PACK-AWARE pick: score = distance + 3×(bodies within 8 of the candidate).
 		// Nearest-first used to elect the CENTER of a 20-stack and she charged it
