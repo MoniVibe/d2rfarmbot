@@ -1,0 +1,186 @@
+# AZBOT CONTROLLED PROCEDURES — ASD-STE100 STYLE
+
+This document is the governing specification for azbot behavior.
+The code obeys this document. When the code and this document do not agree,
+one of them is wrong, and the log must show which.
+
+We adopt these rules from ASD-STE100:
+
+- One word has one meaning. The Lexicon defines every approved word.
+- One sentence gives one instruction.
+- A procedure is a numbered list of single actions.
+- Every action has a check. An action without a check did not happen.
+- WARNINGS come before the step they protect.
+- Do not use a synonym for an approved word. Do not overload an approved word.
+
+Rule zero, above all: **silence is never success.** Every terminal state writes
+an outcome. Every belief the bot holds is one the world can retire.
+
+---
+
+## 1. THE LEXICON
+
+Each verb names ONE action, ONE check, and ONE failure verdict.
+Code that performs the action must use the verb's name in its log line.
+
+| Verb | Action (one meaning only) | Check (the only proof) | Failure verdict |
+|---|---|---|---|
+| STRIDE | Hold force-move toward a world point for a bounded time | Net displacement ≥ MinGain | BLOCKED |
+| VOLLEY | Fire one walk-proof shot at a projected point | Target flinch appears in the snapshot stream (passive) | 8 silent volleys → BLACKLIST target |
+| ENTER | Click through a portal object | Area id changes | DEAF |
+| CROSS | Push through a walkable border | Area id changes and stays changed for 3 reads | (ribbon flicker is not a CROSS) |
+| TALK | One bare click on a hover-confirmed NPC | Menu byte goes high | 6 tries → DEAD errand |
+| BUY | One click on a vendor stock cell | Gold decreases | 2 frozen buys → GHOST window, abort |
+| SELL | One ctrl-click on an inventory cell while a trade is open | Junk count decreases | 2 frozen sells → GHOST window, abort |
+| REPAIR | One click on the repair-all button | MinDurPct increases | 2 frozen clicks → leave with what you got |
+| IDENTIFY | Tome cast, then one click on an unidentified item cell | The item's Identified flag flips | 3 frozen counts → retire the belief |
+| EQUIP | One shift-click on a wearable upgrade cell | The upgrade docket count decreases | 3 frozen counts → retire the belief |
+| DRINK | One belt key press on a known-stocked column | HP/MP rises on the survival read | (Sentinel-owned; never blocks) |
+| RETREAT | Strides away from a named threat until a named clearance | The clearance condition reads true | (see P-2) |
+| RECLAIM | Hover-confirmed click on her own corpse | Armed flips true | 4 spent rounds → cool and re-approach |
+| RELOG | Save+Exit, then Play, to materialize the corpse in town | The epistemics gate passes in a new world | Missed click → retry in 45 s; churn fail → 4 min |
+
+Approved nouns, one meaning each: TOOTH (an enemy in melee reach ≤3),
+PRESSURE (2+ enemies within 7), CROWD (12+ enemies within 25), DOORMAN
+(an enemy within 4 of a portal), DOCKET (a service's pending item list),
+LIFELINE (tome, cube, quest-typed item), GHOST WINDOW (a trade read that
+lingers after the panel closed), RIBBON (the flickering area-id band at a
+border), LANDING ROOM (6+ free inventory cells).
+
+---
+
+## 2. WARNINGS — THE IRREVERSIBLE CLASSES
+
+Each WARNING was bought with a real loss. Do not renegotiate them in code.
+
+**WARNING 1 — LIFELINES.** A LIFELINE is never merchandise, never a click
+target for SELL, at any layer, in any quantity. (The tome and the cube were
+both fenced before this law. Their loss survived the night; the items did not.)
+
+**WARNING 2 — GHOST WINDOWS.** A SELL or BUY whose delta freezes twice is
+firing into a GHOST WINDOW. A ctrl-click into a ghost window with any panel
+open DROPS the item. Relog world-churn sweeps dropped items forever. Abort on
+the second frozen delta. Never on the third.
+
+**WARNING 3 — NAKED MARCH.** When Armed is false and a corpse exists, only
+recovery procedures may hold the actuator. Travel of any kind is forbidden.
+
+**WARNING 4 — THE PAUSE TRAP.** ESC with no panel open raises the pause menu
+and stops the world. Press ESC only when a panel is provably open.
+
+**WARNING 5 — PANEL HOTKEYS.** Panel hotkeys are deaf to every synthetic
+input class (four photographed failures). Open the inventory only through the
+IDENTIFY side door. Do not add a fifth attempt.
+
+**WARNING 6 — SWAP DISCIPLINE.** Deploy a new binary only when she is in
+town, dead, or the owner holds the controls. A field swap freezes her inside
+whatever is chasing her. (Run 41: eighty-four monsters, seventeen seconds.)
+
+**WARNING 7 — THE FOCUS LAW.** The world stops when D2R loses focus. A
+paused world takes no input and gives no evidence. Stand by; do not act.
+
+**WARNING 8 — SEED NAMESPACE.** The world re-rolls per game. Geometry facts
+from one seed must never steer another.
+
+---
+
+## 3. PROCEDURES
+
+### P-1 FIGHT
+
+1. Select the target by sight first. A walled enemy loses to any visible enemy.
+2. Score candidates: distance + 3 × (bodies within 8). Do not elect the
+   center of a stack.
+3. If the area does not pay experience (gap > 4), hunt only within 12.
+4. Approach in 10-tile half-steps. Reassess between steps.
+5. If a wall owns the arrow line, walk the door with the planner, or
+   blacklist the target. Do not rub the wall.
+6. VOLLEY at the pace of the animation (350 ms). Never wait for per-shot
+   evidence. Never sweep the cursor for combat.
+7. With a TOOTH on her: ask for the javelin swap AND fire point-blank while
+   the swap pends. The clinch is not a cease-fire.
+8. Kite only from PRESSURE or below half blood. One healthy chaser is a target.
+9. Kites check the grid first. CORNERED = FIGHT.
+
+### P-2 RETREAT
+
+1. A CROWD is fled at any HP. Blood is a lagging indicator inside a horde.
+2. Clearance from a CROWD is: fewer than 8 within 25.
+3. With an empty belt, a RETREAT has a destination: plant the portal when
+   the gap opens, run to it, ENTER it. Fleeing is not a lifestyle.
+4. A portal that exists is a decision already made. Breakout stepping at all
+   means emergency: ENTER, desperately if needed.
+5. If DOORMEN crowd the mouth and blood is above the hard floor: VOLLEY the
+   nearest DOORMAN until the mouth thins. Never a mute cycle.
+6. At the hard floor (18%): dive blind. A missed click costs one swing; a
+   refused click costs the life.
+7. A started escape binds its owner until she is THROUGH or the portal is
+   provably gone. One potion tick does not un-declare an emergency.
+8. Dodge yields when body-locked (2+ adjacent). Inside a ring the answer is
+   violence, not footwork.
+
+### P-3 RECOVER
+
+1. Death screen: press ESC until the mode reads alive.
+2. In town, unarmed, corpse far: RELOG. The corpse materializes at the spawn.
+3. In town, unarmed, corpse near: RECLAIM it. Step off the body first; her
+   own sprite owns the cursor.
+4. Guarded body: LURE. Run out, the swarm follows the runner, loop back.
+5. Blind-click the body only when zero guards stand on it.
+6. While recovery owns her, no travel procedure may bid (WARNING 3).
+
+### P-4 TOWN SERVICES — THE ORDERED CHOREOGRAPHY
+
+The order is causal, not stylistic. Each step creates the next step's
+precondition.
+
+1. HEAL first. Akara refills for free on TALK. Wounded below 55 pends.
+2. IDENTIFY second. Unknown items cannot be judged.
+3. SELL third. Judged non-keepers become gold and LANDING ROOM.
+4. EQUIP fourth (requires LANDING ROOM). Open the panel by the IDENTIFY side
+   door. Normalize the cursor with one plain click; put back what it grabs.
+   Shift-click the candidate. Rotate the DOCKET. Respect level and stat
+   requirements before the click; the game's refusal is silent.
+5. BUY fifth: potions to doctrine (one row mana, rest HP), from stash-backed
+   gold (pocket + bank is purchasing power).
+6. REPAIR when worn below a quarter. Durability must rise per click.
+7. Every service obeys its delta check (Lexicon) and its GHOST defense
+   (WARNING 2).
+8. The march waits while any DOCKET pends. Travel outranks Service by class;
+   the pending check is the treaty that keeps errands alive.
+
+### P-5 MARCH
+
+1. Topology from map data. Geometry only from live truth.
+2. The door direction is measured when known: push at the far-side fact.
+   The center guess is a fallback, not a law.
+3. A crossing is believed after 3 stable reads. The RIBBON flickers one.
+4. A crossing is not an arrival. Push 12+ tiles onward before the next leg
+   gets a thought.
+5. Errand and march movement beyond 12 tiles goes by planner. Real walls
+   demand real routing. Slides and arcs are for camp furniture only.
+6. On ground that does not pay (gap > 4), the march urgency doubles. The
+   march is the experience.
+
+### P-6 TELEMETRY (controlled language for the log)
+
+1. A log line names its verb from the Lexicon.
+2. A failure names its evidence, not its feeling: "junk count frozen at 9"
+   and never "sell seems broken".
+3. A retired belief names its disproof and its cost:
+   "two talks, no HP change — this Akara does not heal".
+4. Status lines carry the self-model: position, area, hp, gold, weapon,
+   arrows, holder.
+
+---
+
+## 4. COMPLIANCE
+
+1. Every conditional in an activity cites a procedure step (P-x.y) in its
+   comment, or it is doctrine drift and must be deleted or promoted into
+   this document.
+2. New behavior enters this document before it enters the code.
+3. A live failure that contradicts a procedure updates the procedure in the
+   same commit that fixes the code.
+4. The Lexicon grows by necessity, never by convenience. One word, one
+   meaning, forever.

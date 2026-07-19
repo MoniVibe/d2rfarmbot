@@ -178,10 +178,9 @@ func (f *Flee) Demand(s *percept.Snapshot) *arbiter.Demand {
 			near++
 		}
 	}
-	// DENSITY IS THE THREAT BEFORE HP IS (run 41: near=84, dead in 17s from full
-	// health — the fight cannot be won and the portal cannot be cast inside that
-	// many interrupting hits). A crowd past 12 is fled at ANY hp, above Dodge's
-	// urgency so footwork doesn't preempt the retreat.
+	// P-2.1: a CROWD is fled at any HP — blood is a lagging indicator inside a
+	// horde (run 41: near=84, dead in 17s from full). Above Dodge's urgency so
+	// footwork doesn't preempt the retreat.
 	if near >= 12 {
 		return &arbiter.Demand{Who: f.Name(), Class: arbiter.ClassSurvive,
 			Urgency: 1.35,

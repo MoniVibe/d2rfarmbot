@@ -455,9 +455,9 @@ func (fc *Fence) Step(ctx *Ctx) Verdict {
 	if !open {
 		return Running
 	}
-	// GHOST-WINDOW DEFENSE: a "sell" that doesn't shrink the junk count means the
-	// trade window is not really there (the vendor-stock read lingers after close) —
-	// and ctrl-clicks into a ghost window DROP ITEMS. Two frozen sells = abort hard.
+	// WARNING 2 + Lexicon/SELL: the delta check is the only proof — a sell that
+	// doesn't shrink the junk count is firing into a GHOST WINDOW, and ctrl-clicks
+	// into one DROP items. Two frozen deltas = abort. Never a third.
 	if fc.sold > 0 {
 		if len(s.Junk) >= fc.lastJunk {
 			fc.ghost++
