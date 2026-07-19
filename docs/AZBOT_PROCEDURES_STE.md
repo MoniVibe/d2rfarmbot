@@ -283,6 +283,12 @@ precondition.
     dead Akara — talks deaf, trades ghost). Ghost verdicts accumulate
     per world; at THREE the world is POISONED and the cure is a RELOG —
     a fresh instance, not a fifth try. The relog cap and thaw apply.
+    PILOT'S NOTE (12:28): the poison lives in the WORLD, the ghost
+    counter in the PROCESS. A binary swap resets the counter without
+    curing the world — so a swap DURING a poisoned town starves its own
+    cure. When a poisoned world is diagnosed, STOP SWAPPING and let the
+    live process accumulate its three and relog. The desk's reflex to
+    deploy-the-next-fix is itself a hazard here.
 9. THE APPROACH AIMS AT THE BAND, never the body (measured 10:2x, the
    torch dance): sliding at an NPC's center lands in the hover-breaking
    clinch, and a backstep flung past the band re-overshoots forever. The
