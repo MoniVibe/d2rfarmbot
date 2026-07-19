@@ -37,20 +37,27 @@ func (cm ClickMove) Do(m *motor.Motor, gr *game.MemoryReader, p *percept.Percept
 	m.MoveStop() // a held force-move key overrides the click's walk
 	d := gr.GetData()
 	start := d.PlayerUnit.Position
-	bx := int(float32((cm.To.X-start.X)-(cm.To.Y-start.Y))*19.8) + gr.GameAreaSizeX/2
-	by := int(float32((cm.To.X-start.X)+(cm.To.Y-start.Y))*9.9) + gr.GameAreaSizeY/2
-	// Clamp inside the window preserving direction — a click at the screen
-	// edge walks that way; the game paths the rest.
-	if bx < 30 {
-		bx = 30
-	} else if bx > gr.GameAreaSizeX-30 {
-		bx = gr.GameAreaSizeX - 30
+	cx0, cy0 := gr.GameAreaSizeX/2, gr.GameAreaSizeY/2
+	vx := float64((cm.To.X-start.X)-(cm.To.Y-start.Y)) * 19.8
+	vy := float64((cm.To.X-start.X)+(cm.To.Y-start.Y)) * 9.9
+	// SCALE the aim vector to fit the window — never clamp axes separately:
+	// independent clamping warps a far target's direction into the corner,
+	// and the top-left corner is BLAISE'S PORTRAIT (01:38, the owner: "goes
+	// back and forth, highlights Blaise's portrait, rinse repeat" — every
+	// westward march click was feeding the merc UI).
+	k := 1.0
+	if maxX := float64(cx0 - 120); vx > maxX {
+		k = min(k, maxX/vx)
+	} else if vx < -maxX {
+		k = min(k, -maxX/vx)
 	}
-	if by < 30 {
-		by = 30
-	} else if by > gr.GameAreaSizeY-90 {
-		by = gr.GameAreaSizeY - 90 // the belt bar eats bottom clicks
+	if maxUp := float64(cy0 - 140); vy < -maxUp { // the portraits own the top band
+		k = min(k, -maxUp/vy)
+	} else if maxDown := float64(cy0 - 170); vy > maxDown { // the belt owns the bottom
+		k = min(k, maxDown/vy)
 	}
+	bx := cx0 + int(vx*k)
+	by := cy0 + int(vy*k)
 	m.AimPhysical(bx, by)
 	time.Sleep(45 * time.Millisecond)
 	if hd := gr.GetData().HoverData; hd.IsHovered {
