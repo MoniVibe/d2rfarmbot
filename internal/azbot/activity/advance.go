@@ -505,6 +505,22 @@ func (a *Advance) Step(ctx *Ctx) Verdict {
 	return Running
 }
 
+// mapWalk reports whether p is walkable in either area's MAP grid — the seed
+// server's complete geometry, the only truth that spans a border seam (the
+// live grid lies there: unstreamed rooms read as wall).
+func mapWalk(d game.Data, a1, a2 area.ID, p data.Position) bool {
+	for _, ar := range []area.ID{a1, a2} {
+		if ad, ok := d.Areas[ar]; ok && ad.Grid != nil {
+			rp := ad.Grid.RelativePosition(p)
+			if rp.X >= 0 && rp.Y >= 0 && rp.X < ad.Grid.Width && rp.Y < ad.Grid.Height &&
+				ad.Grid.CollisionGrid[rp.Y][rp.X] == game.CollisionTypeWalkable {
+				return true
+			}
+		}
+	}
+	return false
+}
+
 // borderTarget resolves the door toward hop: learned fact, then live border rooms.
 func (a *Advance) borderTarget(ctx *Ctx, d game.Data, hop area.ID, me data.Position) (data.Position, bool) {
 	if ctx.Mem != nil {
@@ -630,10 +646,41 @@ func (a *Advance) cross(ctx *Ctx, d game.Data, me data.Position, tgt data.Positi
 			// P-5.3a: a known far side arms THE DRIVE — one committed run at a
 			// point beyond it, deaf to the flickering reads, instead of 300ms
 			// read-reactive pushes that the seam turns into an oscillator.
+			// THE LANE SCAN (01:01, run 97 slid on the bank beside the bridge):
+			// the recorded facts name the flicker moment, not the walkable
+			// lane. The MAP grids of both areas are complete — sweep parallel
+			// offsets and drive the first corridor walkable end to end.
 			a.driving = true
 			a.driveFrom = tgt
 			a.driveTgt = data.Position{X: through.X + (through.X - tgt.X), Y: through.Y + (through.Y - tgt.Y)}
 			a.driveAt = time.Now()
+			dxx, dyy := through.X-tgt.X, through.Y-tgt.Y
+			for _, off := range []int{0, 2, -2, 4, -4, 6, -6, 8, -8, 10, -10} {
+				var s0, s1 data.Position
+				if absInt(dxx) >= absInt(dyy) { // door axis mostly X: offset the lane in Y
+					s0 = data.Position{X: tgt.X, Y: tgt.Y + off}
+					s1 = data.Position{X: through.X + dxx, Y: through.Y + off}
+				} else {
+					s0 = data.Position{X: tgt.X + off, Y: tgt.Y}
+					s1 = data.Position{X: through.X + off, Y: through.Y + dyy}
+				}
+				steps := maxInt(absInt(s1.X-s0.X), absInt(s1.Y-s0.Y))
+				if steps == 0 {
+					continue
+				}
+				ok := true
+				for i := 0; i <= steps; i++ {
+					p := data.Position{X: s0.X + (s1.X-s0.X)*i/steps, Y: s0.Y + (s1.Y-s0.Y)*i/steps}
+					if !mapWalk(d, d.PlayerUnit.Area, hop, p) {
+						ok = false
+						break
+					}
+				}
+				if ok {
+					a.driveFrom, a.driveTgt = s0, s1
+					break
+				}
+			}
 			return
 		}
 		if !haveFar {
