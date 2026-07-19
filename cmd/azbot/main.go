@@ -1757,9 +1757,25 @@ func main() {
 			}
 		}
 		if frozen {
-			m.RealEsc() // no panel was open — we raised the menu; put it back
-			time.Sleep(400 * time.Millisecond)
-			logger.Info("startup: hygiene ESC raised the menu (no inherited panel) — restored")
+			// No panel was open — we raised the menu. The restore is VERIFIED,
+			// never claimed: RealEsc needs foreground and fails silently (00:37:
+			// "restored" lied, the menu stood a full minute, the world froze,
+			// and the fence took the blame). Up to 3 cycles: RealEsc, stride,
+			// believe only movement.
+			restored := false
+			for try := 0; try < 3 && !restored; try++ {
+				m.RealEsc()
+				time.Sleep(400 * time.Millisecond)
+				me := gr.GetData().PlayerUnit.Position
+				o := verbs.Stride{To: data.Position{X: me.X + 4, Y: me.Y + 4},
+					Hold: 400 * time.Millisecond, MinGain: 1}.Do(m, gr, p, led, "startup/shadow")
+				restored = o.Result == verbs.ResDone
+			}
+			if restored {
+				logger.Info("startup: hygiene ESC raised the menu — restored (verified by stride)")
+			} else {
+				logger.Warn("startup: hygiene ESC raised the menu and 3 restores never moved her — the watchdog probe inherits it")
+			}
 		} else {
 			logger.Info("startup: hygiene ESC done — world moves; any inherited panel is shut")
 		}
@@ -2097,15 +2113,20 @@ func main() {
 					// fails — the world is never left ambiguous for the next holder
 					// (the 08:46 spend burned its belief clicking into a menu a blind
 					// half-probe had just raised).
-					if o.Result != verbs.ResDone && s.Me.InTown && !s.Me.CursorItem && time.Since(lastUnpause) > 30*time.Second {
-						safeTown := true
+					// The probe runs on ANY safe ground, not just town (00:44: a
+					// field attach inherited a frozen world and the town-gated
+					// probe left her pinned two minutes at full blood — the
+					// freeze doesn't care where she stands, and a frozen world
+					// holds its monsters frozen too).
+					if o.Result != verbs.ResDone && !s.Me.CursorItem && time.Since(lastUnpause) > 30*time.Second {
+						safeGround := true
 						for _, e := range s.Enemies {
 							if chebyshev(s.Me.Pos, e.Pos) <= 12 {
-								safeTown = false
+								safeGround = false
 								break
 							}
 						}
-						if safeTown {
+						if safeGround {
 							m.RealEsc()
 							time.Sleep(500 * time.Millisecond)
 							o2 := verbs.Stride{To: esc, Hold: 700 * time.Millisecond, MinGain: 1}.Do(m, gr, p, led, "watchdog/shadow")
