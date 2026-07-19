@@ -165,6 +165,10 @@ type Snapshot struct {
 	Me    PlayerState
 	// MenuOpen: the ONE panel oracle — UIBytes wide-window offset 0xF4 (measured 2026-07-18).
 	MenuOpen bool
+	// QuitMenu: the ESC/pause menu, read at UI byte 0x09 (found 00:55 after a
+	// night of stride-séances — it was never byte-blind). The menu sentry
+	// de-ESCs it whenever it stands unsanctioned.
+	QuitMenu bool
 	Enemies  []EnemyRef
 	Items    []ItemRef
 	Portals  []PortalRef  // town portals (and red portals) in the world
@@ -329,6 +333,7 @@ func (p *Perceptor) Capture() *Snapshot {
 	if ub := p.gr.UIBytes(); len(ub) > 0xF4 {
 		s.MenuOpen = ub[0xF4] == 1
 	}
+	s.QuitMenu = d.OpenMenus.QuitMenu
 	for _, m := range d.Monsters.Enemies() {
 		if m.Mode == mode.NpcDeath || m.Mode == mode.NpcDead {
 			continue

@@ -104,6 +104,21 @@ stride test then tells whether it closed a panel or raised the pause
 menu, and a RealEsc restores the difference. Self-contained, before
 calibration, every launch.
 
+**WARNING 4a — THE MENU SENTRY** (the owner, 00:52: "an aware state
+that de-escs unless there's a good reason for the esc like relogging
+to retrieve a corpse"). The quit menu was NEVER byte-blind:
+OpenMenus.QuitMenu reads it at UI byte 0x09, found 00:55 after a
+night of stride-séances inferring what one byte always knew. A
+standing unsanctioned quit menu is a WEDGE — it freezes the offline
+world and every stride reads blocked (the 00:37 "restored" lie stood
+a minute; the 00:44 field freeze stood two). The sentry closes it
+within a tick of the read, verified by the same read next tick.
+RELOG alone sanctions the menu (Save+Exit lives on it), 30 s at a
+time — and Relog itself now ESCs UNTIL THE BYTE SAYS THE MENU
+STANDS before clicking, which retires the recovery-wall flakiness.
+The stride-séance probes remain as fallback for anything the byte
+misses.
+
 **WARNING 7 — THE FOCUS LAW.** The bot NEVER steals focus (the owner,
 2026-07-19 evening: "I intended the bot to work in the background") —
 AND it never stops playing for lack of it. Two facts, both bought:

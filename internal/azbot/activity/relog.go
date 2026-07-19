@@ -95,14 +95,28 @@ func (rl *Relog) Step(ctx *Ctx) Verdict {
 	// town, and Return nearly portaled her back into the swarm bare-fisted).
 	gone := false
 	for attempt := 0; attempt < 2 && !gone; attempt++ {
-		// ESC UNCONDITIONALLY: for RELOG the pause menu is the GOAL, not a trap —
-		// raising it is exactly what we want (Save+Exit lives on it). The
-		// worldFrozen shadow test (my WARNING-4 addition) FALSE-POSITIVED at the
-		// spawn nook where town fences block all three bearings — it skipped the
-		// ESC, clicked Save+Exit into an unopened menu, and stranded her naked
-		// (measured 13:09→13:14, six abandons). This is the proven original.
-		ctx.M.RealEsc()
-		time.Sleep(900 * time.Millisecond)
+		// For RELOG the pause menu is the GOAL, not a trap — and since 00:55 it
+		// is READABLE (OpenMenus.QuitMenu, UI byte 0x09): ESC until the byte says
+		// the menu STANDS, then click Save+Exit into a menu that provably exists.
+		// (The old blind 900ms wait was the recovery wall: state-dependent ESC
+		// sometimes closed a panel instead, and Save+Exit clicked into nothing.)
+		MenuSanctionUntil = time.Now().Add(30 * time.Second) // the sentry stands down for the ritual
+		menuUp := false
+		for e := 0; e < 3 && !menuUp; e++ {
+			ctx.M.RealEsc()
+			for w := 0; w < 8; w++ {
+				time.Sleep(200 * time.Millisecond)
+				if ctx.GR.GetData().OpenMenus.QuitMenu {
+					menuUp = true
+					break
+				}
+			}
+		}
+		if !menuUp {
+			ctx.Led.Append(verbs.Outcome{Verb: "relog", Holder: rl.Name(), Result: verbs.ResDeaf,
+				Evidence: "three ESCs and the quit-menu byte never rose"})
+			break
+		}
 		ctx.M.RealMenuClick(relogExitBtnX, relogExitBtnY)
 		// Phase 2: wait for the world to unload.
 		for i := 0; i < 20 && ctx.M.Engage.Engaged(); i++ {

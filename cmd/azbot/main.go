@@ -1902,6 +1902,7 @@ func main() {
 		return "-"
 	}
 	lastUnpause := time.Time{}
+	lastDeEsc := time.Time{}
 	for time.Now().Before(deadline) {
 		// WARNING 7 (revised twice; the owner 2026-07-19 night: "we didn't need to
 		// focus diablo before"): the bot NEVER steals focus AND never stops playing
@@ -2039,6 +2040,19 @@ func main() {
 			wasArmed = s.Me.Armed
 		}
 		wasDead = deadNow
+
+		// THE MENU SENTRY (the owner, 00:52: "an aware state that de-escs
+		// unless there's a good reason like relogging"): the quit menu is
+		// READABLE (OpenMenus.QuitMenu, UI byte 0x09 — never byte-blind after
+		// all). Standing unsanctioned, it is a wedge that freezes the world;
+		// the sentry closes it within a tick. Relog alone sanctions it.
+		if s.QuitMenu && time.Now().After(activity.MenuSanctionUntil) &&
+			time.Since(lastDeEsc) > 5*time.Second {
+			logger.Warn("menu sentry: quit menu standing with no sanction — de-ESC")
+			m.RealEsc()
+			lastDeEsc = time.Now()
+			continue // fresh snapshot next tick; the byte verifies the close
+		}
 
 		var demands []arbiter.Demand
 		var benched []arbiter.Demand
