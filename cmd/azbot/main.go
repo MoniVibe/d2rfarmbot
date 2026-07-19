@@ -281,6 +281,19 @@ func main() {
 		if report.OK() {
 			break
 		}
+		// THE PRE-ATTACH MEDIC (01:19: a swap kill landed between a watchdog
+		// probe's menu-open and its restore; the world froze behind the quit
+		// menu and the NEXT process could never attach to read it — the
+		// sentry lives inside the bot, the wedge lives outside it). Halfway
+		// through the patience, one focused ESC: if a standing menu is the
+		// blocker, this clears it; if not, the pause it raises is cleared by
+		// the second press two cycles later.
+		if i == 12 || i == 18 {
+			hid.FocusGame()
+			time.Sleep(150 * time.Millisecond)
+			game.SendKeyReal(0x1B)
+			logger.Info("attach: gate failing — pre-attach medic pressed ESC", "try", i)
+		}
 		time.Sleep(500 * time.Millisecond)
 	}
 	logger.Info("attach report", "verdict", report.String())
