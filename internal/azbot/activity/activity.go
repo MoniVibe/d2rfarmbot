@@ -1012,16 +1012,9 @@ func (f *Fight) Step(ctx *Ctx) Verdict {
 		}
 	}
 
-	// ---- THE BOWZON DANCE (owner's doctrine, verbatim: basic arrow as the workhorse,
-	// don't spam magic arrow dry, W-swap to javelin for contact, and the HIGHER priority
-	// is getting far enough to swap back to the bow and shoot at range). ----
-	// P-5.8: at the march door the dance inverts — the door mouth is shot open.
-	nearDoor := false
-	if f.March != nil {
-		if mt, ok := f.March(); ok && chebyshev(s.Me.Pos, mt) <= 12 {
-			nearDoor = true
-		}
-	}
+	// ---- THE BOW DOCTRINE (P-1.7 as of 11:50: the javelin CQB switch is
+	// DROPPED — the bow holds at every range, the skill on every shot, and
+	// the javelin set serves only a dry quiver). ----
 	switch s.Me.WeaponKind {
 	case "bow":
 		if s.Me.Arrows == 0 {
@@ -1043,13 +1036,9 @@ func (f *Fight) Step(ctx *Ctx) Verdict {
 			key = ctx.Cap.Reach.Key
 		}
 		if contact <= 3 {
-			// In the clinch the javelin is still the better tool — ask for the swap —
-			// but until it lands, SHOOT the tooth point-blank. Never a mute cycle.
-			// P-5.8: at the door mouth the swap is SUPPRESSED — the bow holds and
-			// pierces the funnel; the poke was measured useless at the bridge.
-			if !nearDoor {
-				f.trySwap(ctx)
-			}
+			// P-1.7 (the owner, 11:50: "drop her javelin cqb switch, her bow is
+			// superior for now"): the bow HOLDS in the clinch — point-blank
+			// volleys, no swap. The javelin serves only a dry quiver now.
 			f.strike(ctx, f.nearestID(s), contactPos, key)
 			return Running
 		}
@@ -1124,24 +1113,18 @@ func (f *Fight) Step(ctx *Ctx) Verdict {
 		// A dry bow set is no bow at all: while Arrows==0 the javelins ARE the build —
 		// chase and stab instead of kiting toward a weapon that whiffs at air.
 		dryBow := s.Me.Arrows == 0
-		// P-5.8: holding the CONTACT TOOL at the door mouth, she swaps back to the
-		// REACH TOOL at once — and stabs while the swap pends. Never a mute cycle.
-		if nearDoor && !dryBow {
+		// P-1.7 (the owner, 11:50: the javelin CQB switch is DROPPED): holding
+		// the javelins with a live quiver, she swaps back to the bow at ONCE —
+		// any range, any contact — and stabs only while the swap pends. Never
+		// a mute cycle.
+		if !dryBow && s.Me.HasBow {
 			f.trySwap(ctx)
 			if contact <= 4 {
 				f.strike(ctx, f.nearestID(s), contactPos, mk)
 			}
 			return Running
 		}
-		// SWAP BACK AT >4 (the owner, twice: "she uses the javelin more than the bow —
-		// should be the other way around"): Jab's reach is ~4 — a contact she cannot
-		// stab is a contact she should be SHOOTING. In at contact<=3, out at >4; the
-		// 1.5s swap rate-limit is the flutter guard.
-		if contact > 4 {
-			if !dryBow {
-				f.trySwap(ctx) // clear — back to the bow
-				return Running
-			}
+		if contact > 4 && dryBow {
 			verbs.Stride{To: f.targetPos, Hold: 900 * time.Millisecond}.Do(ctx.M, ctx.GR, ctx.P, ctx.Led, f.Name())
 			return Running
 		}

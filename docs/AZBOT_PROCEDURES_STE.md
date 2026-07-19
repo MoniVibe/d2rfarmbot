@@ -130,8 +130,11 @@ region; the cursor-empty read is the only proof of success.
    blacklist the target. Do not rub the wall.
 6. VOLLEY at the pace of the animation (350 ms). Never wait for per-shot
    evidence. Never sweep the cursor for combat.
-7. With a TOOTH on her: ask for the CONTACT TOOL AND fire point-blank while
-   the swap pends. The clinch is not a cease-fire.
+7. With a TOOTH on her: the REACH TOOL HOLDS — point-blank volleys, no
+   swap (the owner, 11:50: "drop her javelin cqb switch, her bow is
+   superior for now"). The CONTACT set serves only a dry REACH TOOL
+   (P-1.11); holding it with a live quiver, she swaps back at once and
+   strikes only while the swap pends. The clinch is not a cease-fire.
 8. STAND AND LOOSE (the owner, 2026-07-19: "more aggressive with her bow —
    clear stuff instead of cowering"): healthy blood holds its ground and
    shoots; clearing the pack IS the defense. Kite only wounded (below
