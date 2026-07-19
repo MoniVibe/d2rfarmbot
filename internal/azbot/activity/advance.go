@@ -315,9 +315,17 @@ func (a *Advance) cross(ctx *Ctx, d game.Data, me data.Position, tgt data.Positi
 		a.contactAt = time.Now()
 	}
 	if time.Since(a.contactAt) < 5*time.Second {
-		// CONTACT PUSH: through-aim past the door along the leg's own travel direction —
-		// border transitions fire on tile contact, not on proximity.
-		dir := stepDir(a.legStart, tgt)
+		// CONTACT PUSH: through-aim past the door AWAY FROM THE AREA CENTER — doors sit
+		// on the level's edge, so outward IS across. (The old legStart vector went stale
+		// after town errands and shoved her EAST into town at the west gate, oscillating
+		// on the ribbon forever — measured 03:12, pinned at the door fact itself.)
+		from := a.legStart
+		if g := a.grid; g != nil {
+			from = data.Position{X: g.OffsetX + g.Width/2, Y: g.OffsetY + g.Height/2}
+		} else if ctx.Grid != nil {
+			from = data.Position{X: ctx.Grid.OffsetX + ctx.Grid.Width/2, Y: ctx.Grid.OffsetY + ctx.Grid.Height/2}
+		}
+		dir := stepDir(from, tgt)
 		through := data.Position{X: tgt.X + dir.X*6, Y: tgt.Y + dir.Y*6}
 		verbs.Stride{To: through, Hold: 300 * time.Millisecond}.Do(ctx.M, ctx.GR, ctx.P, ctx.Led, a.Name())
 		return
