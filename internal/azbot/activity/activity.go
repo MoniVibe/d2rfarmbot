@@ -9,6 +9,7 @@ import (
 
 	"github.com/hectorgimenez/d2go/pkg/data"
 	"github.com/hectorgimenez/d2go/pkg/data/mode"
+	"github.com/hectorgimenez/d2go/pkg/data/npc"
 	"github.com/hectorgimenez/d2go/pkg/data/skill"
 	"github.com/hectorgimenez/koolo/internal/azbot/arbiter"
 	"github.com/hectorgimenez/koolo/internal/azbot/combat"
@@ -61,6 +62,33 @@ type Activity interface {
 // LosClear is the exported face of losClear for the executive's per-tick
 // Walled stamp (WARNING 10).
 func LosClear(g *game.Grid, a, b data.Position) bool { return losClear(g, a, b) }
+
+// raisers: the RESURRECTING families (P-1.15 — the raiser dies first). World
+// knowledge by npc ID — stable under the mod's name scrambling, and not class
+// knowledge, so it lives here rather than priors.go. Extend as acts open up.
+var raisers = map[npc.ID]bool{
+	npc.FallenShaman:      true,
+	npc.CarverShaman:      true,
+	npc.CarverShaman2:     true,
+	npc.DevilkinShaman:    true,
+	npc.DevilkinShaman2:   true,
+	npc.DarkShaman:        true,
+	npc.DarkShaman2:       true,
+	npc.WarpedShaman:      true,
+	npc.HollowOne:         true, // the mummy lords raise their dead too
+	npc.Guardian:          true,
+	npc.Unraveler:         true,
+	npc.Unraveler2:        true,
+	npc.HoradrimAncient:   true,
+	npc.RatManShaman:      true,
+	npc.FetishShaman:      true,
+	npc.FlayerShaman:      true,
+	npc.FlayerShaman2:     true,
+	npc.SoulKillerShaman:  true,
+	npc.SoulKillerShaman2: true,
+	npc.StygianDollShaman: true,
+	npc.StygianDollShaman2: true,
+}
 
 func losClear(g *game.Grid, a, b data.Position) bool {
 	if g == nil {
@@ -1053,6 +1081,13 @@ func (f *Fight) Step(ctx *Ctx) Verdict {
 				}
 			}
 			sc := d + 3*pack
+			if raisers[e.NPC] {
+				// P-1.15 THE RAISER DIES FIRST (the owner: "we don't want her
+				// killing the same fallen again and again"): a raising family
+				// outranks every non-raiser at any distance in the radius —
+				// the bonus dwarfs every d+pack sum a 45-tile world can make.
+				sc -= 1000
+			}
 			if sc < bScore {
 				best, bScore, haveAny = e, sc, true
 			}

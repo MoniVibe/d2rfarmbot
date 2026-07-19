@@ -203,6 +203,14 @@ region; the cursor-empty read is the only proof of success.
     except the critical dive: a girl who cannot move cannot flee, and
     pretending otherwise is how she gets ganged walking into walls.
     Blaise holds the flank; the skill sees her through.
+15. THE RAISER DIES FIRST (the owner, 23:05: "priority targets like
+    resurrecting shamans — we don't want her killing the same fallen
+    again and again"): a monster of a RAISING family (the shaman
+    lines, the mummy lords — world knowledge by npc ID, stable under
+    the mod's name scrambling) outranks every non-raiser inside the
+    hunt radius at any distance; pack math never overrules it. Sight
+    still gates (WARNING 10) and the blacklist still bounds the chase.
+    Kill the necromancer and the corpses stay corpses.
 
 ### P-2 RETREAT
 

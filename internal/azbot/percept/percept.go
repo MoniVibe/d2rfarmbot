@@ -14,6 +14,7 @@ import (
 	"github.com/hectorgimenez/d2go/pkg/data/area"
 	"github.com/hectorgimenez/d2go/pkg/data/item"
 	"github.com/hectorgimenez/d2go/pkg/data/mode"
+	"github.com/hectorgimenez/d2go/pkg/data/npc"
 	"github.com/hectorgimenez/d2go/pkg/data/stat"
 	"github.com/hectorgimenez/koolo/internal/game"
 )
@@ -107,6 +108,9 @@ type EnemyRef struct {
 	ID   data.UnitID
 	Pos  data.Position
 	Mode uint32
+	// NPC is the monster's family ID — memory-read, stable under the mod's
+	// name scrambling. P-1.15 reads the raising families from it.
+	NPC npc.ID
 	// Walled: no clear grid line from her to it (WARNING 10 — the wall edits
 	// the world). Stamped by the executive once per tick from the live grid;
 	// a walled enemy is ABSENT to proximity counts, crowd bars, and strikes,
@@ -289,7 +293,7 @@ func (p *Perceptor) Capture() *Snapshot {
 		if m.Mode == mode.NpcDeath || m.Mode == mode.NpcDead {
 			continue
 		}
-		s.Enemies = append(s.Enemies, EnemyRef{ID: m.UnitID, Pos: m.Position, Mode: uint32(m.Mode)})
+		s.Enemies = append(s.Enemies, EnemyRef{ID: m.UnitID, Pos: m.Position, Mode: uint32(m.Mode), NPC: m.Name})
 	}
 	for _, it := range d.Inventory.ByLocation(item.LocationGround) {
 		s.Items = append(s.Items, ItemRef{ID: it.UnitID, Pos: it.Position, Name: string(it.Name), Quality: int(it.Quality)})
