@@ -116,6 +116,11 @@ type Advance struct {
 	clearDir  data.Position // the crossing's direction — onward is THROUGH, not back
 	marchGoal   data.Position // the door currently walked at — P-5.7's forward-flee hint
 	marchGoalAt time.Time
+	// P-10 waypoint state: wpAt cools failed/spent ride attempts; wpWalkAt
+	// bounds the walk-to-the-pad detour so an unreachable pad cannot own the
+	// march forever.
+	wpAt     time.Time
+	wpWalkAt time.Time
 }
 
 // MarchGoal is the door the march is walking at right now — the FORCED MARCH
@@ -246,6 +251,54 @@ func (a *Advance) Step(ctx *Ctx) Verdict {
 		return Done
 	}
 	next := a.Itinerary[minInt(a.idx+1, len(a.Itinerary)-1)]
+
+	// P-10 THE NETWORK BEATS THE ROAD (the owner, 23:35: "she's not taking
+	// the waypoint to cold plains"): in town, before any gate march, ride the
+	// pad — the deepest level-lawful itinerary stop the panel shows lit. The
+	// panel's own list is the activation oracle; a spent or failed attempt
+	// cools 90 s and the gate march resumes unharmed.
+	if s.Me.InTown && time.Since(a.wpAt) > 90*time.Second {
+		dd := ctx.GR.GetData()
+		var pad data.Object
+		padDist := 1 << 30
+		for _, ob := range dd.Objects {
+			if ob.IsWaypoint() && ob.ID != 0 {
+				if pd := chebyshev(s.Me.Pos, ob.Position); pd < padDist {
+					padDist, pad = pd, ob
+				}
+			}
+		}
+		if padDist < 1<<30 {
+			var wants []area.ID
+			for i := len(a.Itinerary) - 1; i > a.idx; i-- {
+				if s.Me.Level >= a.Itinerary[i].MinLevel {
+					wants = append(wants, a.Itinerary[i].Area)
+				}
+			}
+			if len(wants) > 0 {
+				if padDist > 8 {
+					// Walk to the pad — bounded: 45 s of no arrival hands the
+					// march back to the gate (an unreachable pad owns nothing).
+					if a.wpWalkAt.IsZero() {
+						a.wpWalkAt = time.Now()
+					}
+					if time.Since(a.wpWalkAt) > 45*time.Second {
+						a.wpAt, a.wpWalkAt = time.Now(), time.Time{}
+					} else {
+						slideStride(ctx, pad.Position, 1200*time.Millisecond, 1, a.Name())
+						return Running
+					}
+				} else {
+					a.wpAt, a.wpWalkAt = time.Now(), time.Time{}
+					o := verbs.UseWaypoint{Want: wants}.Do(ctx.M, ctx.GR, ctx.P, ctx.Led, a.Name())
+					if o.Result == verbs.ResDone {
+						return Running // a new area: the adopt logic takes it from here
+					}
+					// whiff/deaf/refused: the gate march resumes below
+				}
+			}
+		}
+	}
 
 	d := ctx.GR.GetData()
 	hop := nextHop(d, s.Me.Area, next.Area)
