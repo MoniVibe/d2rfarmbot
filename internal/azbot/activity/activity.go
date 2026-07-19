@@ -239,6 +239,91 @@ type Flee struct {
 // suspended — she blasts instead of orbiting. Reset per world (NewWorld).
 var fleeFatigueUntil time.Time
 
+// ---------------------------------------------------------------- Stand (ClassSurvive)
+
+type posAt struct {
+	at  time.Time
+	pos data.Position
+}
+
+// Stand — P-1.14 THE CORNERED VERDICT (the owner, 11:45: "if she remains in
+// spot for more than 3 seconds and enemies are nearby... shift to maximum
+// killing"): held ground with teeth nearby belongs to the arrows, whatever
+// any other activity thinks it is doing. Outbids every retreat except the
+// critical dive — a girl who cannot move cannot flee.
+type Stand struct {
+	ring         []posAt
+	lastStrikeAt time.Time
+}
+
+func (st *Stand) Name() string { return "stand" }
+
+func (st *Stand) Demand(s *percept.Snapshot) *arbiter.Demand {
+	if !s.Valid || s.Me.InTown || s.Me.HPPct <= 0 {
+		st.ring = nil
+		return nil
+	}
+	if s.Me.WeaponKind == "none" && s.Me.CorpseFound {
+		return nil // recovery owns the naked girl (WARNING 3)
+	}
+	now := time.Now()
+	st.ring = append(st.ring, posAt{now, s.Me.Pos})
+	for len(st.ring) > 0 && now.Sub(st.ring[0].at) > 3500*time.Millisecond {
+		st.ring = st.ring[1:]
+	}
+	if len(st.ring) < 4 || now.Sub(st.ring[0].at) < 2800*time.Millisecond {
+		return nil // not yet 3 seconds of held ground
+	}
+	anchor := st.ring[len(st.ring)-1].pos
+	for _, p := range st.ring {
+		if chebyshev(p.pos, anchor) >= 3 {
+			return nil // she moves; the ground is not held
+		}
+	}
+	near := 0
+	for _, e := range s.Enemies {
+		if chebyshev(s.Me.Pos, e.Pos) <= 12 {
+			near++
+		}
+	}
+	if near == 0 {
+		return nil
+	}
+	return &arbiter.Demand{Who: st.Name(), Class: arbiter.ClassSurvive,
+		Urgency: 1.5, // over flee (1.35) and the engaged breakout (1.45); under the critical dive
+		Commit:  arbiter.Commitment{MinHold: 2 * time.Second}}
+}
+
+func (st *Stand) Step(ctx *Ctx) Verdict {
+	s := ctx.Snap
+	if !s.Valid {
+		return Running
+	}
+	best, bd := data.Position{}, 1<<30
+	for _, e := range s.Enemies {
+		if d := chebyshev(s.Me.Pos, e.Pos); d < bd {
+			best, bd = e.Pos, d
+		}
+	}
+	if bd > 14 {
+		return Done // the ground opened — the ordinary doctrine resumes
+	}
+	// MAXIMUM KILLING: the skill per P-1.13 (above the 10% swallow), the
+	// contact strike otherwise, the bare fist as the last resort.
+	var key byte
+	switch {
+	case s.Me.WeaponKind == "bow" && ctx.Cap != nil && ctx.Cap.Reach != nil && s.Me.MPPct > 10:
+		key = ctx.Cap.Reach.Key
+	case ctx.Cap != nil && ctx.Cap.Contact != nil:
+		key = ctx.Cap.Contact.Key
+	}
+	if time.Since(st.lastStrikeAt) >= 350*time.Millisecond {
+		volleyAt(ctx, best, key, false)
+		st.lastStrikeAt = time.Now()
+	}
+	return Running
+}
+
 // ---------------------------------------------------------------- Blood oracle (P-2.0)
 
 type bloodSample struct {

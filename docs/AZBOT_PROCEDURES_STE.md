@@ -154,6 +154,14 @@ region; the cursor-empty read is the only proof of success.
     TOOL's skill fires on EVERY shot while mana holds above 10% — the
     basic arrow is the reserve below that line, not the default. No
     thrift bars, no stack arithmetic; the steal refills the pool.
+14. THE CORNERED VERDICT (the owner, 11:45, the last law before sleep:
+    "if she remains in spot for more than 3 seconds and enemies are
+    nearby, shift to maximum killing"): the same ground held 3 seconds
+    with an enemy within 12 — wedged, idling, trapped, whatever holds
+    the actuator — belongs to the arrows. STAND outbids every retreat
+    except the critical dive: a girl who cannot move cannot flee, and
+    pretending otherwise is how she gets ganged walking into walls.
+    Blaise holds the flank; the skill sees her through.
 
 ### P-2 RETREAT
 
