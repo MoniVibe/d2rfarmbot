@@ -1,3 +1,8 @@
+# RESOLVED 21:06 — see the correction at the bottom. The coordinate theory
+# below was WRONG: the coords were always right; FocusGame's bare
+# SetForegroundWindow silently failed, so menu clicks landed in the wrong
+# window. Fixed in 563f76b (force + verify); full relog loop proven live.
+
 # URGENT HANDOFF — the recovery wall (2026-07-19 ~13:25)
 
 ## READ FIRST: her exact state right now

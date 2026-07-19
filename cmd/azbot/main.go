@@ -13,6 +13,7 @@ import (
 	"log/slog"
 	"os"
 	"os/signal"
+	"sort"
 	"strings"
 	"syscall"
 	"time"
@@ -205,6 +206,7 @@ func main() {
 	exitProbe := flag.Bool("exitprobe", false, "PURE READ: dump the current area's AdjacentLevels (raw + live-translated), live entrance units, and the BFS hop toward the next Act 1 leg — validates the crossing knowledge before the Advance activity trusts it")
 	missileProbe := flag.Int("missileprobe", 0, "PURE READ: sample the missile table for N seconds and print every projectile with measured velocity — validates the dodge oracle (stand near something that shoots)")
 	relogTest := flag.Bool("relogtest", false, "manual harness, staged: alone = open the pause menu, screenshot it (logs/relog_pausemenu.png), close it. With -exitxy = click Save+Exit, screenshot the main menu (logs/relog_mainmenu.png). With -playxy too = full relog loop, verify the corpse materialized in town")
+	wpCalTest := flag.Bool("wpcaltest", false, "P-10 phase 1 harness: walk onto the nearest waypoint, click it open, photograph the panel (logs/wp_panel.png), and dump the blueness map — re-derives the compass column and destination rows for THIS client, exit")
 	replayF := flag.String("replay", "", "OFFLINE DECISION REPLAY: path to a flight .jsonl — every frame runs Demand + arbiter and prints the grant timeline. No game needed; live failures become desk-checkable evidence (the STE mentality: verify against recorded reality, not her blood)")
 	exitXY := flag.String("exitxy", "", "relogtest: screenshot x,y of the pause menu's Save and Exit button")
 	playXY := flag.String("playxy", "", "relogtest: screenshot x,y of the main menu's Play button")
@@ -405,6 +407,94 @@ func main() {
 				tracks[ms.UnitID] = mtrack{pos: ms.Position, at: now}
 			}
 			time.Sleep(70 * time.Millisecond)
+		}
+		close(stop)
+		return
+	}
+
+	if *wpCalTest {
+		// WAYPOINT CALIBRATION (P-10 phase 1): find the WP, walk on, click it
+		// open, photograph the panel, and MAP THE BLUE. The 853x480-era layout
+		// constants do not survive this client; the blueness metric
+		// (blue - (red+green)/2, farmbot's compass oracle) is resolution-
+		// independent and re-derives the compass column and row bands here.
+		led := verbs.NewLedger(256)
+		led.Sink = func(o verbs.Outcome) {
+			logger.Info("outcome", "verb", o.Verb, "result", o.Result.String(), "ev", o.Evidence)
+		}
+		_ = gr.FetchMapData()
+		d := gr.GetData()
+		me := d.PlayerUnit.Position
+		var wp data.Object
+		best, have := 1<<30, false
+		for _, o := range d.Objects {
+			if o.IsWaypoint() && o.ID != 0 {
+				if dd := chebyshev(me, o.Position); dd < best {
+					best, wp, have = dd, o, true
+				}
+			}
+		}
+		if !have || best > 200 {
+			logger.Error("wpcal: no waypoint within 200", "nearest", best)
+			close(stop)
+			return
+		}
+		logger.Info("wpcal: waypoint found", "pos", fmt.Sprintf("(%d,%d)", wp.Position.X, wp.Position.Y), "dist", best)
+		for i := 0; i < 60; i++ {
+			s := p.Capture()
+			if !s.Valid || !m.Engage.Engaged() {
+				time.Sleep(250 * time.Millisecond)
+				continue
+			}
+			if chebyshev(s.Me.Pos, wp.Position) <= 3 {
+				break
+			}
+			verbs.Stride{To: wp.Position, Hold: 700 * time.Millisecond, MinGain: 1}.Do(m, gr, p, led, "wpcal")
+		}
+		// The WP is a tall clickable object — EnterPortal's hover-sweep click
+		// opens its panel; the area-change postcondition reads deaf, ignored.
+		verbs.EnterPortal{Target: wp.ID, TargetPos: wp.Position, Window: 1500 * time.Millisecond}.Do(m, gr, p, led, "wpcal")
+		time.Sleep(900 * time.Millisecond)
+		img := gr.Screenshot()
+		if f, err := os.Create("logs/wp_panel.png"); err == nil {
+			_ = png.Encode(f, img)
+			f.Close()
+			logger.Info("wpcal: panel photographed", "path", "logs/wp_panel.png")
+		}
+		// Blueness map: every 6px cell in the left 2/3, keep the strong blues.
+		type blueCell struct {
+			x, y int
+			bl   float64
+		}
+		var cells []blueCell
+		bnd := img.Bounds()
+		for y := 60; y < bnd.Dy()-140; y += 6 {
+			for x := 40; x < bnd.Dx()*2/3; x += 6 {
+				var sum, n float64
+				for yy := y; yy < y+6 && yy < bnd.Dy(); yy += 2 {
+					for xx := x; xx < x+6 && xx < bnd.Dx(); xx += 2 {
+						rr, gg, bb, _ := img.At(xx, yy).RGBA()
+						sum += float64(int(bb>>8) - (int(rr>>8)+int(gg>>8))/2)
+						n++
+					}
+				}
+				if n > 0 {
+					if v := sum / n; v > 20 {
+						cells = append(cells, blueCell{x, y, v})
+					}
+				}
+			}
+		}
+		sort.Slice(cells, func(i, j int) bool { return cells[i].bl > cells[j].bl })
+		if len(cells) > 60 {
+			cells = cells[:60]
+		}
+		for _, c := range cells {
+			logger.Info("wpcal: blue", "x", c.x, "y", c.y, "bl", int(c.bl))
+		}
+		logger.Info("wpcal: done", "blueCells", len(cells), "panelOpen", len(cells) > 0)
+		if len(cells) > 0 {
+			m.KeyLane().Press(0x1B) // the blue proves a panel — ESC is lawful (WARNING 4)
 		}
 		close(stop)
 		return
