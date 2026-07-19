@@ -1585,6 +1585,18 @@ func main() {
 			logger.Info("outcome", "verb", o.Verb, "holder", o.Holder, "result", o.Result.String(), "ev", o.Evidence)
 		}
 	}
+	// WARNING 6 (the 12:00 lesson): a swap mid-TRADE leaves the vendor panel up
+	// for the successor — calibration then presses keys into a deaf panel and
+	// every service fires into ghost windows. Readable vendor stock at attach
+	// is PROOF a panel is open: ESC is safe (WARNING 4) and mandatory.
+	for i := 0; i < 3; i++ {
+		if len(gr.GetData().Inventory.ByLocation(item.LocationVendor)) == 0 {
+			break
+		}
+		logger.Info("startup: inherited trade panel — closing before calibration")
+		m.KeyLane().Press(0x1B)
+		time.Sleep(600 * time.Millisecond)
+	}
 	// calibrate wraps probing + the owner's declared build: the owner KNOWS the char
 	// (classic-bot law — kolbot/koolo configs declared skills; nobody inferred them).
 	calibrate := func() combat.Capability {

@@ -360,6 +360,8 @@ type Restock struct {
 	probeID    int
 	frozenTP   int // learned-cell buys with no tome delta (WARNING 2 family)
 	frozenID   int
+	nextAt     time.Time // ghost-abort cooldown: a dead window stays dead for minutes,
+	// not seconds — eight identical aborts in eight minutes taught the churn (12:07)
 }
 
 // scrollWorks: the live belief that scroll restocking works here — retired when
@@ -438,7 +440,7 @@ func plan(s *percept.Snapshot) (buyHP, buyMana int) {
 }
 
 func (r *Restock) Demand(s *percept.Snapshot) *arbiter.Demand {
-	if !s.Valid || !s.Me.InTown || s.Me.Gold < 100 {
+	if !s.Valid || !s.Me.InTown || s.Me.Gold < 100 || time.Now().Before(r.nextAt) {
 		return nil
 	}
 	buyHP, buyMana := plan(s)
@@ -492,6 +494,7 @@ func (r *Restock) Step(ctx *Ctx) Verdict {
 				closeShop(ctx)
 				r.e.reset()
 				r.resetCounters()
+				r.nextAt = time.Now().Add(4 * time.Minute) // a dead window stays dead (12:07's churn)
 				return Abandoned
 			}
 		} else {
