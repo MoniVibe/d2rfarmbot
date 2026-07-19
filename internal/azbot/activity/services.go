@@ -393,6 +393,9 @@ func (r *Restock) Step(ctx *Ctx) Verdict {
 	if !s.Valid {
 		return Running
 	}
+	if s.Me.CursorItem {
+		return Running // WARNING 9: an instant-buy cell click would misfire
+	}
 	buyHP, buyMana := plan(s)
 	if buyHP+buyMana+scrollDeficit(s) == 0 {
 		if r.e.phase >= 3 {
@@ -539,6 +542,9 @@ func (fc *Fence) Step(ctx *Ctx) Verdict {
 	if !s.Valid {
 		return Running
 	}
+	if s.Me.CursorItem {
+		return Running // WARNING 9: a ctrl-click with a held item is a drop
+	}
 	if len(s.Junk) == 0 {
 		if fc.e.phase >= 3 {
 			closeShop(ctx)
@@ -657,6 +663,9 @@ func (h *Heal) Step(ctx *Ctx) Verdict {
 	if !s.Valid {
 		return Running
 	}
+	if s.Me.CursorItem {
+		return Running // WARNING 9: an NPC click with a held item can drop it
+	}
 	if s.Me.HPPct > 90 {
 		if s.MenuOpen {
 			closeShop(ctx)
@@ -732,6 +741,9 @@ func (idn *Identify) Step(ctx *Ctx) Verdict {
 	s := ctx.Snap
 	if !s.Valid {
 		return Running
+	}
+	if s.Me.CursorItem {
+		return Running // WARNING 9: the tome ritual clicks cells — parking first
 	}
 	if s.Me.UnidentCount == 0 {
 		if s.MenuOpen {
@@ -809,7 +821,17 @@ func NewEquip() *Equip { return &Equip{lastN: -1} }
 func (eq *Equip) Name() string { return "equip" }
 
 func (eq *Equip) Demand(s *percept.Snapshot) *arbiter.Demand {
-	if !s.Valid || !s.Me.InTown || s.Me.EquipCandCount == 0 || !equipWorks.Load() {
+	if !s.Valid || !s.Me.InTown {
+		return nil
+	}
+	// WARNING 9: a cursor item paralyzes every service — parking it is Equip's
+	// highest errand, above its own dressing and everyone's shopping.
+	if s.Me.CursorItem {
+		return &arbiter.Demand{Who: eq.Name(), Class: arbiter.ClassService,
+			Urgency: 0.85,
+			Commit:  arbiter.Commitment{MinHold: 5 * time.Second}}
+	}
+	if s.Me.EquipCandCount == 0 || !equipWorks.Load() {
 		return nil
 	}
 	// A swap needs LANDING ROOM: the displaced gear returns to the grid, and a full
@@ -823,9 +845,100 @@ func (eq *Equip) Demand(s *percept.Snapshot) *arbiter.Demand {
 		Commit:  arbiter.Commitment{MinHold: 5 * time.Second}}
 }
 
+// parkCursor — WARNING 9's recovery: with the panel open, place the cursor
+// item into a free grid region its own footprint fits; the cursor-empty read
+// is the only proof. Returns true when the cursor is clean.
+func (eq *Equip) parkCursor(ctx *Ctx) bool {
+	d := ctx.GR.GetData()
+	cur := d.Inventory.ByLocation(item.LocationCursor)
+	if len(cur) == 0 {
+		return true
+	}
+	w, h := cur[0].Desc().InventoryWidth, cur[0].Desc().InventoryHeight
+	if w <= 0 {
+		w = 1
+	}
+	if h <= 0 {
+		h = 1
+	}
+	var occ [10][4]bool
+	for _, it := range d.Inventory.ByLocation(item.LocationInventory) {
+		iw, ih := it.Desc().InventoryWidth, it.Desc().InventoryHeight
+		if iw <= 0 {
+			iw = 1
+		}
+		if ih <= 0 {
+			ih = 1
+		}
+		for x := it.Position.X; x < it.Position.X+iw && x < 10; x++ {
+			for y := it.Position.Y; y < it.Position.Y+ih && y < 4; y++ {
+				if x >= 0 && y >= 0 {
+					occ[x][y] = true
+				}
+			}
+		}
+	}
+	for gy := 0; gy <= 4-h; gy++ {
+	scan:
+		for gx := 0; gx <= 10-w; gx++ {
+			for x := gx; x < gx+w; x++ {
+				for y := gy; y < gy+h; y++ {
+					if occ[x][y] {
+						continue scan
+					}
+				}
+			}
+			// A place-click aims at the region's CENTER cell (the game anchors
+			// the held item by its center).
+			cx, cy := invCell(gx+(w-1)/2, gy+(h-1)/2)
+			ctx.M.UIClick(cx, cy)
+			time.Sleep(350 * time.Millisecond)
+			return len(ctx.GR.GetData().Inventory.ByLocation(item.LocationCursor)) == 0
+		}
+	}
+	return false // no region fits: the fence must make room first
+}
+
 func (eq *Equip) Step(ctx *Ctx) Verdict {
 	s := ctx.Snap
 	if !s.Valid {
+		return Running
+	}
+	// WARNING 9: parking the cursor item precedes every ritual — including our
+	// own docket. The door opens first if needed; the cursor-empty read is the
+	// only proof; a bag with no room hands the problem to the fence.
+	if s.Me.CursorItem {
+		if len(ctx.GR.GetData().Inventory.ByLocation(item.LocationVendor)) > 0 {
+			closeShop(ctx)
+			return Running
+		}
+		if !eq.opened {
+			if ctx.Cap == nil || ctx.Cap.Identify == nil {
+				return Abandoned // no door to open; nothing safe to click
+			}
+			ctx.M.MoveStop()
+			ctx.M.PressKey(ctx.Cap.Identify.Key)
+			time.Sleep(150 * time.Millisecond)
+			ctx.M.ClickRight(ctx.GR.GameAreaSizeX/2, ctx.GR.GameAreaSizeY/2+180)
+			eq.opened = true
+			eq.clickAt = time.Now()
+			return Running
+		}
+		if time.Since(eq.clickAt) < 900*time.Millisecond {
+			return Running
+		}
+		eq.clickAt = time.Now()
+		if eq.parkCursor(ctx) {
+			return Running // clean — the docket resumes next Step
+		}
+		if eq.fails++; eq.fails > 5 {
+			ctx.Led.Append(verbs.Outcome{Verb: "equip", Holder: eq.Name(), Result: verbs.ResDeaf,
+				Evidence: "cursor item would not park (no room or deaf panel) — retiring"})
+			equipWorks.Store(false)
+			eq.closePanel(ctx)
+			eq.lastN, eq.fails = -1, 0
+			return Abandoned
+		}
 		return Running
 	}
 	if s.Me.EquipCandCount == 0 {
@@ -985,6 +1098,9 @@ func (sp *Spend) Step(ctx *Ctx) Verdict {
 	s := ctx.Snap
 	if !s.Valid {
 		return Running
+	}
+	if s.Me.CursorItem {
+		return Running // WARNING 9: no clicks while an item rides the cursor
 	}
 	if s.Me.StatPoints <= 0 {
 		sp.closePanel(ctx)

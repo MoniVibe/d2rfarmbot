@@ -90,6 +90,9 @@ type PlayerState struct {
 	// escape hatch's fuel gauge (P-4.5). -1 = no tome in the bag (nothing to
 	// fill; a loose scroll is not a tome).
 	TPScrolls int
+	// CursorItem: something rides the cursor (WARNING 9) — every service's
+	// click interlock, and Equip's parking docket.
+	CursorItem bool
 }
 
 // EnemyRef is a live hostile: identity, position, and Mode (the honest liveness read —
@@ -343,6 +346,7 @@ func (p *Perceptor) Capture() *Snapshot {
 		s.Me.Arrows = -1 // no measurable quiver: unknown, assume stocked
 	}
 	s.Me.HasBow = bowActive || bowSecondary
+	s.Me.CursorItem = len(d.Inventory.ByLocation(item.LocationCursor)) > 0 // WARNING 9
 	// Belt potions count by NUMERIC ID first — the mod scrambles the name table
 	// (its HP potion reads "Herb" id 602, its mana potion id 607 = the old INVALID607
 	// mystery; both proven by vendor purchase deltas 2026-07-19). Name matching stays

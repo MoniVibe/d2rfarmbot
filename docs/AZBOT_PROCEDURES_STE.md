@@ -106,6 +106,14 @@ under fire, the same death class as the field swap (WARNING 6).
 **WARNING 8 — SEED NAMESPACE.** The world re-rolls per game. Geometry facts
 from one seed must never steer another.
 
+**WARNING 9 — THE CURSOR ITEM.** An item on the cursor owns every click:
+panel buttons do not press, world clicks DROP it, and the stuck-detector
+reads the paralysis as walls (measured 09:30: one missed put-back sent
+every town service into a flailing loop the owner watched — "chimping
+out"). No service clicks while the cursor holds an item. Recovery precedes
+every ritual: with the panel provably open, park the item in a free grid
+region; the cursor-empty read is the only proof of success.
+
 ---
 
 ## 3. PROCEDURES

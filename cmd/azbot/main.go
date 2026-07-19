@@ -1872,9 +1872,13 @@ func main() {
 					o := verbs.Stride{To: esc, Hold: 2 * time.Second, MinGain: 3}.Do(m, gr, p, led, "watchdog")
 					// WARNING 4: the pause menu is byte-blind and can arrive from
 					// outside (a swap mid-relog, measured 08:41) — a REFUSED watchdog
-					// stride in a safe town is its only shadow. One ESC, retest next
-					// cycle; the toggle converges in two probes and costs nothing here.
-					if o.Result != verbs.ResDone && s.Me.InTown && time.Since(lastUnpause) > 8*time.Second {
+					// stride in a safe town is its only shadow. The probe is SELF-
+					// CONTAINED: RealEsc (menus are deaf to lane input), stride retest
+					// in the SAME cycle, and a restoring RealEsc when the retest still
+					// fails — the world is never left ambiguous for the next holder
+					// (the 08:46 spend burned its belief clicking into a menu a blind
+					// half-probe had just raised).
+					if o.Result != verbs.ResDone && s.Me.InTown && !s.Me.CursorItem && time.Since(lastUnpause) > 30*time.Second {
 						safeTown := true
 						for _, e := range s.Enemies {
 							if chebyshev(s.Me.Pos, e.Pos) <= 12 {
@@ -1883,9 +1887,16 @@ func main() {
 							}
 						}
 						if safeTown {
-							m.KeyLane().Press(0x1B)
+							m.RealEsc()
+							time.Sleep(500 * time.Millisecond)
+							o2 := verbs.Stride{To: esc, Hold: 700 * time.Millisecond, MinGain: 1}.Do(m, gr, p, led, "watchdog/shadow")
+							if o2.Result == verbs.ResDone {
+								logger.Info("watchdog: ESC probe — a menu WAS up; the world moves again")
+							} else {
+								m.RealEsc() // raised on clear ground: restore before releasing
+								logger.Info("watchdog: ESC probe — stride still refused; not the menu (fence?), state restored")
+							}
 							lastUnpause = time.Now()
-							logger.Info("watchdog: ESC probe — town stride refused, the pause menu's only shadow")
 						}
 					}
 				}
