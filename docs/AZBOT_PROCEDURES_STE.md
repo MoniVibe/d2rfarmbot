@@ -116,7 +116,11 @@ from one seed must never steer another.
    evidence. Never sweep the cursor for combat.
 7. With a TOOTH on her: ask for the CONTACT TOOL AND fire point-blank while
    the swap pends. The clinch is not a cease-fire.
-8. Kite only from PRESSURE or below half blood. One healthy chaser is a target.
+8. STAND AND LOOSE (the owner, 2026-07-19: "more aggressive with her bow —
+   clear stuff instead of cowering"): healthy blood holds its ground and
+   shoots; clearing the pack IS the defense. Kite only wounded (below
+   half blood) AND under PRESSURE — never from either alone. One chaser,
+   any blood, is a target. The CROWD law (P-2.1) still owns hordes.
 9. Kites check the grid first. CORNERED = FIGHT.
 10. Roles change on hysteresis: the CONTACT TOOL at reach ≤3, the REACH
     TOOL again only past 4. Between is a held decision, not an oscillation.

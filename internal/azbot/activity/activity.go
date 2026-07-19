@@ -729,15 +729,16 @@ func (f *Fight) Step(ctx *Ctx) Verdict {
 			return Running
 		}
 		if contact <= 6 {
-			// Kite only under REAL pressure (a pack closing, or blood already lost).
-			// One healthy chaser is not a reason to run — it is a target.
+			// P-1.8 STAND AND LOOSE: healthy blood holds its ground and shoots —
+			// clearing the pack IS the defense. Kite only wounded AND pressed
+			// (the OR cowered her along walls: 2 fallen within 7 outran the bow).
 			press := 0
 			for _, e := range s.Enemies {
 				if chebyshev(s.Me.Pos, e.Pos) <= 7 {
 					press++
 				}
 			}
-			if press >= 2 || s.Me.HPPct < 50 {
+			if press >= 2 && s.Me.HPPct < 50 {
 				if !kiteAway(ctx, s, contactPos, 1000*time.Millisecond) {
 					// CORNERED: no open bearing — the wall wins the footwork, so
 					// win the fight instead: shoot the nearest tooth point-blank.
