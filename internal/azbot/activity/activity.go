@@ -148,6 +148,20 @@ func chebyshev(a, b data.Position) int {
 	return dy
 }
 
+func absInt(v int) int {
+	if v < 0 {
+		return -v
+	}
+	return v
+}
+
+func maxInt(a, b int) int {
+	if a > b {
+		return a
+	}
+	return b
+}
+
 // ---------------------------------------------------------------- Flee (ClassSurvive)
 
 // Flee triggers on low HP with contact pressure; strides away from the enemy centroid
@@ -155,6 +169,10 @@ func chebyshev(a, b data.Position) int {
 // parallel — this is escape, not medicine.
 type Flee struct {
 	castAt time.Time
+	// March is Advance's live door hint (P-5.7 FORCED MARCH): on unpaying ground
+	// a retreat that backtracks refunds nothing — flee FORWARD when the march
+	// direction is not into the crowd. Nil-safe: no hint, classic away-flee.
+	March func() (data.Position, bool)
 }
 
 func (f *Flee) Name() string { return "flee" }
@@ -257,6 +275,24 @@ func (f *Flee) Step(ctx *Ctx) Verdict {
 		return Running
 	}
 	away := data.Position{X: s.Me.Pos.X + (s.Me.Pos.X - cx/n), Y: s.Me.Pos.Y + (s.Me.Pos.Y - cy/n)}
+	// P-5.7 FORCED MARCH: on ground that does not pay, the moor is crossed, not
+	// orbited. When the march door is known and its direction is within 90° of
+	// the away vector (dot ≥ 0 — never INTO the crowd), retreat along the
+	// bisector of away and march: distance from the pack AND ground gained.
+	if f.March != nil && !ExpWorthwhile(s.Me.Level, s.Me.Area) {
+		if mt, ok := f.March(); ok {
+			avx, avy := s.Me.Pos.X-cx/n, s.Me.Pos.Y-cy/n
+			mvx, mvy := mt.X-s.Me.Pos.X, mt.Y-s.Me.Pos.Y
+			am := maxInt(absInt(avx), absInt(avy))
+			mm := maxInt(absInt(mvx), absInt(mvy))
+			if am > 0 && mm > 0 && avx*mvx+avy*mvy >= 0 {
+				away = data.Position{
+					X: s.Me.Pos.X + 8*avx/am + 8*mvx/mm,
+					Y: s.Me.Pos.Y + 8*avy/am + 8*mvy/mm,
+				}
+			}
+		}
+	}
 	slideStride(ctx, away, 2*time.Second, 3, f.Name())
 	return Running
 }
@@ -541,11 +577,13 @@ func (f *Fight) Demand(s *percept.Snapshot) *arbiter.Demand {
 		return nil
 	}
 	// THE EXP ORACLE shrinks the hunt: on outleveled ground (mlvl 5+ below her),
-	// killing pays nothing — engage only what presses within 12 (self-defense) and
-	// let Advance's raised urgency march her toward monsters that still teach.
+	// killing pays nothing — P-1.3/P-5.7 FORCED MARCH (the owner: "ignore far away
+	// monsters and punch through"): engage only a TOOTH or a blocker within 4;
+	// chasers that have not reached her are outrun, not fought. Advance's raised
+	// urgency marches her toward monsters that still teach.
 	radius := 45
 	if !ExpWorthwhile(s.Me.Level, s.Me.Area) {
-		radius = 12
+		radius = 4
 	}
 	best := radius + 1
 	for _, e := range s.Enemies {

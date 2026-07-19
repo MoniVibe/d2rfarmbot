@@ -1625,7 +1625,8 @@ func main() {
 	if *goal == "campaign" || *goal == "rampage" {
 		legs = activity.Act1Itinerary()
 	}
-	for _, a := range []activity.Activity{&activity.Breakout{}, &activity.Flee{}, activity.NewDodge(), &activity.Respawn{}, activity.NewRelog(), activity.NewReclaim(), activity.NewFight(), activity.NewLoot(), activity.NewFence(), activity.NewRestock(), activity.NewRepair(), activity.NewHeal(), activity.NewIdentify(), activity.NewEquip(), activity.NewAdvance(legs), activity.NewWithdraw(), &activity.Return{}, &activity.Travel{Road: road}, &activity.Explore{}} {
+	adv := activity.NewAdvance(legs)
+	for _, a := range []activity.Activity{&activity.Breakout{}, &activity.Flee{March: adv.MarchGoal}, activity.NewDodge(), &activity.Respawn{}, activity.NewRelog(), activity.NewReclaim(), activity.NewFight(), activity.NewLoot(), activity.NewFence(), activity.NewRestock(), activity.NewRepair(), activity.NewHeal(), activity.NewIdentify(), activity.NewEquip(), adv, activity.NewWithdraw(), &activity.Return{}, &activity.Travel{Road: road}, &activity.Explore{}} {
 		acts[a.Name()] = a
 	}
 

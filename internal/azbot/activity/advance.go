@@ -114,6 +114,18 @@ type Advance struct {
 	clearing bool          // adopted a crossing; pushing clear of the ribbon
 	clearDoor data.Position // where the crossing fired
 	clearDir  data.Position // the crossing's direction — onward is THROUGH, not back
+	marchGoal   data.Position // the door currently walked at — P-5.7's forward-flee hint
+	marchGoalAt time.Time
+}
+
+// MarchGoal is the door the march is walking at right now — the FORCED MARCH
+// hint (P-5.7) that lets Flee retreat forward instead of orbiting the moor.
+// Stale after 30 s: a hint from a dead leg must not steer a retreat.
+func (a *Advance) MarchGoal() (data.Position, bool) {
+	if a.marchGoal == (data.Position{}) || time.Since(a.marchGoalAt) > 30*time.Second {
+		return data.Position{}, false
+	}
+	return a.marchGoal, true
 }
 
 func NewAdvance(legs []Leg) *Advance {
@@ -246,6 +258,7 @@ func (a *Advance) Step(ctx *Ctx) Verdict {
 		a.search(ctx, d, me)
 		return Running
 	}
+	a.marchGoal, a.marchGoalAt = tgt, time.Now() // P-5.7: the retreat may lean on this
 	ed := chebyshev(me, tgt)
 
 	// Leg progress clock: closest-approach must improve or the leg is stuck (wall

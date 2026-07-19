@@ -107,7 +107,8 @@ from one seed must never steer another.
 1. Select the target by sight first. A walled enemy loses to any visible enemy.
 2. Score candidates: distance + 3 × (bodies within 8). Do not elect the
    center of a stack.
-3. If the area does not pay experience (gap > 4), hunt only within 12.
+3. If the area does not pay experience (gap > 4), hunt only what P-5.7
+   admits: a TOOTH, or a blocker within 4. Chasers are outrun, not fought.
 4. Approach in 10-tile half-steps. Reassess between steps.
 5. If a wall owns the arrow line, walk the door with the planner, or
    blacklist the target. Do not rub the wall.
@@ -182,6 +183,12 @@ precondition.
    demand real routing. Slides and arcs are for camp furniture only.
 6. On ground that does not pay (gap > 4), the march urgency doubles. The
    march is the experience.
+7. FORCED MARCH (the owner, 2026-07-19: "ignore far away monsters and
+   punch through"): on ground that does not pay, the march owns the
+   ground. FIGHT engages only a TOOTH or a blocker within 4. A retreat
+   that backtracks refunds nothing: when the march direction is not into
+   the crowd, Flee retreats FORWARD along it — the moor is crossed, not
+   orbited. P-2's triggers and clearances stand unchanged.
 
 ### P-6 TELEMETRY (controlled language for the log)
 
