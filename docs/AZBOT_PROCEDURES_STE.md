@@ -211,7 +211,9 @@ precondition.
    cannot tell a scroll from junk. Each tome's cell is LEARNED: probe the
    misc-tab candidates once, the delta names the true cell, and the fact
    is kept forever; a wrong probe's junk goes to the fence like any other
-   merchandise.
+   merchandise. THE BAG IS NOT A CELLAR: bag potions beyond a reserve of
+   4 per kind are merchandise (the junky's dozen strangled the landing
+   room, 10:01) — the belt is the tank.
 6. REPAIR when worn below a quarter. Durability must rise per click.
 7. Every service obeys its delta check (Lexicon) and its GHOST defense
    (WARNING 2).

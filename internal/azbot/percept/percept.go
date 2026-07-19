@@ -441,6 +441,7 @@ func (p *Perceptor) Capture() *Snapshot {
 		return fitsSlot(it)
 	}
 	occupied := 0
+	potSpares := map[int]int{} // bag potions per kind — the reserve audit (P-4.5)
 	for _, it := range d.Inventory.ByLocation(item.LocationInventory) {
 		id := int(it.ID)
 		if w, h := it.Desc().InventoryWidth, it.Desc().InventoryHeight; w > 0 && h > 0 {
@@ -472,7 +473,14 @@ func (p *Perceptor) Capture() *Snapshot {
 			// her cube somehow, what the hell"). Type by numeric ID cannot be lied to
 			// by the scrambled name table.
 			continue
-		case id == 602 || id == 607: // potions are fuel, not stock
+		case id == 602 || id == 607:
+			// Potions are fuel, not stock — up to a RESERVE of 4 per kind. The
+			// bag is not a cellar (P-4.5): the junky's surplus is merchandise,
+			// or it strangles the landing room the equip ritual needs.
+			potSpares[id]++
+			if potSpares[id] > 4 {
+				s.Junk = append(s.Junk, InvItem{ID: id, GX: it.Position.X, GY: it.Position.Y, Qual: int(it.Quality)})
+			}
 			continue
 		case int(it.Quality) >= 4 && !it.Identified:
 			// UNIDENTIFIED goes to the docket FIRST — rares and uniques included.

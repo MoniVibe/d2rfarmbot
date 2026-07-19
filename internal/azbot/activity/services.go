@@ -382,6 +382,21 @@ func plan(s *percept.Snapshot) (buyHP, buyMana int) {
 	if buyMana < 0 {
 		buyMana = 0
 	}
+	// A FULL BELT BUYS NOTHING (measured 09:59: 6 HP + 2 mana on an 8-slot
+	// belt, doctrine wanting 4 mana — the deficit re-bid an unwinnable errand
+	// three times in a minute). Buys are capped by free slots; the mix
+	// corrects itself as she drinks.
+	free := s.Me.BeltSlots - s.Me.BeltHP - s.Me.BeltMana
+	if free < 0 {
+		free = 0
+	}
+	if buyMana > free {
+		buyMana = free
+	}
+	free -= buyMana
+	if buyHP > free {
+		buyHP = free
+	}
 	return
 }
 
@@ -1171,6 +1186,7 @@ func (sp *Spend) Step(ctx *Ctx) Verdict {
 	}
 	if !sp.opened {
 		ctx.M.MoveStop()
+		snapPNG(ctx, "logs/spend_pre.png") // is the New Stats button even there?
 		ctx.M.UIClick(newStatsBtnX, newStatsBtnY)
 		sp.opened = true
 		sp.clickAt, sp.doorAt = time.Now(), time.Now()
@@ -1204,13 +1220,27 @@ func (sp *Spend) Step(ctx *Ctx) Verdict {
 	if after < before {
 		sp.verified++
 		sp.frozen = 0
-	} else if sp.frozen++; sp.frozen >= 2 {
-		// Two frozen counts retire spending for the session (SPEND, Lexicon).
-		spendWorks.Store(false)
-		ctx.Led.Append(verbs.Outcome{Verb: "spend", Holder: sp.Name(), Result: verbs.ResDeaf,
-			Evidence: fmt.Sprintf("count frozen at %d (verified %d this panel) — belief retired", before, sp.verified)})
-		sp.closePanel(ctx) // ESC only if a spend ever verified — WARNING 4
-		return Abandoned
+	} else {
+		sp.frozen++
+		// PLAN B DOOR after the first frozen click: the New Stats button comes
+		// and goes (photographed present 08:21, absent 09:35) — but farmbot's
+		// -statalloc PROVED the 'c' hotkey opens the char panel on this build,
+		// BaseStats-delta-verified. WARNING 5's dead hotkeys were the
+		// inventory key; 'c' has its own proof. One press, then judge again.
+		if sp.frozen == 1 {
+			ctx.M.PressKey(0x43) // 'C'
+			sp.doorAt = time.Now()
+			sp.clickAt = time.Now()
+			return Running
+		}
+		if sp.frozen >= 3 {
+			// Frozen through both doors: retire for the session (SPEND, Lexicon).
+			spendWorks.Store(false)
+			ctx.Led.Append(verbs.Outcome{Verb: "spend", Holder: sp.Name(), Result: verbs.ResDeaf,
+				Evidence: fmt.Sprintf("count frozen at %d through both doors (verified %d) — belief retired", before, sp.verified)})
+			sp.closePanel(ctx) // ESC only if a spend ever verified — WARNING 4
+			return Abandoned
+		}
 	}
 	sp.clickAt = time.Now()
 	return Running
