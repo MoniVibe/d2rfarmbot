@@ -429,7 +429,12 @@ func (a *Advance) Step(ctx *Ctx) Verdict {
 	// FAR: journey to the door. The live grid marks unloaded rooms blocked, so a far
 	// door often has NO plan yet — blind-stride toward it (rooms stream in on approach)
 	// and regrow the grid every 8s until the planner finds the route.
-	if ed > 12 {
+	// THE DOOR BAND IS PLANNED BY NOBODY (P-5.5a, measured 00:41: path 147,
+	// net 1 — the orbit): within 25 of a border target the live grid LIES
+	// (the unstreamed far side reads as wall), each regrid shifts the clamped
+	// goal, and every re-plan walks a fresh circle. The mouth is strode at
+	// directly — cross() owns the band; the wall-slide handles the posts.
+	if ed > 25 {
 		if a.grid == nil {
 			a.grid = ctx.Grid
 		}

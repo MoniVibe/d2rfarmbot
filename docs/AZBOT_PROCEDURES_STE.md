@@ -408,6 +408,14 @@ precondition.
    gets a thought.
 5. Errand and march movement beyond 12 tiles goes by planner. Real walls
    demand real routing. Slides and arcs are for camp furniture only.
+5a. EXCEPT THE DOOR BAND (the owner, 00:45: "she is allergic to
+   passes... I don't think there's even monsters on the other side"):
+   within 25 of a border target the live grid LIES — the unstreamed
+   far side reads as solid wall, each regrid shifts the clamped goal,
+   and every re-plan walks a fresh circle (measured 00:41: PATHOLOGY
+   orbit, path 147, net 1, for minutes, at full blood, alone). No
+   planner in the band: the mouth is strode at directly, the slide
+   handles the posts, the contact push crosses the ribbon.
 6. On ground that does not pay (gap > 4), the march urgency doubles. The
    march is the experience.
 7. FORCED MARCH (the owner, 2026-07-19: "ignore far away monsters and
