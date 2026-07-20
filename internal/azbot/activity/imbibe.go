@@ -42,7 +42,7 @@ func (im *Imbibe) rite(s *percept.Snapshot, ob data.Object) float64 {
 		return 0.45
 	case percept.HealthWells[ob.Name] && s.Me.HPPct <= 65:
 		return 0.65
-	case percept.ManaWells[ob.Name] && s.Me.MPPct < 50:
+	case percept.ManaWells[ob.Name] && s.Me.MPPct < 50 && s.Me.MaxMana >= 20:
 		return 0.5 // the skill-law is thirsty (P-1.13)
 	}
 	return 0

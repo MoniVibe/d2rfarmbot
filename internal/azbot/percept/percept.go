@@ -27,6 +27,9 @@ type PlayerState struct {
 	Mode   mode.PlayerMode
 	HPPct  int
 	MPPct  int
+	// MaxMana: the pool's true size (fixed-point >>8). A 4-point pool needs no
+	// mana potions and no mana wells (the owner, 04:57: the barbarian).
+	MaxMana int
 	Level  int
 	Gold   int
 	InTown bool
@@ -320,6 +323,12 @@ func (p *Perceptor) Capture() *Snapshot {
 		Mode:       d.PlayerUnit.Mode,
 		HPPct:      d.PlayerUnit.HPPercent(),
 		MPPct:      d.PlayerUnit.MPPercent(),
+		MaxMana: func() int {
+			if v, ok := d.PlayerUnit.FindStat(stat.MaxMana, 0); ok {
+				return v.Value >> 8 // D2 stores max mana fixed-point
+			}
+			return 0
+		}(),
 		Level:      lvl,
 		Gold:       gold,
 		InTown:     d.PlayerUnit.Area.IsTown(),

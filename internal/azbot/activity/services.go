@@ -553,6 +553,9 @@ func plan(s *percept.Snapshot) (buyHP, buyMana int) {
 	if s.Me.BeltSlots <= 4 {
 		wantMana = 1
 	}
+	if s.Me.MaxMana < 20 {
+		wantMana = 0 // a 4-point pool needs no drink (the owner, 04:57: the barb)
+	}
 	wantHP := s.Me.BeltSlots - wantMana
 	buyHP, buyMana = wantHP-s.Me.BeltHP, wantMana-s.Me.BeltMana
 	if buyHP < 0 {
