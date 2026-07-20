@@ -905,6 +905,19 @@ func (a *Advance) cross(ctx *Ctx, d game.Data, me data.Position, tgt data.Positi
 			break
 		}
 	}
+	// A LEARNED DOOR IS AN ENTRANCE, whatever d.Entrances says (22:35, the
+	// FIVE-DEFEAT autopsy: the UP stairs never appear in the entrance unit
+	// list on this mod, so the click ritual — the ONE method proven at cave
+	// mouths — was gated off at this door every single time; all he ever did
+	// there was seam-leap and re-arm. The unit list lies by omission; the
+	// owner's own crossing at this spot is stronger evidence than its silence.)
+	if !hasEnt && hop != 0 && ctx.Mem != nil {
+		var p data.Position
+		if ctx.Mem.GetJSON(BorderKey(ctx.GR.MapSeed(), d.PlayerUnit.Area, hop), &p) && p.X != 0 &&
+			chebyshev(p, tgt) <= 8 {
+			hasEnt = true
+		}
+	}
 	if !hasEnt {
 		// P-2.11(5) THE SEAM LEAP (11:20: "it kind of missed the passage to
 		// it, just hugs the walls"): a walkable border's far side is
