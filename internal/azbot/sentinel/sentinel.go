@@ -71,6 +71,7 @@ func (s *Sentinel) Run(stop <-chan struct{}) {
 	defer t.Stop()
 	var lastDrink time.Time
 	var killHeld bool
+	var killAt time.Time
 	var wasDead bool
 	var lastShift bool
 	lastFocus := true
@@ -89,8 +90,12 @@ func (s *Sentinel) Run(stop <-chan struct{}) {
 		// (0x8000) is level-truth nobody can eat; a normal press spans several
 		// 100ms ticks. killHeld keeps the once-per-press debounce.
 		if realKeyTapped(s.cfg.KillVK) || realKeyDown(s.cfg.KillVK) {
-			if !killHeld {
+			// Hard 1s cooldown (00:03: a held F10 with flickering reads
+			// re-toggled every ~3s — the held-bit fix over-corrected; one
+			// press must mean one toggle, whatever the bits do).
+			if !killHeld && time.Since(killAt) > time.Second {
 				killHeld = true
+				killAt = time.Now()
 				if s.m.Engage.Engaged() {
 					s.m.Disengage()
 				} else {
