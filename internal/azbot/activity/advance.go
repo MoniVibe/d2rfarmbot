@@ -400,6 +400,22 @@ func (a *Advance) Step(ctx *Ctx) Verdict {
 					}
 				}
 			}
+			// THE STAGING RIDE (00:59, the owner: "can you tell why he went to
+			// blood moor?"): wants only looked AHEAD, but the target (UP1) has
+			// no waypoint and Dark Wood is unlit — so no want, no ride, and he
+			// walked the whole overland trek while STONY'S LIT PAD sat one
+			// ride away. The deepest lit pad at-or-behind the current leg is
+			// the on-ramp to an unlit target; ride it, then march.
+			for i := a.idx; i >= 0; i-- {
+				lit := false
+				if ctx.Mem != nil {
+					ctx.Mem.GetJSON(LitKey(charName, a.Itinerary[i].Area), &lit)
+				}
+				if lit && a.Itinerary[i].Area != s.Me.Area {
+					wants = append(wants, a.Itinerary[i].Area)
+					break
+				}
+			}
 			if len(wants) == 0 && time.Since(a.wpAt) > 90*time.Second {
 				wants = probe // bootstrap: one pad visit to learn what's lit
 			}
