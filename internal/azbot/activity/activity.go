@@ -1596,20 +1596,29 @@ func (l *Loot) Demand(s *percept.Snapshot) *arbiter.Demand {
 	// No looting with contact pressure — that is how pickups become deaths. The bid
 	// bar (8) sits OUTSIDE Step's yield bar (6): run 26 logged ~40 grant/done flips
 	// in one second from an enemy standing at 7 — bid thresholds must enclose yield
-	// thresholds or the arbiter churns.
+	// thresholds or the arbiter churns. EXCEPT TREASURE (04:14, the brawler:
+	// "he's skipping uniques" — his kills drop where the next enemies stand,
+	// so an all-loot pressure veto means a brawler never loots): set+ finds
+	// bid through pressure; Step's yield bar still guards the actual grab.
+	pressed := false
 	for _, e := range s.Enemies {
-		if chebyshev(s.Me.Pos, e.Pos) <= 8 {
-			return nil
+		if !e.Walled && chebyshev(s.Me.Pos, e.Pos) <= 8 {
+			pressed = true
+			break
 		}
 	}
 	if it, score, ok := l.pick(s); ok {
+		if pressed && it.Quality < 5 {
+			return nil // ordinary goods can wait out the pressure
+		}
 		// THE TREASURE GRAB: ClassFight starves ClassLoot whenever anything hostile
 		// is within 45 — in the moor that is ALWAYS, so a rare short bow lay ignored
 		// while she volleyed trash (the owner: "she didn't care at all"). Rare+ finds
 		// and ammo-for-a-dry-quiver bid IN the fight class: urgency does the risk
 		// arithmetic — a fight with teeth close still outbids (Fight at contact 5 is
 		// ~0.9), a fight against distant stragglers loses to treasure.
-		treasure := it.Quality >= 6 ||
+		treasure := it.Quality >= 5 || // SET is 5 — the green tier, excluded here for
+			// a second time tonight (P-9.0's twin, found 04:14 on the brawler)
 			(s.Me.Arrows == 0 && (contains(it.Name, "Arrow") || contains(it.Name, "Quiver")))
 		if treasure {
 			return &arbiter.Demand{Who: l.Name(), Class: arbiter.ClassFight,
