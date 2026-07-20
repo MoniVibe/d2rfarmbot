@@ -949,23 +949,48 @@ func (a *Advance) cross(ctx *Ctx, d game.Data, me data.Position, tgt data.Positi
 	// approaches). At a LEARNED warp door the whole hardware burst runs NOW,
 	// inline, once per 20s: nine real clicks base-to-arch inside one held
 	// step, judged by the area like everything else.
-	if learnedDoor && chebyshev(me2, tgt) <= 8 && time.Since(a.burstAt) > 20*time.Second {
+	if learnedDoor && chebyshev(me2, tgt) <= 10 && time.Since(a.burstAt) > 20*time.Second {
 		a.burstAt = time.Now()
-		for _, off := range []data.Position{{X: 0, Y: 0}, {X: 0, Y: -30}, {X: 0, Y: -60},
-			{X: -30, Y: -30}, {X: 30, Y: -30}, {X: -30, Y: 0}, {X: 30, Y: 0},
-			{X: -20, Y: -55}, {X: 20, Y: -55}} {
-			if !ctx.M.RealMenuClick(bx+off.X, by+off.Y) {
-				ctx.Led.Append(verbs.Outcome{Verb: "cross", Holder: a.Name(), Result: verbs.ResRefused,
-					Evidence: "one-shot burst: foreground refused — the owner holds the desktop"})
+		// THE WIDE HOVER HUNT (22:49 screenshot: the UP "mouth" is a CABIN —
+		// the clickable violet doorway renders ~300px from our projection of
+		// the learned fact, which marks where the area FLIPPED, not where the
+		// door DRAWS. Nine blind clicks decorated the wrong wall. The game
+		// itself names the door on hover: sweep a wide grid, believe only an
+		// entrance-type hover, click THAT — posted first, hardware on deafness).
+		found := false
+		for _, dy := range []int{-40, -80, 0, -120, -160, 40} {
+			for dx := -200; dx <= 200 && !found; dx += 33 {
+				cx, cy := bx+dx, by+dy
+				if cx < 20 || cy < 20 || cx > ctx.GR.GameAreaSizeX-20 || cy > ctx.GR.GameAreaSizeY-20 {
+					continue
+				}
+				ctx.M.AimPhysical(cx, cy)
+				time.Sleep(45 * time.Millisecond)
+				hd := ctx.GR.GetData().HoverData
+				if hd.IsHovered && (hd.UnitType == 5 || hd.UnitType == 2) {
+					found = true
+					ctx.Led.Append(verbs.Outcome{Verb: "cross", Holder: a.Name(), Result: verbs.ResDone,
+						Evidence: fmt.Sprintf("hover hunt FOUND the door graphic at offset (%d,%d) type=%d", dx, dy, hd.UnitType)})
+					ctx.M.BareClick(cx, cy)
+					time.Sleep(1500 * time.Millisecond)
+					if ctx.GR.GetData().PlayerUnit.Area != d.PlayerUnit.Area {
+						return // THE DOOR OPENED
+					}
+					ctx.M.RealMenuClick(cx, cy) // posted click deaf: one hardware click at the PROVEN spot
+					time.Sleep(1200 * time.Millisecond)
+					if ctx.GR.GetData().PlayerUnit.Area != d.PlayerUnit.Area {
+						return
+					}
+				}
+			}
+			if found {
 				break
 			}
-			time.Sleep(700 * time.Millisecond)
-			if ctx.GR.GetData().PlayerUnit.Area != d.PlayerUnit.Area {
-				return // THE DOOR OPENED
-			}
 		}
-		ctx.Led.Append(verbs.Outcome{Verb: "cross", Holder: a.Name(), Result: verbs.ResDeaf,
-			Evidence: fmt.Sprintf("one-shot burst at learned door (%d,%d): nine clicks, no transition", tgt.X, tgt.Y)})
+		if !found {
+			ctx.Led.Append(verbs.Outcome{Verb: "cross", Holder: a.Name(), Result: verbs.ResDeaf,
+				Evidence: fmt.Sprintf("hover hunt at learned door (%d,%d): no entrance hover in ±200px — reposition and retry", tgt.X, tgt.Y)})
+		}
 	}
 	sp := spiral(a.clickTry)
 	a.clickTry++
