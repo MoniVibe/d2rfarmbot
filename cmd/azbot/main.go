@@ -2334,12 +2334,22 @@ func main() {
 		// zero outcomes — a mute holder bled him out invisibly). A Survive
 		// holder that writes NOTHING for 2s gets named in the log while it
 		// happens, not exhumed from a black box after.
-		if grant != nil && grant.Demand.Class == arbiter.ClassSurvive &&
-			time.Since(led.LastAppend()) > 2*time.Second && time.Since(stallWarnAt) > 2*time.Second {
-			logger.Warn("SURVIVE STALL — mute holder under blood pressure",
-				"holder", grant.Demand.Who, "silent", time.Since(led.LastAppend()).Round(100*time.Millisecond),
-				"hp", s.Me.HPPct)
-			stallWarnAt = time.Now()
+		// ALL classes, not just Survive (21:18: a fight-class holder pinned
+		// him at one tile for 100+ seconds, invisible to the Survive-only
+		// alarm — the owner saw it before the log did, again). Survive
+		// stalls at 2s; everyone else gets 4s of grace before being named.
+		if grant != nil && time.Since(stallWarnAt) > 2*time.Second {
+			silent := time.Since(led.LastAppend())
+			bar := 4 * time.Second
+			if grant.Demand.Class == arbiter.ClassSurvive {
+				bar = 2 * time.Second
+			}
+			if silent > bar {
+				logger.Warn("STALL — mute holder", "class", grant.Demand.Class.String(),
+					"holder", grant.Demand.Who, "silent", silent.Round(100*time.Millisecond),
+					"hp", s.Me.HPPct, "pos", fmt.Sprintf("(%d,%d)", s.Me.Pos.X, s.Me.Pos.Y))
+				stallWarnAt = time.Now()
+			}
 		}
 		if time.Since(statusAt) > 10*time.Second {
 			// mp/maxmana joined 2026-07-20 11:30 (the owner: "he has about 33
