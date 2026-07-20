@@ -468,20 +468,28 @@ func (a *Advance) Step(ctx *Ctx) Verdict {
 			if litHere {
 				break // in the ledger — no ritual needed, ever again
 			}
-			if ob.IsWaypoint() && chebyshev(s.Me.Pos, ob.Position) <= 40 {
+			if ob.IsWaypoint() && chebyshev(s.Me.Pos, ob.Position) <= 70 {
+				// Radius 40→70, budget 30s→60s (the owner, 13:14: "it also
+				// didn't take the stony waypoint, had enough time to do that"
+				// — he died in the moor an hour later and had to WALK back;
+				// the network node was worth any 70-tile detour that day).
 				if a.wpTouched == nil {
 					a.wpTouched = map[area.ID]time.Time{}
 				}
 				if chebyshev(s.Me.Pos, ob.Position) > 6 {
-					// Bounded approach: 30 s of not reaching the pad concedes it
+					// Bounded approach: 60 s of not reaching the pad concedes it
 					// (a fenced pad must not own the march — the corner lesson).
 					if a.wpWalkAt.IsZero() {
 						a.wpWalkAt = time.Now()
 					}
-					if time.Since(a.wpWalkAt) > 30*time.Second {
+					if time.Since(a.wpWalkAt) > 60*time.Second {
 						a.wpTouched[s.Me.Area] = time.Now()
 						a.wpWalkAt = time.Time{}
 					} else {
+						NavDebug(ctx, ob.Position, "wp-touch")
+						if TravelVault(ctx, ob.Position) { // the pad is worth a leap too
+							return Running
+						}
 						clickStride(ctx, ob.Position, 1200*time.Millisecond, a.Name())
 						return Running
 					}
