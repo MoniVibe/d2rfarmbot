@@ -1968,6 +1968,8 @@ func main() {
 	emaX, emaY := 0.0, 0.0
 	emaRef := data.Position{}
 	emaRefAt := time.Now()
+	cursorItemAt := time.Time{}
+	cursorDropAt := time.Time{}
 	sawInvalid := false
 	wasFocused := true
 	var trail []string // the last moments, for the owner's death reports
@@ -2429,6 +2431,30 @@ func main() {
 			deadmanPos, deadmanAt = data.Position{}, time.Now()
 			emaRefAt = time.Now()
 			continue
+		}
+		// THE CURSOR-ITEM DROP (the owner, 02:13: "inventory open and an item
+		// held by the cursor, locking the bot — all it has to do is lmb to
+		// drop it"). Parking-by-Equip was the polite cure and it starves when
+		// the item has no docket home; every other activity WAITS on
+		// CursorItem — the lock. Three seconds of held item → one LMB at his
+		// feet (a unique gets re-looted by doctrine; junk stays where junk
+		// belongs) → one ESC for the byte-blind bag that identify/equip
+		// opened (the menu sentry cures a stray pause menu within a tick).
+		if s.Me.CursorItem {
+			if cursorItemAt.IsZero() {
+				cursorItemAt = time.Now()
+			}
+			if time.Since(cursorItemAt) > 3*time.Second && time.Since(cursorDropAt) > 10*time.Second &&
+				m.Engage.Engaged() {
+				logger.Warn("watchdog: CURSOR-ITEM DROP — lmb at feet, esc the bag")
+				m.BareClick(gr.GameAreaSizeX/2, gr.GameAreaSizeY/2+140)
+				time.Sleep(400 * time.Millisecond)
+				m.RealEsc()
+				cursorDropAt = time.Now()
+				cursorItemAt = time.Time{}
+			}
+		} else {
+			cursorItemAt = time.Time{}
 		}
 		if time.Since(statusAt) > 10*time.Second {
 			// mp/maxmana joined 2026-07-20 11:30 (the owner: "he has about 33
