@@ -907,7 +907,15 @@ func (a *Advance) cross(ctx *Ctx, d game.Data, me data.Position, tgt data.Positi
 		for _, off := range []data.Position{{X: 0, Y: 0}, {X: 0, Y: -30}, {X: 0, Y: -60},
 			{X: -30, Y: -30}, {X: 30, Y: -30}, {X: -30, Y: 0}, {X: 30, Y: 0},
 			{X: -20, Y: -55}, {X: 20, Y: -55}} {
-			ctx.M.RealMenuClick(bx+off.X, by+off.Y)
+			if !ctx.M.RealMenuClick(bx+off.X, by+off.Y) {
+				// The RealEsc law (20:54): with the owner at the desktop these
+				// hardware clicks were landing in THEIR windows — the "deaf
+				// mouth" was partly clicks that never reached the game. Waits
+				// in writing; the burst re-fires on a later spiral pass.
+				ctx.Led.Append(verbs.Outcome{Verb: "cross", Holder: a.Name(), Result: verbs.ResRefused,
+					Evidence: "arch burst: foreground refused — the owner holds the desktop"})
+				break
+			}
 			time.Sleep(700 * time.Millisecond)
 			if ctx.GR.GetData().PlayerUnit.Area != d.PlayerUnit.Area {
 				return // THE CAVE OPENED — the adopt logic takes it from here

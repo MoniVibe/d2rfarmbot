@@ -230,15 +230,24 @@ func (m *Motor) ModifierAmnesty() {
 // foregrounded — the only input the pause/main menus accept. Screenshot px are physical
 // client px; SendClickRealScreen wants logical screen coords (divide by display scale,
 // add the logical client origin — the relog drill's law, 2026-07-19).
-func (m *Motor) RealMenuClick(shotX, shotY int) {
+// RealMenuClick returns false when the game could not be foregrounded — the
+// RealEsc law extended to clicks (20:54: the cave-mouth arch bursts have been
+// firing hardware clicks into the OWNER'S windows whenever they were at the
+// desktop; the "deaf mouth" was partly deaf because the clicks never reached
+// the game). No verified foreground, no hardware click, ever.
+func (m *Motor) RealMenuClick(shotX, shotY int) bool {
 	if !m.Engage.Engaged() {
-		return
+		return false
 	}
 	m.hid.FocusGame()
+	if !m.hid.GameFocused() {
+		return false
+	}
 	time.Sleep(300 * time.Millisecond)
 	sx := int(float64(shotX)/m.panelScale) + m.hid.WindowLeftX()
 	sy := int(float64(shotY)/m.panelScale) + m.hid.WindowTopY()
 	game.SendClickRealScreen(sx, sy)
+	return true
 }
 
 // RealEsc presses ESC at the OS level with the game foregrounded (pause menu open/close).
@@ -265,13 +274,17 @@ func (m *Motor) RealEsc() bool {
 // SCANCODE event, the exact shape a physical key produces. Three input classes
 // were photographed failing to open the inventory (message press, key-state stub,
 // plain-vk SendInput — runs 33, 37, 38); the panel layer trusts only the scancode.
-func (m *Motor) RealKey(vk uint16) {
+func (m *Motor) RealKey(vk uint16) bool {
 	if !m.Engage.Engaged() {
-		return
+		return false
 	}
 	m.hid.FocusGame()
+	if !m.hid.GameFocused() { // the RealEsc law: no foreground, no keystroke
+		return false
+	}
 	time.Sleep(150 * time.Millisecond)
 	game.SendKeyRealScan(vk)
+	return true
 }
 
 // GameFocused reports whether D2R owns the foreground (Sentinel's focus watch).
