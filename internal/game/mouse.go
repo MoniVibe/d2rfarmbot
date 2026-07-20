@@ -126,6 +126,13 @@ func (hid *HID) AimPhysical(x, y int) {
 	win.SendMessage(hid.gr.HWND, win.WM_NCHITTEST, 0, lParam)
 	win.SendMessage(hid.gr.HWND, win.WM_SETCURSOR, 0x000105A8, 0x2010001)
 	win.PostMessage(hid.gr.HWND, win.WM_MOUSEMOVE, 0, lParam)
+	// DOUBLE-TAP (04:40, the owner: "he just missed her hover a few times —
+	// happens to items and waypoints too"): one pulse races the game's frame
+	// sampling and loses a few percent of the time, on every unit type. A
+	// second pulse one frame later turns a coin-flip edge into near-certainty.
+	time.Sleep(25 * time.Millisecond)
+	win.SendMessage(hid.gr.HWND, win.WM_NCHITTEST, 0, lParam)
+	win.PostMessage(hid.gr.HWND, win.WM_MOUSEMOVE, 0, lParam)
 	iMoveScreen(hid.gr.WindowLeftX+x, hid.gr.WindowTopY+y) // no-op unless -hwmove rel/abs
 }
 
