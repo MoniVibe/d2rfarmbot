@@ -1318,11 +1318,13 @@ func (f *Fight) Step(ctx *Ctx) Verdict {
 		return Running
 
 	case "melee":
-		// Javelin set: stab whatever is in reach — but the HIGHER priority is getting
-		// clear enough to return to the bow. The strike key is the OWNER-DECLARED
-		// melee skill when given (Jab — config beats inference on a scrambled mod).
+		// The strike key is the OWNER-DECLARED melee skill (config beats
+		// inference on a scrambled mod) — and P-1.13 applies to CONTACT too
+		// (the owner, 04:16: "double swing is f3, use it like magic arrows
+		// but melee"): the skill on every swing while mana holds above 10%,
+		// plain attack as the reserve below, no exceptions above 75%.
 		var mk byte
-		if ctx.Cap != nil && ctx.Cap.Contact != nil {
+		if ctx.Cap != nil && ctx.Cap.Contact != nil && s.Me.MPPct > 10 {
 			mk = ctx.Cap.Contact.Key
 		}
 		// A dry bow set is no bow at all: while Arrows==0 the javelins ARE the build —
