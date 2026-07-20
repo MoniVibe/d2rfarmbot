@@ -64,7 +64,7 @@ func (e *errand) reset() {
 // (arrived handled by caller's distance checks; stalled/nopath = give up on goal).
 func (e *errand) walkTo(ctx *Ctx, goal data.Position, who string) (exhausted bool) {
 	if ctx.Grid == nil {
-		slideStride(ctx, goal, 0, 1, who)
+		clickStride(ctx, goal, 1100*time.Millisecond, who) // click gait: his town's fences are as invisible as hers (04:36)
 		return false
 	}
 	if e.j == nil || chebyshev(e.j.Goal, goal) > 4 {
@@ -1615,6 +1615,10 @@ func (rp *Repair) Step(ctx *Ctx) Verdict {
 	}
 	open, dead := rp.e.step(ctx, rp.Name())
 	if dead {
+		// P-4.2a: the abandoned trip stays abandoned (04:36: 'never loaded on
+		// the whole ring' re-bid three times a SECOND while he wall-hugged —
+		// Charsi lives elsewhere on this seed; retry when the world changes).
+		rp.coolAt = time.Now().Add(120 * time.Second)
 		rp.reset()
 		return Abandoned
 	}

@@ -119,8 +119,8 @@ func clickStride(ctx *Ctx, to data.Position, hold time.Duration, who string) {
 	// P-5.9 for the brawler (the owner, 04:33): travel by RIGHT-click with
 	// the melee skill selected — the walk itself engages what it meets.
 	key := byte(0)
-	if brawlerMode && ctx.Cap != nil && ctx.Cap.Contact != nil && ctx.Snap.Me.MPPct > 10 {
-		key = ctx.Cap.Contact.Key
+	if brawlerMode && !ctx.Snap.Me.InTown && ctx.Cap != nil && ctx.Cap.Contact != nil && ctx.Snap.Me.MPPct > 10 {
+		key = ctx.Cap.Contact.Key // FIELD ONLY: a Double Swing near Charsi is not a greeting (04:36)
 	}
 	o := verbs.ClickMove{To: to, Hold: hold, CombatKey: key}.Do(ctx.M, ctx.GR, ctx.P, ctx.Led, who)
 	if o.Result != verbs.ResDone {
