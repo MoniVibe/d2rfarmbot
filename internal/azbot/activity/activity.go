@@ -1355,11 +1355,18 @@ func (f *Fight) Step(ctx *Ctx) Verdict {
 			verbs.Stride{To: f.targetPos, Hold: 700 * time.Millisecond}.Do(ctx.M, ctx.GR, ctx.P, ctx.Led, f.Name())
 			return Running
 		}
-		tid, tpos := f.target, f.targetPos
-		if contact < d {
-			tid, tpos = f.nearestID(s), contactPos // the closest tooth first
+		// THE LOCK AND THE BITER (the owner, 04:19: "meaningfully attack any
+		// creature dumb enough to approach, rather than run back and forth"):
+		// re-picking nearest EVERY step ping-ponged him between half-pursuits.
+		// The brawler LOCKS one victim until it dies; only a creature that
+		// closes to true contact while the lock stands clearly farther earns
+		// the new lock (hysteresis: no flapping between similar ranges).
+		if contact <= 5 && d > contact+3 {
+			if nid := f.nearestID(s); nid != 0 {
+				f.target, f.targetPos = nid, contactPos // the biter IS the fight now
+			}
 		}
-		o := verbs.HoverStrike{Target: tid, TargetPos: tpos, SelectKey: mk, Volley: true}.
+		o := verbs.HoverStrike{Target: f.target, TargetPos: f.targetPos, SelectKey: mk, Volley: true}.
 			Do(ctx.M, ctx.GR, ctx.P, ctx.Led, f.Name())
 		f.assess(o)
 		return Running
