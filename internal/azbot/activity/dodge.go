@@ -107,6 +107,13 @@ func (dg *Dodge) Demand(s *percept.Snapshot) *arbiter.Demand {
 	if !s.Valid || s.Me.InTown || s.Me.HPPct <= 0 {
 		return nil
 	}
+	// P-2.-2 THE BRAWLER'S CREED (the owner, 05:24: "he approaches monsters
+	// then goes back — commit to attacks"): a sidestep that resets his
+	// closing distance costs more blood than the bolt it dodges. A brawler
+	// eats the missile and closes; Breakout keeps the critical eject.
+	if brawlerMode {
+		return nil
+	}
 	// BODY-LOCKED: with 2+ enemies standing ON her, every sidestep is a gain=0 shove
 	// into flesh (run 35's blocked-stride litany) — 350ms of paid paralysis per try.
 	// Inside a ring the answer is violence, not footwork: stand down, let Fight and
