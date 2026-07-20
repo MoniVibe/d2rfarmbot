@@ -197,7 +197,21 @@ beside the shaman, where the ring-yield rule finishes it; and the biter rule
 never steals a raiser lock (adopting the minion that bit him mid-pursuit is
 the resurrection loop wearing a different hat). Landings must be
 map-walkable — a leap cannot be steered mid-air, so unknown terrain is
-refused (stricter than dodge).
+refused (stricter than dodge). Amendments (11:20, the owner's night orders):
+(4) THE TRAVEL GAIT — "if it's trying to get somewhere it could run there
+and leap it": one leap ~12 tiles along the march every 6s (road lookahead
+and door march both), the walk filling the gaps; (5) THE SEAM LEAP — "it
+kind of missed the passage, just hugs the walls": at a walkable border the
+live grid calls the unstreamed far side wall, so leap PAST the border line
+where the MAP grid (the only seam-spanning truth) vouches; (6) THE POOL
+BELONGS TO THE LEAP — three vault whiffs, all mana-dry: on a tiny pool
+(MaxMana<20) the contact skill fires only with no vault to save for, and
+every leap site shares one mana gate (canVault: 50% of a tiny pool, scraps
+of a real one). Silent skill fizzles (right-click costing more than the
+pool holds) are a do-nothing cycle class — the tiny-pool doctrine
+eliminates them. AND THE THIRD AGGRESSION ORDER: a brawler's Fight radius
+is his EYESIGHT (45) on all ground — the corridor contraction never
+applies to him; the march resumes when the field is quiet.
 
 **P-4.9 — THE BELT THAT EATS NOTHING.** A buy is only a RESTOCK if the
 BELT rises. The owned-count delta (belt+bag) proves the purchase happened;

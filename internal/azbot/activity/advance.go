@@ -560,6 +560,12 @@ func (a *Advance) Step(ctx *Ctx) Verdict {
 						}
 					}
 					NavDebug(ctx, look, "road")
+					// P-2.11(4): the road is the best possible runway — leap
+					// along it every 6s and walk the gaps (11:20: "run there
+					// and leap it").
+					if TravelVault(ctx, look) {
+						return Running
+					}
 					clickStride(ctx, look, 1100*time.Millisecond, a.Name())
 					return Running
 				}
@@ -601,6 +607,11 @@ func (a *Advance) Step(ctx *Ctx) Verdict {
 	// goal, and every re-plan walks a fresh circle. The mouth is strode at
 	// directly — cross() owns the band; the wall-slide handles the posts.
 	if ed > 12 {
+		// P-2.11(4): the march leaps too — 12 tiles toward the door every 6s
+		// when the pool affords it; the journey walks the gaps.
+		if TravelVault(ctx, tgt) {
+			return Running
+		}
 		// P-5.5b RETIRED AT 01:45 (nav.png: the map grid does not even COVER
 		// her position — koolo-map world placement LIES on this mod, exactly
 		// as this file's header has always said: topology only, geometry
@@ -824,6 +835,22 @@ func (a *Advance) cross(ctx *Ctx, d game.Data, me data.Position, tgt data.Positi
 		}
 	}
 	if !hasEnt {
+		// P-2.11(5) THE SEAM LEAP (11:20: "it kind of missed the passage to
+		// it, just hugs the walls"): a walkable border's far side is
+		// unstreamed and the live grid calls it wall — the MAP grid is the
+		// only truth that spans the seam (mapWalk's whole purpose). Leap a
+		// few tiles PAST the border line where the map vouches; the wall-hug
+		// dies mid-air.
+		if canVault(ctx, ctx.Snap) && time.Since(travelVaultAt) >= 6*time.Second {
+			if dd := chebyshev(me, tgt); dd >= 1 {
+				land := data.Position{X: tgt.X + (tgt.X-me.X)*5/dd, Y: tgt.Y + (tgt.Y-me.Y)*5/dd}
+				if mapWalk(d, d.PlayerUnit.Area, hop, land) {
+					travelVaultAt = time.Now()
+					verbs.Vault{To: land, Key: ctx.Cap.Vault.Key, SkillID: int(ctx.Cap.Vault.Skill)}.
+						Do(ctx.M, ctx.GR, ctx.P, ctx.Led, a.Name())
+				}
+			}
+		}
 		a.contactAt = time.Time{} // re-arm the contact push instead
 		return
 	}
@@ -844,7 +871,7 @@ func (a *Advance) cross(ctx *Ctx, d game.Data, me data.Position, tgt data.Positi
 	// something"): when the spiral grinds without an entry, one leap AT the
 	// doorstep — clutter between us and the mouth is scenery to a leap, and
 	// the landing re-rolls the approach angle for every click that follows.
-	if a.clickTry == 12 && ctx.Cap != nil && ctx.Cap.Vault != nil {
+	if a.clickTry == 12 && canVault(ctx, ctx.Snap) {
 		land := tgt
 		if land.X > me2.X {
 			land.X -= 2

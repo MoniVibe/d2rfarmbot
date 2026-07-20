@@ -763,6 +763,54 @@ type Breakout struct {
 
 func (b *Breakout) Name() string { return "breakout" }
 
+// canVault: the ONE mana gate for every leap site (11:20: three whiffs, all
+// mana-dry). A tiny pool must hold the leap's cost (~half of 4); a real pool
+// asks only for scraps.
+func canVault(ctx *Ctx, s *percept.Snapshot) bool {
+	if ctx.Cap == nil || ctx.Cap.Vault == nil {
+		return false
+	}
+	if s.Me.MaxMana >= 20 {
+		return s.Me.MPPct >= 10
+	}
+	return s.Me.MPPct >= 50
+}
+
+// travelVaultAt: one clock for the travel gait — leaps spent on distance never
+// starve the combat sites (they run their own cooldowns).
+var travelVaultAt time.Time
+
+// TravelVault — P-2.11(4) (the owner, 11:20: "if it's trying to get somewhere
+// it could run there and leap it"): one leap along the march every 6s when the
+// pool affords it, landing ~12 tiles toward the goal on grid-vouched ground.
+// The walk continues underneath either way; a false return costs nothing.
+func TravelVault(ctx *Ctx, toward data.Position) bool {
+	s := ctx.Snap
+	if s == nil || !s.Valid || s.Me.InTown || !canVault(ctx, s) ||
+		time.Since(travelVaultAt) < 6*time.Second {
+		return false
+	}
+	d := chebyshev(s.Me.Pos, toward)
+	if d < 10 {
+		return false // walking is faster than winding up a jump
+	}
+	hop := 12
+	if d-2 < hop {
+		hop = d - 2
+	}
+	land := data.Position{
+		X: s.Me.Pos.X + (toward.X-s.Me.Pos.X)*hop/d,
+		Y: s.Me.Pos.Y + (toward.Y-s.Me.Pos.Y)*hop/d,
+	}
+	if !vaultLandable(ctx, land) {
+		return false
+	}
+	travelVaultAt = time.Now()
+	verbs.Vault{To: land, Key: ctx.Cap.Vault.Key, SkillID: int(ctx.Cap.Vault.Skill)}.
+		Do(ctx.M, ctx.GR, ctx.P, ctx.Led, "travelvault")
+	return true
+}
+
 // vaultLandable: a leap landing must be ground the grid vouches for — leaping
 // into unknown terrain trades a known ring for an unknown wall (dodge is
 // optimistic about unknowns; a leap is not: it cannot be steered mid-air).
@@ -1006,7 +1054,7 @@ func (b *Breakout) Step(ctx *Ctx) Verdict {
 	// whole reason to exist — jump THROUGH the thinnest sector to walkable
 	// ground and the ring becomes scenery. One try per 8s; a whiff (dry mana,
 	// bad landing) falls through to the shove-and-fight doctrine below.
-	if ctx.Cap != nil && ctx.Cap.Vault != nil && (gapCount > 0 || pinned) &&
+	if canVault(ctx, s) && (gapCount > 0 || pinned) &&
 		time.Since(b.vaultAt) > 8*time.Second {
 		dir := sectorDir[gap]
 		land := data.Position{X: s.Me.Pos.X + dir.X*10, Y: s.Me.Pos.Y + dir.Y*10}
@@ -1162,11 +1210,12 @@ func (f *Fight) Demand(s *percept.Snapshot) *arbiter.Demand {
 	// SHOT — nearby aggro dies, the far field is ignored, and the march owns
 	// the ground between camps.
 	radius := 45
-	if !ExpWorthwhile(s.Me.Level, s.Me.Area) {
+	if !ExpWorthwhile(s.Me.Level, s.Me.Area) && !brawlerMode {
+		// A BRAWLER'S RADIUS IS HIS EYESIGHT (11:20, third aggression order:
+		// "we want it to be more aggressive... it just walks around"): the
+		// corridor contraction never applies to him — anything sighted and
+		// unwalled is a customer; the march resumes when the field is quiet.
 		radius = 10
-		if brawlerMode {
-			radius = 20 // the owner, 10:38: "let this barb clear and proceed"
-		}
 	}
 	if time.Now().Before(crossingBracketUntil) {
 		// P-5.10 refined (10:34 screenshot: THIRTY at the mouth are not
@@ -1233,11 +1282,8 @@ func (f *Fight) Step(ctx *Ctx) Verdict {
 		// ONE radius with Demand (10, reviewer 10): a target that never earned
 		// the bid must never win the selection.
 		radius := 45
-		if !ExpWorthwhile(s.Me.Level, s.Me.Area) {
-			radius = 10
-			if brawlerMode {
-				radius = 20 // clear and proceed (10:38)
-			}
+		if !ExpWorthwhile(s.Me.Level, s.Me.Area) && !brawlerMode {
+			radius = 10 // brawler: eyesight (11:20); others: corridor contraction
 		}
 		if time.Now().Before(crossingBracketUntil) {
 			horde := 0
@@ -1419,8 +1465,19 @@ func (f *Fight) Step(ctx *Ctx) Verdict {
 		// but melee"): the skill on every swing while mana holds above 10%,
 		// plain attack as the reserve below, no exceptions above 75%.
 		var mk byte
-		if ctx.Cap != nil && ctx.Cap.Contact != nil && s.Me.MPPct > 10 {
-			mk = ctx.Cap.Contact.Key
+		if ctx.Cap != nil && ctx.Cap.Contact != nil {
+			// TINY-POOL DOCTRINE (11:20: three vault whiffs, all mana-dry —
+			// Double Swing was drinking the 4-point pool and FIZZLING below
+			// its cost, silent do-nothing right-clicks): on a tiny pool the
+			// skill fires only at a full tank; the pool belongs to the LEAP.
+			// Plain attack is the bread — it costs nothing and always swings.
+			if s.Me.MaxMana >= 20 {
+				if s.Me.MPPct > 10 {
+					mk = ctx.Cap.Contact.Key
+				}
+			} else if s.Me.MPPct >= 95 && (ctx.Cap == nil || ctx.Cap.Vault == nil) {
+				mk = ctx.Cap.Contact.Key // no leap to save for: full tank may swing
+			}
 		}
 		// A dry bow set is no bow at all: while Arrows==0 the javelins ARE the build —
 		// chase and stab instead of kiting toward a weapon that whiffs at air.
@@ -1499,7 +1556,7 @@ func (f *Fight) Step(ctx *Ctx) Verdict {
 		// the shaman and the ring-yield rule above finishes the sentence.
 		// Grid-vouched landing 2 tiles short; one try per 8s, a whiff falls
 		// through to the walking pursuit.
-		if lockIsRaiser && d >= 5 && d <= 16 && ctx.Cap != nil && ctx.Cap.Vault != nil &&
+		if lockIsRaiser && d >= 5 && d <= 16 && canVault(ctx, s) &&
 			time.Since(f.vaultAt) > 8*time.Second {
 			land := f.targetPos
 			if land.X > s.Me.Pos.X {
