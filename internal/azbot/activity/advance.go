@@ -867,7 +867,14 @@ func (a *Advance) cross(ctx *Ctx, d game.Data, me data.Position, tgt data.Positi
 		haveFar := false
 		if hop != 0 && ctx.Mem != nil {
 			var far data.Position
-			if ctx.Mem.GetJSON(BorderKey(ctx.GR.MapSeed(), hop, d.PlayerUnit.Area), &far) && far.X != 0 {
+			// A WARP'S FAR SIDE LIVES IN ANOTHER COORDINATE FRAME (22:55, the
+			// seven-defeat endgame: the UP cabin's far fact sits at (79xx,83xx)
+			// — 2,700 tiles from the door — and the drive committed runs toward
+			// warp-space garbage every approach; for walkable borders the same
+			// math is exactly right, which is why it survived this long). Only
+			// a SAME-FRAME far fact (≤100) may steer the push.
+			if ctx.Mem.GetJSON(BorderKey(ctx.GR.MapSeed(), hop, d.PlayerUnit.Area), &far) && far.X != 0 &&
+				chebyshev(far, tgt) <= 100 {
 				through, haveFar = far, true
 			}
 		}
@@ -889,7 +896,16 @@ func (a *Advance) cross(ctx *Ctx, d game.Data, me data.Position, tgt data.Positi
 				from = data.Position{X: ctx.Grid.OffsetX + ctx.Grid.Width/2, Y: ctx.Grid.OffsetY + ctx.Grid.Height/2}
 			}
 			dir := stepDir(from, tgt)
-			through = data.Position{X: tgt.X + dir.X*6, Y: tgt.Y + dir.Y*6}
+			// THE OWNER'S FOOTSTEPS OUTRANK THE CENTER GUESS: the road fact's
+			// last leg is the PROVEN approach vector through this doorway —
+			// the owner walked it twice; push through along the same line.
+			if hop != 0 && ctx.Mem != nil {
+				var road []data.Position
+				if ctx.Mem.GetJSON(RoadKey(ctx.GR.MapSeed(), d.PlayerUnit.Area, hop), &road) && len(road) >= 2 {
+					dir = stepDir(road[len(road)-2], road[len(road)-1])
+				}
+			}
+			through = data.Position{X: tgt.X + dir.X*8, Y: tgt.Y + dir.Y*8}
 		}
 		// MinGain 1: a 300ms push covers 2-3 tiles by design — the default 4 branded
 		// every honest push "blocked" (cosmetic, but the log must not lie).
