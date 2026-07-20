@@ -1128,7 +1128,17 @@ func (f *Fight) Demand(s *percept.Snapshot) *arbiter.Demand {
 		radius = 10
 	}
 	if time.Now().Before(crossingBracketUntil) {
-		radius = 5 // P-5.10 THE CROSSING BRACKET: lingerers don't own doors
+		// P-5.10 refined (10:34 screenshot: THIRTY at the mouth are not
+		// lingerers): the bracket holds against few; a door CAMP is a fight.
+		horde := 0
+		for _, e := range s.Enemies {
+			if !e.Walled && chebyshev(s.Me.Pos, e.Pos) <= 10 {
+				horde++
+			}
+		}
+		if horde < 6 {
+			radius = 5
+		}
 	}
 	best := radius + 1
 	for _, e := range s.Enemies {
@@ -1186,7 +1196,15 @@ func (f *Fight) Step(ctx *Ctx) Verdict {
 			radius = 10
 		}
 		if time.Now().Before(crossingBracketUntil) {
-			radius = 5 // P-5.10: the door is crossed THROUGH, not besieged
+			horde := 0
+			for _, e := range s.Enemies {
+				if !e.Walled && chebyshev(s.Me.Pos, e.Pos) <= 10 {
+					horde++
+				}
+			}
+			if horde < 6 { // few: cross through. A camp: fight it (10:34).
+				radius = 5
+			}
 		}
 		// PACK-AWARE pick: score = distance + 3×(bodies within 8 of the candidate).
 		// Nearest-first used to elect the CENTER of a 20-stack and she charged it
