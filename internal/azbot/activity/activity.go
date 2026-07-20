@@ -5,6 +5,7 @@ package activity
 
 import (
 	"fmt"
+	"sort"
 	"time"
 
 	"github.com/hectorgimenez/d2go/pkg/data"
@@ -1029,6 +1030,45 @@ func (b *Breakout) Step(ctx *Ctx) Verdict {
 		return Running
 	}
 
+	// THE LEAP OUTRANKS THE PORTAL (the 13:03 death: pinned in a 0x0 box by
+	// 18 bodies for 19 seconds, blood 6→0, and the ring vault NEVER fired —
+	// it sat below the portal-casting branch, and its single landing
+	// candidate refused silently, a rule-zero violation twice over). When no
+	// portal stands, the leap goes FIRST: it is instant, needs no tome, and
+	// lands him outside the jaws instead of diving back through them. Every
+	// sector is tried best-gap-first at three ranges; only a fully-refused
+	// board falls through to the portal, and the refusal is WRITTEN.
+	if len(livePortals) == 0 && canVault(ctx, s) && time.Since(b.vaultAt) > 8*time.Second {
+		counts, _, _ := b.ringSectors(s)
+		order := make([]int, 8)
+		for i := range order {
+			order[i] = i
+		}
+		sort.Slice(order, func(a, bb int) bool { return counts[order[a]] < counts[order[bb]] })
+		leapt := false
+		for _, sec := range order {
+			for _, rng := range []int{10, 13, 7} {
+				dir := sectorDir[sec]
+				land := data.Position{X: s.Me.Pos.X + dir.X*rng, Y: s.Me.Pos.Y + dir.Y*rng}
+				if vaultLandable(ctx, land) {
+					b.vaultAt = time.Now()
+					verbs.Vault{To: land, Key: ctx.Cap.Vault.Key, SkillID: int(ctx.Cap.Vault.Skill)}.
+						Do(ctx.M, ctx.GR, ctx.P, ctx.Led, b.Name())
+					leapt = true
+					break
+				}
+			}
+			if leapt {
+				break
+			}
+		}
+		if leapt {
+			return Running
+		}
+		ctx.Led.Append(verbs.Outcome{Verb: "vault", Holder: b.Name(), Result: verbs.ResRefused,
+			Evidence: "no walkable landing in any sector at 7/10/13 — walled pocket, falling through to portal"})
+	}
+
 	// PREPARE THE EXIT: no portal down yet and things look grim → cast one now.
 	// It persists; fighting continues beside it. This is the "both". THREE casts with
 	// no portal appearing = the tome is EMPTY (0 gold, 0 scrolls — the poverty
@@ -1786,23 +1826,17 @@ func (l *Loot) wanted(s *percept.Snapshot, it percept.ItemRef) float64 {
 		if s.Me.InvFree >= 4 {
 			return 0.9
 		}
-	case it.Quality >= 5: // set/rare/unique: the drops the whole grind is FOR
-		// P-9.0 THE GROUND GATE: any room at all (2 cells) picks these up —
-		// the 8-cell worst-case gate skipped a 1x2 unique wand (the owner,
-		// 23:10), and quality 5 (SET) fell below the old >=6 line entirely.
+	case it.Quality >= 7: // UNIQUE (and crafted) — the only quality tier picked
+		// UNIQUES ONLY (the owner, 13:08: "it also picked some weird items,
+		// like some whites and rares — make it so only uniques are picked for
+		// now"). The set/rare tier (5-6) and the magic tier (4) are OFF the
+		// docket until the owner re-opens them; the naked-rearm and dry-quiver
+		// cases above survive (a weapon in the hand outranks loot doctrine).
 		if s.Me.InvFree >= 2 {
 			return 0.85
 		}
-	case contains(n, "Potion") || contains(n, "Herb"):
-		if s.Me.BeltHP+s.Me.BeltMana < s.Me.BeltSlots || s.Me.InvFree >= 1 {
-			return 0.55
-		}
 	case n == "Gold":
 		return 0.4 // gold has no footprint
-	case it.Quality >= 4: // magic+
-		if gearRoom {
-			return 0.5
-		}
 	}
 	return 0
 }
@@ -1868,7 +1902,7 @@ func (l *Loot) Demand(s *percept.Snapshot) *arbiter.Demand {
 		}
 	}
 	if it, score, ok := l.pick(s); ok {
-		if pressed && it.Quality < 5 {
+		if pressed && it.Quality < 7 { // uniques-only doctrine (13:08)
 			return nil // ordinary goods can wait out the pressure
 		}
 		// THE TREASURE GRAB: ClassFight starves ClassLoot whenever anything hostile
@@ -1877,8 +1911,7 @@ func (l *Loot) Demand(s *percept.Snapshot) *arbiter.Demand {
 		// and ammo-for-a-dry-quiver bid IN the fight class: urgency does the risk
 		// arithmetic — a fight with teeth close still outbids (Fight at contact 5 is
 		// ~0.9), a fight against distant stragglers loses to treasure.
-		treasure := it.Quality >= 5 || // SET is 5 — the green tier, excluded here for
-			// a second time tonight (P-9.0's twin, found 04:14 on the brawler)
+		treasure := it.Quality >= 7 || // uniques-only doctrine (13:08)
 			(s.Me.Arrows == 0 && (contains(it.Name, "Arrow") || contains(it.Name, "Quiver")))
 		if treasure {
 			return &arbiter.Demand{Who: l.Name(), Class: arbiter.ClassFight,
