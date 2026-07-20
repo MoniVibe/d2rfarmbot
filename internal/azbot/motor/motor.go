@@ -242,13 +242,23 @@ func (m *Motor) RealMenuClick(shotX, shotY int) {
 }
 
 // RealEsc presses ESC at the OS level with the game foregrounded (pause menu open/close).
-func (m *Motor) RealEsc() {
+// RealEsc returns false when the game could not be foregrounded — Windows
+// refuses foreground-steal while the OWNER actively uses another window, and
+// FocusGame's silent give-up meant every retry sprayed a hardware ESC into
+// whatever the owner had focused (13:49: relog's "three ESCs and the byte
+// never rose" — the byte never rose because the ESCs closed the owner's
+// dialogs instead). No verified foreground, no keystroke, ever.
+func (m *Motor) RealEsc() bool {
 	if !m.Engage.Engaged() {
-		return
+		return false
 	}
 	m.hid.FocusGame()
+	if !m.hid.GameFocused() {
+		return false
+	}
 	time.Sleep(200 * time.Millisecond)
 	game.SendKeyReal(0x1B)
+	return true
 }
 
 // RealKey presses any key at the OS level with the game foregrounded — as a

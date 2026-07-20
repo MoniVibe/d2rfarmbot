@@ -102,8 +102,18 @@ func (rl *Relog) Step(ctx *Ctx) Verdict {
 		// sometimes closed a panel instead, and Save+Exit clicked into nothing.)
 		MenuSanctionUntil = time.Now().Add(30 * time.Second) // the sentry stands down for the ritual
 		menuUp := false
+		focusRefused := false
 		for e := 0; e < 3 && !menuUp; e++ {
-			ctx.M.RealEsc()
+			if !ctx.M.RealEsc() {
+				// FOREGROUND REFUSED (13:49): the OWNER owns the desktop —
+				// Windows blocks the steal while they actively use another
+				// window, and yesterday's "proven live" relog was proven
+				// overnight with nobody at the keyboard. Do NOT spray more
+				// ESCs at their windows; wait politely and retry when the
+				// game is next focused.
+				focusRefused = true
+				break
+			}
 			for w := 0; w < 8; w++ {
 				time.Sleep(200 * time.Millisecond)
 				if ctx.GR.GetData().OpenMenus.QuitMenu {
@@ -111,6 +121,12 @@ func (rl *Relog) Step(ctx *Ctx) Verdict {
 					break
 				}
 			}
+		}
+		if focusRefused {
+			ctx.Led.Append(verbs.Outcome{Verb: "relog", Holder: rl.Name(), Result: verbs.ResRefused,
+				Evidence: "foreground refused — the owner holds the desktop; relog waits for focus"})
+			rl.nextAt = time.Now().Add(2 * time.Minute)
+			return Abandoned
 		}
 		if !menuUp {
 			ctx.Led.Append(verbs.Outcome{Verb: "relog", Holder: rl.Name(), Result: verbs.ResDeaf,
