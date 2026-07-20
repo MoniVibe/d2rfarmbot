@@ -103,7 +103,11 @@ func (rl *Relog) Step(ctx *Ctx) Verdict {
 		MenuSanctionUntil = time.Now().Add(30 * time.Second) // the sentry stands down for the ritual
 		menuUp := false
 		focusRefused := false
-		for e := 0; e < 3 && !menuUp; e++ {
+		// Six tries, not three (13:52: foreground VERIFIED, three ESCs
+		// delivered, byte never rose — with the owner in-game, panels may be
+		// standing, and state-dependent ESC closes those first; three tries
+		// can all be spent on panel-closes before the quit menu ever rises).
+		for e := 0; e < 6 && !menuUp; e++ {
 			if !ctx.M.RealEsc() {
 				// FOREGROUND REFUSED (13:49): the OWNER owns the desktop —
 				// Windows blocks the steal while they actively use another
@@ -130,8 +134,9 @@ func (rl *Relog) Step(ctx *Ctx) Verdict {
 		}
 		if !menuUp {
 			ctx.Led.Append(verbs.Outcome{Verb: "relog", Holder: rl.Name(), Result: verbs.ResDeaf,
-				Evidence: "three ESCs and the quit-menu byte never rose"})
-			break
+				Evidence: "six delivered ESCs and the quit-menu byte never rose (owner mid-game?) — backing off 3m"})
+			rl.nextAt = time.Now().Add(3 * time.Minute)
+			return Abandoned
 		}
 		ctx.M.RealMenuClick(relogExitBtnX, relogExitBtnY)
 		// Phase 2: wait for the world to unload.
