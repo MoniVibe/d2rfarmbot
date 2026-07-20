@@ -180,6 +180,13 @@ type Advance struct {
 	// map target he never even got NEAR — the maze-interior phantom detector.
 	farStallKey string
 	farStallN   int
+	// THE MAZE SEARCH RELAY (02:54, the UP loop: far journey NoPath through
+	// unstreamed rooms, fallback clicks judged by the LYING map grid, orbit,
+	// breaker, town — forever): repeated far-journey refusals hand the march
+	// to the coverage search, which walks REAL streamed ground until rooms
+	// arrive and the planner can route.
+	farBlockN   int
+	searchUntil time.Time
 }
 
 // FrontierFor is the P-5F hint: the itinerary leg the march owns at this
@@ -876,6 +883,12 @@ func (a *Advance) Step(ctx *Ctx) Verdict {
 	// goal, and every re-plan walks a fresh circle. The mouth is strode at
 	// directly — cross() owns the band; the wall-slide handles the posts.
 	if ed > 12 {
+		// THE MAZE SEARCH RELAY: while armed, the coverage search owns the
+		// march — real streamed ground, least-visited bearings, no map lies.
+		if time.Now().Before(a.searchUntil) {
+			a.search(ctx, d, me)
+			return Running
+		}
 		// P-2.11(4): the march leaps too — 12 tiles toward the door every 6s
 		// when the pool affords it; the journey walks the gaps.
 		if TravelVault(ctx, tgt) {
@@ -900,12 +913,25 @@ func (a *Advance) Step(ctx *Ctx) Verdict {
 		}
 		st := a.j.Step(ctx.M, ctx.P, ctx.Led)
 		if st.State == journey.NoPath || st.State == journey.Stalled {
+			a.farBlockN++
+			if a.farBlockN >= 4 {
+				// Four refusals through unstreamed rooms: the planner is blind
+				// here (a maze). 20s of coverage search streams the rooms in.
+				a.farBlockN = 0
+				a.searchUntil = time.Now().Add(20 * time.Second)
+				ctx.Led.Append(verbs.Outcome{Verb: "nav", Holder: a.Name(), Result: verbs.ResRefused,
+					Evidence: fmt.Sprintf("far journey blind at (%d,%d) — the maze search takes the march 20s", tgt.X, tgt.Y)})
+				a.search(ctx, d, me)
+				return Running
+			}
 			if time.Since(a.regridAt) > 8*time.Second && ctx.Regrid != nil {
 				a.grid = ctx.Regrid()
 				a.regridAt = time.Now()
 				a.j = journey.New(ctx.GR, a.grid, clampToGrid(tgt, a.grid), a.Name())
 			}
 			clickStride(ctx, tgt, 1200*time.Millisecond, a.Name())
+		} else {
+			a.farBlockN = 0
 		}
 		return Running
 	}
