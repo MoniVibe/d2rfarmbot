@@ -111,6 +111,14 @@ type Advance struct {
 	Itinerary []Leg
 
 	idx        int // current position on the itinerary (highest adopted)
+	// frontier: THE CAMPAIGN'S FRONT LINE (the owner, 02:16: "should we have
+	// a specific goal rather than just rampage constantly?") — the deepest
+	// leg EVER reached, persisted per character (campaign.<char>). A fresh
+	// process in Cold Plains still knows the war stands at Black Marsh: the
+	// target is the frontier's next leg, and the march ROUTES there through
+	// learned doors instead of re-adopting wherever it happens to stand.
+	frontier     int
+	frontierRead bool
 	tgtFromMap bool // current border target came from the LYING map oracle (strike accounting)
 	// visited: search's coverage ledger — 20-boxes walked, per area, process-
 	// lifetime (survives town re-entries; the same-spots loop, 21:50).
@@ -168,7 +176,7 @@ func (a *Advance) FrontierFor(level int) area.ID {
 	if len(a.Itinerary) == 0 {
 		return 0
 	}
-	ni := minInt(a.idx+1, len(a.Itinerary)-1)
+	ni := minInt(a.campIdx()+1, len(a.Itinerary)-1)
 	if level >= a.Itinerary[ni].MinLevel {
 		return a.Itinerary[ni].Area
 	}
@@ -230,6 +238,9 @@ func (a *Advance) Demand(s *percept.Snapshot) *arbiter.Demand {
 		return nil
 	}
 	idx := a.place(s.Me.Area)
+	if a.frontier > idx {
+		idx = a.frontier // the campaign's front line outranks his feet (02:16)
+	}
 	if idx >= len(a.Itinerary)-1 && s.Me.Area == a.Itinerary[len(a.Itinerary)-1].Area {
 		return nil // the march is complete — grind the summit
 	}
@@ -255,11 +266,37 @@ func (a *Advance) Demand(s *percept.Snapshot) *arbiter.Demand {
 		Commit:  arbiter.Commitment{MinHold: 4 * time.Second}}
 }
 
+// campIdx: the campaign index — the deeper of where he STANDS and where the
+// war has REACHED. Targets derive from this; routing still starts from his feet.
+func (a *Advance) campIdx() int {
+	if a.frontier > a.idx {
+		return a.frontier
+	}
+	return a.idx
+}
+
+func (a *Advance) syncFrontier(ctx *Ctx) {
+	if ctx.Mem == nil {
+		return
+	}
+	ch := ctx.GR.GetData().PlayerUnit.Name
+	if !a.frontierRead {
+		a.frontierRead = true
+		ctx.Mem.GetJSON(fmt.Sprintf("campaign.%s", ch), &a.frontier)
+	}
+	if a.idx > a.frontier {
+		a.frontier = a.idx
+		ctx.Mem.PutJSON(fmt.Sprintf("campaign.%s", ch), memory.ScopeForever,
+			memory.Provenance{Source: "measured", Evidence: fmt.Sprintf("front line advanced to leg %d (%d)", a.idx, int(a.Itinerary[a.idx].Area))}, a.frontier)
+	}
+}
+
 func (a *Advance) Step(ctx *Ctx) Verdict {
 	s := ctx.Snap
 	if !s.Valid {
 		return Running
 	}
+	a.syncFrontier(ctx)
 	CarryReach(ctx) // P-5.9: the march walks with the bow out
 	if a.lastArea == 0 {
 		a.lastArea = s.Me.Area
@@ -338,7 +375,7 @@ func (a *Advance) Step(ctx *Ctx) Verdict {
 	if a.idx >= len(a.Itinerary)-1 && s.Me.Area == a.Itinerary[a.idx].Area {
 		return Done
 	}
-	next := a.Itinerary[minInt(a.idx+1, len(a.Itinerary)-1)]
+	next := a.Itinerary[minInt(a.campIdx()+1, len(a.Itinerary)-1)]
 
 	// P-10 THE NETWORK BEATS THE ROAD (the owner, 23:35: "she's not taking
 	// the waypoint to cold plains"): in town, before any gate march, ride the
@@ -387,7 +424,7 @@ func (a *Advance) Step(ctx *Ctx) Verdict {
 			// forever — the ledger needs a way to fill itself). A probe that
 			// opens the panel records the pad lit; a whiff just cools 90s.
 			var wants, probe []area.ID
-			for i := len(a.Itinerary) - 1; i > a.idx; i-- {
+			for i := len(a.Itinerary) - 1; i > a.campIdx(); i-- {
 				if s.Me.Level >= a.Itinerary[i].MinLevel {
 					lit := false
 					if ctx.Mem != nil {
@@ -406,7 +443,7 @@ func (a *Advance) Step(ctx *Ctx) Verdict {
 			// walked the whole overland trek while STONY'S LIT PAD sat one
 			// ride away. The deepest lit pad at-or-behind the current leg is
 			// the on-ramp to an unlit target; ride it, then march.
-			for i := a.idx; i >= 0; i-- {
+			for i := a.campIdx(); i >= 0; i-- {
 				lit := false
 				if ctx.Mem != nil {
 					ctx.Mem.GetJSON(LitKey(charName, a.Itinerary[i].Area), &lit)
