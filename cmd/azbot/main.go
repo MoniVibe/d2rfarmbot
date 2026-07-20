@@ -2173,7 +2173,10 @@ func main() {
 						stuckRunPos, stuckRunN = s.Me.Pos, 0
 					}
 					stuckRunN++
-					if stuckRunN >= 4 && !s.Me.InTown && cap.TownTP != nil &&
+					// A held door earns a LONG leash (03:44: the breaker fired
+					// at ~20s while the arch-click ritual needed ~30 to reach
+					// its turn — the medicine kept outrunning the cure).
+					if stuckRunN >= 10 && !s.Me.InTown && cap.TownTP != nil &&
 						time.Since(lastPocketTP) > 120*time.Second {
 						logger.Warn("watchdog: POCKET BREAKER (door) — the portal is the door now")
 						activity.MarkPortalHot(4 * time.Minute)

@@ -791,7 +791,7 @@ func (a *Advance) cross(ctx *Ctx, d game.Data, me data.Position, tgt data.Positi
 	// answered posted clicks). The mod's menus read hardware input only;
 	// its warp mouths may too. Every 15th spiral try: ONE focused real
 	// click at the mouth, judged like everything else by the area change.
-	if a.clickTry == 15 || a.clickTry == 30 {
+	if a.clickTry == 6 || a.clickTry == 20 || a.clickTry == 34 {
 		// ACROSS THE ARCH, not one pixel (03:42: center-projection hardware
 		// clicks fired and nothing entered — a cave's clickable region often
 		// lives in the arch above the base). Nine real clicks, base to arch.
