@@ -1940,6 +1940,11 @@ func main() {
 	stuckRunN := 0
 	stuckRunPos := data.Position{}
 	lastPocketTP := time.Time{}
+	// Rotating escape bearings (the advisor's ladder: novel headings — the
+	// old fixed NW fling was the door pendulum).
+	escBearings := []data.Position{{X: 20, Y: 0}, {X: 14, Y: 14}, {X: 0, Y: 20}, {X: -14, Y: 14},
+		{X: -20, Y: 0}, {X: -14, Y: -14}, {X: 0, Y: -20}, {X: 14, Y: -14}}
+	escDirIdx := 0
 	for time.Now().Before(deadline) {
 		// WARNING 7 (revised twice; the owner 2026-07-19 night: "we didn't need to
 		// focus diablo before"): the bot NEVER steals focus AND never stops playing
@@ -2152,8 +2157,37 @@ func main() {
 					cooldowns[v.CoolWho] = v.CoolUntil
 				}
 				arb.Release()
-				// One decisive displacement in a fresh bearing breaks the physical loop.
-				esc := data.Position{X: s.Me.Pos.X - 20, Y: s.Me.Pos.Y - 20}
+				// One decisive displacement in a fresh bearing breaks the physical
+				// loop — a ROTATING bearing (the advisor's ladder: novel headings),
+				// never the old fixed NW that pendulumed her off every door mouth.
+				escDirIdx = (escDirIdx + 3) % 8
+				eb := escBearings[escDirIdx]
+				esc := data.Position{X: s.Me.Pos.X + eb.X, Y: s.Me.Pos.Y + eb.Y}
+				if (v.Pathology == watchdog.Stuck || v.Pathology == watchdog.Orbit) &&
+					activity.CrossingHot() {
+					// P-5.10: the door owns motion. The watchdog's escape fling
+					// from a door mouth was the pendulum — count toward the
+					// breaker (a frozen world at a door still ends in a TP home)
+					// but throw no footwork of its own.
+					if chebyshev(s.Me.Pos, stuckRunPos) > 10 {
+						stuckRunPos, stuckRunN = s.Me.Pos, 0
+					}
+					stuckRunN++
+					if stuckRunN >= 4 && !s.Me.InTown && cap.TownTP != nil &&
+						time.Since(lastPocketTP) > 120*time.Second {
+						logger.Warn("watchdog: POCKET BREAKER (door) — the portal is the door now")
+						activity.MarkPortalHot(4 * time.Minute)
+						verbs.CastSelf{Key: cap.TownTP.Key}.Do(m, gr, p, led, "watchdog")
+						time.Sleep(2200 * time.Millisecond)
+						if s2 := p.Capture(); s2.Valid && len(s2.Portals) > 0 {
+							verbs.EnterPortal{Target: s2.Portals[0].ID, TargetPos: s2.Portals[0].Pos}.
+								Do(m, gr, p, led, "watchdog")
+						}
+						lastPocketTP = time.Now()
+						stuckRunN = 0
+					}
+					continue
+				}
 				if v.Pathology == watchdog.Stuck || v.Pathology == watchdog.Orbit {
 					// THE POCKET BREAKER (01:23: pinned in a Stony pen, every local
 					// maneuver a wiggle inside the box): four stucks in one 10-box

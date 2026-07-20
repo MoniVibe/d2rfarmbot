@@ -406,7 +406,8 @@ func (a *Advance) Step(ctx *Ctx) Verdict {
 	// pad into a swarm): a pad within 25 on the field march is TOUCHED before
 	// the march proceeds — the ritual is seconds, the network is forever.
 	// Fight still preempts by class; this fires only while the march holds.
-	if !s.Me.InTown && time.Since(a.wpTouched[s.Me.Area]) > 10*time.Minute {
+	if !s.Me.InTown && time.Since(a.wpTouched[s.Me.Area]) > 10*time.Minute &&
+		time.Since(a.wpAt) > 60*time.Second { // she just RODE here — the pad is provably lit (03:29)
 		dd := ctx.GR.GetData()
 		// The map oracle names the pad here too — a 40-tile detour to light a
 		// permanent network node pays for itself forever.
@@ -776,6 +777,16 @@ func (a *Advance) cross(ctx *Ctx, d game.Data, me data.Position, tgt data.Positi
 	if hd.IsHovered && (hd.UnitType == 5 || hd.UnitType == 2) {
 		ctx.M.BareClick(bx+sp.X, by+sp.Y)
 		time.Sleep(1000 * time.Millisecond) // the click starts a walk-and-enter
+	}
+	// THE STATIC-CLICK LAW, finally challenged (03:31: three tiles from the
+	// Underground Passage, a minute of stucks, a breaker TP from the very
+	// doorstep — the farmbot era FENCED every cave because id=0 stairs never
+	// answered posted clicks). The mod's menus read hardware input only;
+	// its warp mouths may too. Every 15th spiral try: ONE focused real
+	// click at the mouth, judged like everything else by the area change.
+	if a.clickTry == 15 || a.clickTry == 30 {
+		ctx.M.RealMenuClick(bx, by)
+		time.Sleep(1200 * time.Millisecond)
 	}
 	if a.clickTry > 40 { // a full spiral with no confirmed hover: restart the ritual
 		a.contactAt, a.clickTry = time.Time{}, 0

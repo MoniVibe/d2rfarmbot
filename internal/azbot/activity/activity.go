@@ -210,6 +210,11 @@ var carryReachAt time.Time
 // portals alone and the march re-enters by the gate on its own ground.
 var hotPortalUntil time.Time
 
+// CrossingHot: P-5.10's bracket, readable by the executive — while the march
+// holds a door, the watchdog's fixed-vector escape flings are the pendulum
+// (03:26 nav: NW fling + walk back, forever); footwork belongs to the drive.
+func CrossingHot() bool { return time.Now().Before(crossingBracketUntil) }
+
 // MarkPortalHot: P-2.10 for callers outside the package (the pocket breaker,
 // 02:28: it TP'd her out of the pen and Return rode the standing portal
 // straight back INTO the pen — "pops a tp, goes in, immediately comes back").
