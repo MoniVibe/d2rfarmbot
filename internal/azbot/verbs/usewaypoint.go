@@ -207,12 +207,17 @@ func (uw UseWaypoint) Do(m *motor.Motor, gr *game.MemoryReader, p *percept.Perce
 			break
 		}
 	}
-	if dest == 0 {
-		groundClose()
-		o.Result = ResWhiff
-		o.Evidence = fmt.Sprintf("no wanted destination lit (%d lit on this tab)", len(avail))
-		led.Append(o)
-		return o
+	// THE LIST MAY NOT VETO THE RIDE (photo 03:23: three destinations lit,
+	// AvailableWaypoints read zero — the sixth broken byte on this mod).
+	// With a standing panel, the wants are clicked by KNOWN row order,
+	// deepest first: an unlit row is a harmless no-op, a lit row rides, and
+	// the area change is the only judge that never lied.
+	cands := uw.Want
+	if dest != 0 {
+		cands = []area.ID{dest}
+	}
+	if len(cands) > 3 {
+		cands = cands[:3]
 	}
 
 	// RIDE: row click scaled by the client height ratio, swept because no
@@ -221,70 +226,76 @@ func (uw UseWaypoint) Do(m *motor.Motor, gr *game.MemoryReader, p *percept.Perce
 	// flag true, NO panel on screen — our own queued approach-click closed it
 	// within 300ms and the rows fired into the void). Verify before each
 	// click; re-open on evaporation.
-	addr := area.WPAddresses[dest]
 	scale := float64(gr.GameAreaSizeY) / 720.0
 	rx := int(200.0 * scale)
-	for _, dyOff := range []int{0, 12, -12, 24} {
-		if !gr.GetData().OpenMenus.Waypoint {
-			// Evaporated: one quiet re-open (the pad is at her feet), then verify.
-			time.Sleep(400 * time.Millisecond) // let any queued clicks land first
-			reopened := false
-			for r := 0; r < 2 && !reopened; r++ {
-				dd := gr.GetData()
-				me2 := dd.PlayerUnit.Position
-				rbx := int(float32((wp.Position.X-me2.X)-(wp.Position.Y-me2.Y))*19.8) + gr.GameAreaSizeX/2
-				rby := int(float32((wp.Position.X-me2.X)+(wp.Position.Y-me2.Y))*9.9) + gr.GameAreaSizeY/2
-				m.AimPhysical(rbx, rby)
-				time.Sleep(60 * time.Millisecond)
-				if hd := gr.GetData().HoverData; hd.IsHovered && hd.UnitID == wp.ID {
-					m.ClickLeft(rbx, rby)
-					dl := time.Now().Add(2500 * time.Millisecond)
-					for time.Now().Before(dl) {
-						time.Sleep(150 * time.Millisecond)
-						if gr.GetData().OpenMenus.Waypoint {
-							reopened = true
-							break
+	for _, cand := range cands {
+		addr, okAddr := area.WPAddresses[cand]
+		if !okAddr {
+			continue
+		}
+		dest = cand
+		for _, dyOff := range []int{0, 12, -12} {
+			if !gr.GetData().OpenMenus.Waypoint {
+				// Evaporated: one quiet re-open (the pad is at her feet), then verify.
+				time.Sleep(400 * time.Millisecond) // let any queued clicks land first
+				reopened := false
+				for r := 0; r < 2 && !reopened; r++ {
+					dd := gr.GetData()
+					me2 := dd.PlayerUnit.Position
+					rbx := int(float32((wp.Position.X-me2.X)-(wp.Position.Y-me2.Y))*19.8) + gr.GameAreaSizeX/2
+					rby := int(float32((wp.Position.X-me2.X)+(wp.Position.Y-me2.Y))*9.9) + gr.GameAreaSizeY/2
+					m.AimPhysical(rbx, rby)
+					time.Sleep(60 * time.Millisecond)
+					if hd := gr.GetData().HoverData; hd.IsHovered && hd.UnitID == wp.ID {
+						m.ClickLeft(rbx, rby)
+						dl := time.Now().Add(2500 * time.Millisecond)
+						for time.Now().Before(dl) {
+							time.Sleep(150 * time.Millisecond)
+							if gr.GetData().OpenMenus.Waypoint {
+								reopened = true
+								break
+							}
 						}
 					}
 				}
+				if !reopened {
+					continue // next sweep iteration retries the whole cycle
+				}
+				time.Sleep(250 * time.Millisecond)
 			}
-			if !reopened {
-				continue // next sweep iteration retries the whole cycle
+			ry := int((158.0+41.0*float64(addr.Row-1))*scale) + dyOff
+			m.AimPhysical(rx, ry)
+			time.Sleep(60 * time.Millisecond)
+			if !gr.GetData().OpenMenus.Waypoint {
+				continue // evaporated between aim and click: never click the void
 			}
-			time.Sleep(250 * time.Millisecond)
-		}
-		ry := int((158.0+41.0*float64(addr.Row-1))*scale) + dyOff
-		m.AimPhysical(rx, ry)
-		time.Sleep(60 * time.Millisecond)
-		if !gr.GetData().OpenMenus.Waypoint {
-			continue // evaporated between aim and click: never click the void
-		}
-		// One photo per session under a VERIFIED-standing panel — the honest
-		// row measurement (the 01:52 photo showed grass because the panel had
-		// already evaporated).
-		if dyOff == 0 {
-			if img := gr.Screenshot(); img != nil {
-				if f, err := os.Create("logs/wp_panel_open.png"); err == nil {
-					_ = png.Encode(f, img)
-					f.Close()
+			// One photo per session under a VERIFIED-standing panel — the honest
+			// row measurement (the 01:52 photo showed grass because the panel had
+			// already evaporated).
+			if dyOff == 0 {
+				if img := gr.Screenshot(); img != nil {
+					if f, err := os.Create("logs/wp_panel_open.png"); err == nil {
+						_ = png.Encode(f, img)
+						f.Close()
+					}
 				}
 			}
-		}
-		m.BareClick(rx, ry)
-		dl := time.Now().Add(4 * time.Second)
-		extended := false
-		for time.Now().Before(dl) {
-			time.Sleep(150 * time.Millisecond)
-			now := gr.GetData().PlayerUnit.Area
-			if now == 0 && !extended {
-				dl = dl.Add(3 * time.Second) // load screen: the ride is happening
-				extended = true
-			}
-			if now != 0 && now != start {
-				o.Result = ResDone
-				o.Evidence = fmt.Sprintf("rode the network %d -> %d (wanted %d)", int(start), int(now), int(dest))
-				led.Append(o)
-				return o
+			m.BareClick(rx, ry)
+			dl := time.Now().Add(4 * time.Second)
+			extended := false
+			for time.Now().Before(dl) {
+				time.Sleep(150 * time.Millisecond)
+				now := gr.GetData().PlayerUnit.Area
+				if now == 0 && !extended {
+					dl = dl.Add(3 * time.Second) // load screen: the ride is happening
+					extended = true
+				}
+				if now != 0 && now != start {
+					o.Result = ResDone
+					o.Evidence = fmt.Sprintf("rode the network %d -> %d (wanted %d)", int(start), int(now), int(dest))
+					led.Append(o)
+					return o
+				}
 			}
 		}
 	}
