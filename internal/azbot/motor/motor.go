@@ -341,9 +341,19 @@ func (m *Motor) PressKey(k byte) {
 
 // ClickRight: world right-click (message path — proven reliable on this build).
 func (m *Motor) ClickRight(x, y int) {
-	if m.Engage.Engaged() {
-		m.hid.Click(game.RightButton, x, y)
+	if !m.Engage.Engaged() {
+		return
 	}
+	// THE OVERRIDE LAW, RIGHT HAND (13:19: a vault whiff with mp RISING —
+	// the leap never cast; the click fired into the void): ClickLeft has
+	// carried the VK_LBUTTON key-state override since the farmbot
+	// interactClick era ("left needs the override treatment"), and the right
+	// button never got the same medicine. Attack skills tolerated it; Leap —
+	// a movement skill the game validates harder — plausibly does not.
+	_ = m.gi.OverrideGetKeyState(0x02) // VK_RBUTTON
+	m.hid.Click(game.RightButton, x, y)
+	_ = m.gi.RestoreGetKeyState()
+	m.ModifierAmnesty()
 }
 
 // ClickLeft: the proven world left-click — VK_LBUTTON key-state overrides around the
