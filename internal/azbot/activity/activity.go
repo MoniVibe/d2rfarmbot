@@ -1126,6 +1126,9 @@ func (f *Fight) Demand(s *percept.Snapshot) *arbiter.Demand {
 	radius := 45
 	if !ExpWorthwhile(s.Me.Level, s.Me.Area) {
 		radius = 10
+		if brawlerMode {
+			radius = 20 // the owner, 10:38: "let this barb clear and proceed"
+		}
 	}
 	if time.Now().Before(crossingBracketUntil) {
 		// P-5.10 refined (10:34 screenshot: THIRTY at the mouth are not
@@ -1194,6 +1197,9 @@ func (f *Fight) Step(ctx *Ctx) Verdict {
 		radius := 45
 		if !ExpWorthwhile(s.Me.Level, s.Me.Area) {
 			radius = 10
+			if brawlerMode {
+				radius = 20 // clear and proceed (10:38)
+			}
 		}
 		if time.Now().Before(crossingBracketUntil) {
 			horde := 0
@@ -1412,7 +1418,18 @@ func (f *Fight) Step(ctx *Ctx) Verdict {
 		// hits whatever stands in the arc, no hover, no sweep, 350ms cadence.
 		// When one body drops, the next is already in range: the transition
 		// disappears. HoverStrike remains the PURSUIT verb only.
-		if contact <= 3 {
+		lockIsRaiser := false
+		for _, e := range s.Enemies {
+			if e.ID == f.target && raisers[e.NPC] {
+				lockIsRaiser = true
+				break
+			}
+		}
+		if contact <= 3 && !lockIsRaiser {
+			// THE RING YIELDS TO THE NECROMANCER (10:38: he ground the same
+			// fallen forever while the shaman rezzed behind — P-1.15 bypassed
+			// by the ring-queue shortcut). A raiser lock is PURSUED through
+			// the ring; ordinary rings get the sweepless positional swings.
 			f.strike(ctx, f.nearestID(s), contactPos, mk)
 			return Running
 		}
