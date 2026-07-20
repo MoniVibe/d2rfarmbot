@@ -2010,6 +2010,15 @@ func main() {
 		}
 		s := p.Capture()
 		if !s.Valid || !m.Engage.Engaged() {
+			// THE WATCHER NEVER SLEEPS (01:12, the owner: "i even entered dark
+			// wood" — and the cartographer was DEAF because this gate skipped
+			// perception while they drove; their first crossing taught nothing
+			// and the second recorded only by toggle luck). Perception is
+			// read-only: record the owner's crossings and crumbs hands-off —
+			// shepherding is a TEACHING MODE now, guaranteed, not a coin flip.
+			if s.Valid {
+				recordCrossing(s)
+			}
 			sawInvalid = sawInvalid || !s.Valid
 			time.Sleep(200 * time.Millisecond)
 			continue
