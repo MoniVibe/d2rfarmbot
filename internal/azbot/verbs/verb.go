@@ -56,19 +56,30 @@ type Outcome struct {
 // Ledger is an in-memory ring + sink hook. The memory store persists what needs
 // scope>tick; the ring feeds in-band consumers (blacklists, reports).
 type Ledger struct {
-	mu   sync.Mutex
-	ring []Outcome
-	max  int
-	Sink func(Outcome) // optional; called synchronously under no lock guarantees
+	mu     sync.Mutex
+	ring   []Outcome
+	max    int
+	lastAt time.Time
+	Sink   func(Outcome) // optional; called synchronously under no lock guarantees
 }
 
 func NewLedger(max int) *Ledger { return &Ledger{max: max} }
+
+// LastAppend reports when ANY outcome was last written — the executive's
+// liveness pulse (the 13:03 death: six Survive grants, 26 seconds, ZERO
+// outcomes — a mute holder bled out invisibly; rule zero at death scale).
+func (l *Ledger) LastAppend() time.Time {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	return l.lastAt
+}
 
 func (l *Ledger) Append(o Outcome) {
 	if o.At.IsZero() {
 		o.At = time.Now()
 	}
 	l.mu.Lock()
+	l.lastAt = time.Now()
 	l.ring = append(l.ring, o)
 	if len(l.ring) > l.max {
 		l.ring = l.ring[len(l.ring)-l.max:]

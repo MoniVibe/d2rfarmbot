@@ -1087,6 +1087,14 @@ func (b *Breakout) Step(ctx *Ctx) Verdict {
 	// no portal appearing = the tome is EMPTY (0 gold, 0 scrolls — the poverty
 	// spiral); stop pretending and fight the gap instead (measured: pinned 0x0
 	// re-casting into nothing while the ring closed).
+	// THE DESPERATION LADDER NEVER RUNS DRY (13:03: castTries exhausted
+	// earlier in the fight, then the ring closed and the cast branch was
+	// dead FOREVER while he bled 100→0 through ten drinks). At the hard
+	// floor the counter resets — a dying man re-tries his tome every cycle
+	// of the ladder; the poverty spiral is bounded by the 2.5s pacing alone.
+	if hardFloor && b.castTries >= 3 && time.Since(b.castAt) > 5*time.Second {
+		b.castTries = 0
+	}
 	if len(livePortals) == 0 && ctx.Cap != nil && ctx.Cap.TownTP != nil && b.castTries < 3 &&
 		(hardFloor || s.Me.HealPots == 0 || near >= 5) &&
 		time.Since(b.castAt) > 2500*time.Millisecond {
@@ -1728,6 +1736,12 @@ func volleyAt(ctx *Ctx, pos data.Position, key byte, skipSelect bool) {
 		by = ctx.GR.GameAreaSizeY - 20
 	}
 	ctx.M.MoveStop()
+	// EVERY VOLLEY WRITES (rule zero at death scale, 13:03: six Survive
+	// grants, 26 seconds, ZERO ledger outcomes — whether he was fighting
+	// mutely or standing mutely was UNKNOWABLE from the log). One line per
+	// swing; the post-mortem reads the fight instead of guessing it.
+	ctx.Led.Append(verbs.Outcome{Verb: "volley", Holder: "volley", Result: verbs.ResDone,
+		Evidence: fmt.Sprintf("at (%d,%d) key=%d", pos.X, pos.Y, key)})
 	if key != 0 {
 		if !skipSelect {
 			ctx.M.PressKey(key)

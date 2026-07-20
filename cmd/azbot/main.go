@@ -1947,6 +1947,7 @@ func main() {
 	wdCheckAt := time.Time{}
 	deadline := time.Now().Add(time.Duration(*seconds) * time.Second)
 	statusAt := time.Time{}
+	stallWarnAt := time.Time{}
 	sawInvalid := false
 	wasFocused := true
 	var trail []string // the last moments, for the owner's death reports
@@ -2327,6 +2328,18 @@ func main() {
 		if v != activity.Running {
 			logger.Info("verdict", "activity", grant.Demand.Who, "verdict", map[activity.Verdict]string{activity.Done: "done", activity.Abandoned: "abandoned"}[v])
 			arb.Release()
+		}
+		// THE STALL ALARM (the owner, session 2: "bouts of idleness while
+		// surrounded by monsters"; 13:03 anatomy: six Survive grants, 26s,
+		// zero outcomes — a mute holder bled him out invisibly). A Survive
+		// holder that writes NOTHING for 2s gets named in the log while it
+		// happens, not exhumed from a black box after.
+		if grant != nil && grant.Demand.Class == arbiter.ClassSurvive &&
+			time.Since(led.LastAppend()) > 2*time.Second && time.Since(stallWarnAt) > 2*time.Second {
+			logger.Warn("SURVIVE STALL — mute holder under blood pressure",
+				"holder", grant.Demand.Who, "silent", time.Since(led.LastAppend()).Round(100*time.Millisecond),
+				"hp", s.Me.HPPct)
+			stallWarnAt = time.Now()
 		}
 		if time.Since(statusAt) > 10*time.Second {
 			// mp/maxmana joined 2026-07-20 11:30 (the owner: "he has about 33
