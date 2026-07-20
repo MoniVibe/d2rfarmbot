@@ -83,11 +83,13 @@ func (h HoverStrike) Do(m *motor.Motor, gr *game.MemoryReader, p *percept.Percep
 			probes = append(probes, [2]int{dx, dy})
 		}
 	}
+	inBounds := 0
 	for _, pr := range probes {
 		cx, cy := bx+pr[0], by+pr[1]
 		if cx < 20 || cy < 20 || cx > gr.GameAreaSizeX-20 || cy > gr.GameAreaSizeY-20 {
 			continue
 		}
+		inBounds++
 		hidAim(m, cx, cy)
 		time.Sleep(30 * time.Millisecond)
 		hd := gr.GetData().HoverData
@@ -103,7 +105,17 @@ func (h HoverStrike) Do(m *motor.Motor, gr *game.MemoryReader, p *percept.Percep
 	}
 	if !confirmed {
 		o.Result = ResWhiff
-		o.Evidence = "no hover confirmation on target"
+		if inBounds == 0 {
+			// Night-2 audit finding 1: every probe out of bounds skipped every
+			// sleep — the whole sweep cost ~0ms, the caller re-invoked at tick
+			// rate, and the log drowned (16 identical whiffs in one second).
+			// An off-screen target is a POSITIONING problem, and the evidence
+			// finally says so.
+			o.Evidence = "target projection off-screen — no probe possible"
+		} else {
+			o.Evidence = "no hover confirmation on target"
+		}
+		time.Sleep(120 * time.Millisecond) // a whiff must never be free (the 16/s storm)
 		led.Append(o)
 		return o
 	}

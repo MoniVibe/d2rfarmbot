@@ -305,6 +305,15 @@ func NewWorld() {
 	fleeFatigueUntil = time.Time{}
 	bloodRing = nil // a load-screen gap would read as a phantom drop rate
 	worldGhosts = 0 // the poison died with the world it poisoned (P-4.8a)
+	// Night-2 audit finding 7: these globals survived relogs — a fresh world
+	// inherited the old one's cursed ground, cools, and hunger windows, and a
+	// relog taken to ESCAPE a poisoned map still disbelieved the new map's
+	// real exit. Everything the old world learned about itself dies with it.
+	breakerSites = nil
+	fightCoolUntil = time.Time{}
+	crossingBracketUntil = time.Time{}
+	vaultHungerUntil = time.Time{}
+	marchLawfulUntil = time.Time{}
 }
 
 // CarryReach — P-5.9 THE MARCH CARRIES THE REACH TOOL (the owner, at the
@@ -792,6 +801,16 @@ var vaultHungerUntil time.Time
 // march starves.
 var fightCoolUntil time.Time
 
+// marchLawfulUntil — THE MARCH HINT (owner, night 2: "driven by progress
+// rather than run around killing randomly"): stamped by Advance.Demand every
+// tick it lawfully bids. While fresh, Fight contracts to the 10-tile corridor
+// on ALL ground — the wide hunt exists only when grinding is the mission.
+var marchLawfulUntil time.Time
+
+// canVault is PURE now (night-2 audit finding 5: a side-effecting predicate
+// probed every travel tick re-armed the 4s mana-hunger window perpetually and
+// benched the contact skill for whole marches). Sites that genuinely stood
+// down FOR a leap call noteVaultHunger themselves.
 func canVault(ctx *Ctx, s *percept.Snapshot) bool {
 	if ctx.Cap == nil || ctx.Cap.Vault == nil {
 		return false
@@ -800,12 +819,13 @@ func canVault(ctx *Ctx, s *percept.Snapshot) bool {
 	if s.Me.MaxMana < 8 {
 		need = 50
 	}
-	if s.Me.MPPct >= need {
-		return true
-	}
-	vaultHungerUntil = time.Now().Add(4 * time.Second)
-	return false
+	return s.Me.MPPct >= need
 }
+
+// noteVaultHunger: a COMBAT leap site (ring escape, raiser vault) found the
+// pool short — the contact skill stands down 4s so the pool refills for the
+// leap. Travel gaits never call this: a march is not worth muting the swing.
+func noteVaultHunger() { vaultHungerUntil = time.Now().Add(4 * time.Second) }
 
 // travelVaultAt: one clock for the travel gait — leaps spent on distance never
 // starve the combat sites (they run their own cooldowns).
@@ -1222,6 +1242,12 @@ type Fight struct {
 	// "bow skill" the calibrator proved may be IDENTIFY wearing an attack's ID (the
 	// owner watched her arm it). A skill that never makes anyone flinch is demoted —
 	// plain attack always works.
+	// THE BLIND BRAWLER (night 2, the 02:27 log: hundreds of hoverstrike
+	// whiffs in Cold Plains — the mod's hover oracle goes dark for minutes
+	// while positional volleys provably kill): a run of consecutive whiffs
+	// benches the hover pump entirely and the fight runs on march-swings.
+	hoverWhiffRun   int
+	hoverBlindUntil time.Time
 	rangedShots  int
 	rangedFlinch int
 	rangedDead   bool
@@ -1288,14 +1314,14 @@ func (f *Fight) Demand(s *percept.Snapshot) *arbiter.Demand {
 	// SHOT — nearby aggro dies, the far field is ignored, and the march owns
 	// the ground between camps.
 	radius := 45
-	if !ExpWorthwhile(s.Me.Level, s.Me.Area) {
+	if !ExpWorthwhile(s.Me.Level, s.Me.Area) || time.Now().Before(marchLawfulUntil) {
 		// THE CORRIDOR LAW (owner, 02:35 night 2: "killing only monsters in
-		// its way, but otherwise prioritizing progressing the map"): on
-		// outleveled ground the corridor binds EVERYONE, brawler included.
-		// The old brawler exemption was tuned when Cold Plains was food — at
-		// level 16 the 45-tile eyesight is a leash: every pack preempts the
-		// march by class and he farms nothing for hours. Aggression on worthy
-		// ground stays 45; conquered ground belongs to the march.
+		// its way, but otherwise prioritizing progressing the map"; extended
+		// act-wide the same night: "driven by progress rather than run
+		// around killing randomly"): while the march lawfully bids, the
+		// 10-tile corridor binds EVERYONE, everywhere, brawler included.
+		// The 45-tile eyesight exists only when grinding IS the mission —
+		// under-leveled for the next leg, Advance mute, XP the objective.
 		radius = 10
 	}
 	if time.Now().Before(crossingBracketUntil) {
@@ -1363,8 +1389,8 @@ func (f *Fight) Step(ctx *Ctx) Verdict {
 		// ONE radius with Demand (10, reviewer 10): a target that never earned
 		// the bid must never win the selection.
 		radius := 45
-		if !ExpWorthwhile(s.Me.Level, s.Me.Area) {
-			radius = 10 // THE CORRIDOR LAW: conquered ground belongs to the march
+		if !ExpWorthwhile(s.Me.Level, s.Me.Area) || time.Now().Before(marchLawfulUntil) {
+			radius = 10 // THE CORRIDOR LAW: the march owns every tick it lawfully bids
 		}
 		if time.Now().Before(crossingBracketUntil) {
 			horde := 0
@@ -1655,6 +1681,10 @@ func (f *Fight) Step(ctx *Ctx) Verdict {
 		// the shaman and the ring-yield rule above finishes the sentence.
 		// Grid-vouched landing 2 tiles short; one try per 8s, a whiff falls
 		// through to the walking pursuit.
+		if lockIsRaiser && d >= 5 && d <= 16 && ctx.Cap != nil && ctx.Cap.Vault != nil &&
+			!canVault(ctx, s) {
+			noteVaultHunger() // a REAL leap want found the pool short: save it
+		}
 		if lockIsRaiser && d >= 5 && d <= 16 && canVault(ctx, s) &&
 			time.Since(f.vaultAt) > 8*time.Second {
 			land := f.targetPos
@@ -1686,12 +1716,39 @@ func (f *Fight) Step(ctx *Ctx) Verdict {
 		// different hat — the shaman rezzes the biter's brothers while he
 		// turns his back on it.
 		if contact <= 5 && d > contact+3 && !lockIsRaiser {
-			if nid := f.nearestID(s); nid != 0 {
+			if nid := f.nearestID(s); nid != 0 && nid != f.target {
 				f.target, f.targetPos = nid, contactPos // the biter IS the fight now
+				// Audit finding 10: the old lock's evidence budget must not
+				// convict the fresh one — counters are per-victim.
+				f.noEvid, f.volleys = 0, 0
 			}
+		}
+		// THE BLIND BRAWLER: with the hover oracle benched, the fight runs
+		// entirely on positional volleys — no pump, no whiff log spam, the
+		// same 350ms cadence that provably kills (gold rose all through the
+		// 02:27 whiff storm; the volleys were doing all the work anyway).
+		if time.Now().Before(f.hoverBlindUntil) {
+			f.strike(ctx, f.target, f.targetPos, mk)
+			return Running
 		}
 		o := verbs.HoverStrike{Target: f.target, TargetPos: f.targetPos, SelectKey: mk, Volley: true}.
 			Do(ctx.M, ctx.GR, ctx.P, ctx.Led, f.Name())
+		if o.Result == verbs.ResWhiff {
+			f.hoverWhiffRun++
+			if f.hoverWhiffRun >= 20 {
+				f.hoverWhiffRun = 0
+				f.hoverBlindUntil = time.Now().Add(60 * time.Second)
+				ctx.Led.Append(verbs.Outcome{Verb: "fight", Holder: f.Name(), Result: verbs.ResRefused,
+					Evidence: "hover oracle dark 20 straight — BLIND BRAWLER 60s, positional volleys only"})
+			}
+		} else if o.Result == verbs.ResDone {
+			// Decay, not amnesty (audit finding 9): a 15-whiff, 1-hit,
+			// repeat storm must still reach the bench.
+			f.hoverWhiffRun -= 3
+			if f.hoverWhiffRun < 0 {
+				f.hoverWhiffRun = 0
+			}
+		}
 		if o.Result == verbs.ResWhiff && time.Since(f.lastStrikeAt) >= 350*time.Millisecond {
 			// THE WHIFF STILL SWINGS (the owner, 11:15: "still kind of runs
 			// around instead of killing"): 31 hover whiffs in barb29's ten

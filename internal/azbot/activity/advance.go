@@ -175,6 +175,7 @@ type Advance struct {
 	rerouteCool   time.Time
 	rerouteCastAt time.Time
 	rerouteTries  int
+	clearAt       time.Time // clearing gets a deadline (audit finding 4)
 }
 
 // FrontierFor is the P-5F hint: the itinerary leg the march owns at this
@@ -213,6 +214,11 @@ func (a *Advance) resetLeg(at data.Position) {
 	a.contactAt, a.clickTry = time.Time{}, 0
 	a.legStart = at
 	a.extRooms, a.extAt = nil, time.Time{}
+	// NIGHT-2 AUDIT FINDING 6: roadS was monotonic per key and never reset —
+	// after one traversal every later attempt at the same leg started at the
+	// road's END and the proven crumb trail was skipped for the process's
+	// whole life. A fresh leg replays its road from the trailhead.
+	a.roadKey, a.roadS = "", 0
 }
 
 // place peeks at the itinerary position for an area without mutating state.
@@ -262,6 +268,13 @@ func (a *Advance) Demand(s *percept.Snapshot) *arbiter.Demand {
 	if !s.Me.InTown && !ExpWorthwhile(s.Me.Level, s.Me.Area) {
 		urg = 0.4 // outleveled ground pays nothing: the march itself is the best exp here
 	}
+	// THE MARCH HINT (owner, night 2: "driven by progress rather than run
+	// around killing randomly" — the ENTIRE act): whenever the march is
+	// level-lawful and bidding, Fight contracts to the 10-tile corridor
+	// everywhere, not just on outleveled ground. The 45-tile hunt exists
+	// only when grinding IS the mission (under-leveled: this Demand returns
+	// nil above and the hint goes stale in 2 s).
+	marchLawfulUntil = time.Now().Add(2 * time.Second)
 	// THE RIDE OUTRANKS THE ROAD (03:38: 'she's running blood moor again' —
 	// while Advance cooled between ride attempts, Travel 0.15/Return 0.35 won
 	// ticks and marched her out the gate on foot). In town with a plausible
@@ -292,7 +305,12 @@ func (a *Advance) syncFrontier(ctx *Ctx) {
 		a.frontierRead = true
 		ctx.Mem.GetJSON(fmt.Sprintf("campaign.%s", ch), &a.frontier)
 	}
-	if a.idx > a.frontier {
+	// NIGHT-2 AUDIT FINDING 9: the ratchet must be LEVEL-LAWFUL — a mis-ride
+	// or row misclick into a too-deep area used to set the front line there
+	// forever, and Demand's MinLevel gate then muted Advance entirely while
+	// the reroute kept declaring him "behind the front".
+	if a.idx > a.frontier && ctx.Snap != nil && ctx.Snap.Valid &&
+		ctx.Snap.Me.Level >= a.Itinerary[a.idx].MinLevel {
 		a.frontier = a.idx
 		ctx.Mem.PutJSON(fmt.Sprintf("campaign.%s", ch), memory.ScopeForever,
 			memory.Provenance{Source: "measured", Evidence: fmt.Sprintf("front line advanced to leg %d (%d)", a.idx, int(a.Itinerary[a.idx].Area))}, a.frontier)
@@ -353,7 +371,7 @@ func (a *Advance) Step(ctx *Ctx) Verdict {
 		// CROSSING IS NOT ARRIVAL (Travel's ribbon law, finally ported): before the
 		// next leg gets a thought, push CLEAR of the door — onward, in the crossing's
 		// own measured direction (from the far side's fact through to here).
-		a.clearing, a.clearDoor = true, s.Me.Pos
+		a.clearing, a.clearDoor, a.clearAt = true, s.Me.Pos, time.Now()
 		a.clearDir = data.Position{X: 1}
 		if ctx.Mem != nil && prev != 0 {
 			var far data.Position
@@ -366,6 +384,14 @@ func (a *Advance) Step(ctx *Ctx) Verdict {
 	a.pendN = 0
 	a.lastArea = s.Me.Area
 	if a.clearing {
+		// NIGHT-2 AUDIT FINDING 4: no deadline + default-east clearDir meant a
+		// walled east side push-strode forever (waypoint landings have no
+		// border fact, so the fallback direction fired on every ride). Five
+		// seconds is every honest clear; after that the leg clock judges.
+		if time.Since(a.clearAt) > 5*time.Second {
+			a.clearing = false
+			return Done
+		}
 		me := s.Me.Pos
 		crossingBracketUntil = time.Now().Add(3 * time.Second) // P-5.10: the push-clear is part of the crossing
 		// SIGNED forward clearance, not euclidean distance (the advisor: a
@@ -397,7 +423,11 @@ func (a *Advance) Step(ctx *Ctx) Verdict {
 		a.rerouteBegan = time.Time{}
 		a.rerouteCool = time.Now().Add(3 * time.Minute)
 	}
-	if !s.Me.InTown && ctx.Cap != nil && ctx.Cap.TownTP != nil && time.Now().After(a.rerouteCool) {
+	// NIGHT-2 AUDIT FINDING 7: rerouting while the town ride is cooling burns
+	// a TP charge to bounce town→portal→field and marches anyway — the reroute
+	// only makes sense when the ride it feeds is actually available.
+	if !s.Me.InTown && ctx.Cap != nil && ctx.Cap.TownTP != nil && time.Now().After(a.rerouteCool) &&
+		time.Since(a.wpAt) > 90*time.Second {
 		if a.rerouteBegan.IsZero() {
 			cur := a.place(s.Me.Area)
 			deeper := area.ID(0)
@@ -594,6 +624,14 @@ func (a *Advance) Step(ctx *Ctx) Verdict {
 						}
 						return Running // a new area: the adopt logic takes it from here
 					}
+					// NIGHT-2 AUDIT FINDING 2: one missed pad click used to buy
+					// 90 s of overland marching with a lit deep pad standing
+					// (the owner: "not walk into blood moor while it has
+					// waypoints"). A WHIFF is a cheap miss — retry in ~10 s.
+					// Deaf rides (panel stood, rows dead) keep the full cool.
+					if o.Result == verbs.ResWhiff {
+						a.wpAt = time.Now().Add(-80 * time.Second)
+					}
 					// whiff/deaf/refused: the gate march resumes below
 				}
 			}
@@ -655,10 +693,20 @@ func (a *Advance) Step(ctx *Ctx) Verdict {
 				// to stony field"): the field pad carries the same wants as the
 				// town ride — the open is a RIDE when something deeper is lit,
 				// and remains a touch when nothing is.
+				// NIGHT-2 AUDIT FINDING 5: unfiltered deepest-first wants met
+				// UseWaypoint's 3-row truncation — three padless/unlit deep
+				// areas crowded out the actually-lit destination and the field
+				// ride silently never fired. Lit-ledger first, like the town.
 				var wants []area.ID
-				for i := len(a.Itinerary) - 1; i > a.idx; i-- {
+				for i := len(a.Itinerary) - 1; i > a.campIdx(); i-- {
 					if s.Me.Level >= a.Itinerary[i].MinLevel {
-						wants = append(wants, a.Itinerary[i].Area)
+						lit := false
+						if ctx.Mem != nil {
+							ctx.Mem.GetJSON(LitKey(ctx.GR.GetData().PlayerUnit.Name, a.Itinerary[i].Area), &lit)
+						}
+						if lit {
+							wants = append(wants, a.Itinerary[i].Area)
+						}
 					}
 				}
 				verbs.UseWaypoint{Want: wants}.Do(ctx.M, ctx.GR, ctx.P, ctx.Led, a.Name())
@@ -1035,9 +1083,16 @@ func (a *Advance) cross(ctx *Ctx, d game.Data, me data.Position, tgt data.Positi
 			// P-5.3a: a known far side arms THE DRIVE — one committed run at a
 			// point beyond it, deaf to the flickering reads, instead of 300ms
 			// read-reactive pushes that the seam turns into an oscillator.
-			// (Lane scan retired 01:45 with the rest of map-geometry: the
-			// grids are misaligned on this mod. The drive runs on MEASURED
-			// facts alone; the slide handles the posts.)
+			// NIGHT-2 AUDIT FINDING 1: this branch set only driveAt and armed
+			// NOTHING — a.driving/driveTgt/driveFrom were never assigned
+			// anywhere, the whole drive was dead code, and at every learned
+			// door he stood motionless through the push window (the door
+			// idling the owner watched all night). The drive finally drives.
+			me := d.PlayerUnit.Position
+			dir := stepDir(me, through)
+			a.driving = true
+			a.driveFrom = me
+			a.driveTgt = data.Position{X: through.X + dir.X*10, Y: through.Y + dir.Y*10}
 			a.driveAt = time.Now()
 			return
 		}

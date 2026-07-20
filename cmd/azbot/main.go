@@ -1991,7 +1991,17 @@ func main() {
 	escBearings := []data.Position{{X: 20, Y: 0}, {X: 14, Y: 14}, {X: 0, Y: 20}, {X: -14, Y: 14},
 		{X: -20, Y: 0}, {X: -14, Y: -14}, {X: 0, Y: -20}, {X: 14, Y: -14}}
 	escDirIdx := 0
+	lastTick := time.Time{}
 	for time.Now().Before(deadline) {
+		// THE TICK HAS A FLOOR (night-2 audit finding 10): the granted path had
+		// no sleep at all — the executive busy-spun Capture+Observe+Step at
+		// maximum rate, spraying sub-350ms no-op cycles and periodically
+		// stalling on the 6s grid rebuild mid-fight. 40ms floor ≈ 25 ticks/s:
+		// faster than any verb needs, calmer than any spin.
+		if dt := time.Since(lastTick); dt < 40*time.Millisecond {
+			time.Sleep(40*time.Millisecond - dt)
+		}
+		lastTick = time.Now()
 		// WARNING 7 (revised twice; the owner 2026-07-19 night: "we didn't need to
 		// focus diablo before"): the bot NEVER steals focus AND never stops playing
 		// for lack of it. In-game input is posted window messages + the injector's

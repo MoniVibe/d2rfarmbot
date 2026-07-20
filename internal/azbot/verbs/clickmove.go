@@ -97,19 +97,29 @@ func (cm ClickMove) Do(m *motor.Motor, gr *game.MemoryReader, p *percept.Percept
 	}
 	m.AimPhysical(bx, by)
 	time.Sleep(45 * time.Millisecond)
-	if cm.CombatKey == 0 {
-		if hd := gr.GetData().HoverData; hd.IsHovered {
-			// A unit under the click point turns the move into an attack/talk —
-			// nudge the aim and re-check once; if still owned, refuse honestly.
-			by += 24
-			m.AimPhysical(bx, by)
-			time.Sleep(45 * time.Millisecond)
-			if hd2 := gr.GetData().HoverData; hd2.IsHovered {
-				o.Result = ResRefused
-				o.Evidence = "every aim point hovered a unit — a click would strike, not walk"
-				led.Append(o)
-				return o
+	// THE PORTAL AMBUSH (night 2, 02:31 + 02:35: two silent field→town trips
+	// with no verb logged — old corpse/escape portals stand near doors, and a
+	// march click that lands on their sprite is a ride home the log can't
+	// even see). A hovered PORTAL is never a bonus: dodge it under any key.
+	isPortalHover := func(id data.UnitID) bool {
+		for i := range d.Objects {
+			if d.Objects[i].ID == id {
+				return d.Objects[i].IsPortal() || d.Objects[i].IsRedPortal()
 			}
+		}
+		return false
+	}
+	if hd := gr.GetData().HoverData; hd.IsHovered && (cm.CombatKey == 0 || isPortalHover(hd.UnitID)) {
+		// A unit under the click point turns the move into an attack/talk/ride —
+		// nudge the aim and re-check once; if still owned, refuse honestly.
+		by += 24
+		m.AimPhysical(bx, by)
+		time.Sleep(45 * time.Millisecond)
+		if hd2 := gr.GetData().HoverData; hd2.IsHovered && (cm.CombatKey == 0 || isPortalHover(hd2.UnitID)) {
+			o.Result = ResRefused
+			o.Evidence = "every aim point hovered a unit/portal — a click would strike or ride, not walk"
+			led.Append(o)
+			return o
 		}
 	}
 	LastWaystation = way

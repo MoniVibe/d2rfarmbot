@@ -117,6 +117,7 @@ func (uw UseWaypoint) Do(m *motor.Motor, gr *game.MemoryReader, p *percept.Perce
 	}
 	{
 		opened := false
+		clickedEver := false
 		for try := 0; try < 3 && !opened; try++ {
 			dd := gr.GetData()
 			me := dd.PlayerUnit.Position
@@ -147,6 +148,7 @@ func (uw UseWaypoint) Do(m *motor.Motor, gr *game.MemoryReader, p *percept.Perce
 				}
 			}
 			if clicked {
+				clickedEver = true
 				// The click may start a WALK to the pad — the wait extends
 				// while she is still closing distance (up to 8s total).
 				dl := time.Now().Add(3500 * time.Millisecond)
@@ -164,11 +166,22 @@ func (uw UseWaypoint) Do(m *motor.Motor, gr *game.MemoryReader, p *percept.Perce
 						dl = time.Now().Add(1500 * time.Millisecond) // still walking: keep faith
 					}
 				}
+			} else if try < 2 {
+				// RE-ROLL THE ANGLE (night-2 audit finding 3: three sweeps from
+				// the same standing spot are one sweep done thrice — the hover
+				// fan that missed once misses identically). One ground step
+				// toward the pad changes every projection before the retry.
+				m.BareClick(bx, by+30)
+				time.Sleep(700 * time.Millisecond)
 			}
 		}
 		if !opened {
 			o.Result = ResWhiff
-			o.Evidence = "pad clicked but the panel never opened"
+			if clickedEver {
+				o.Evidence = "pad clicked but the panel never opened"
+			} else {
+				o.Evidence = "hover never confirmed on the pad — no click ever fired"
+			}
 			led.Append(o)
 			return o
 		}
@@ -277,10 +290,8 @@ func (uw UseWaypoint) Do(m *motor.Motor, gr *game.MemoryReader, p *percept.Perce
 				time.Sleep(250 * time.Millisecond)
 			}
 			ry := int((158.0+41.0*float64(addr.Row-1))*scale) + dyOff
-			m.AimPhysical(rx, ry)
-			time.Sleep(60 * time.Millisecond)
 			if !gr.GetData().OpenMenus.Waypoint {
-				continue // evaporated between aim and click: never click the void
+				continue // evaporated before the click: never click the void
 			}
 			// One photo per session under a VERIFIED-standing panel — the honest
 			// row measurement (the 01:52 photo showed grass because the panel had
@@ -293,7 +304,12 @@ func (uw UseWaypoint) Do(m *motor.Motor, gr *game.MemoryReader, p *percept.Perce
 					}
 				}
 			}
-			m.BareClick(rx, ry)
+			// THE PANEL TAKES THE PATCHED CURSOR (night-2 audit finding 4: rows
+			// were clicked with the world lane while every PROVEN panel
+			// interaction on this mod — repair, skill tree, Akara's shop —
+			// needs the uiClick recipe; a deaf row walked all candidates and
+			// reported ResDeaf while the ride was one honest click away).
+			m.UIClick(rx, ry)
 			dl := time.Now().Add(4 * time.Second)
 			extended := false
 			for time.Now().Before(dl) {

@@ -72,13 +72,24 @@ func (v Vault) Do(m *motor.Motor, gr *game.MemoryReader, p *percept.Perceptor, l
 		by = gr.GameAreaSizeY - 20
 	}
 	mpBefore := gr.GetData().PlayerUnit.MPPercent()
+	me = gr.GetData().PlayerUnit.Position // the honest origin: sampled at the click, not before the clamp math
 	m.ClickRight(bx, by)
-	// Displacement postcondition: a leap that fired moves the body within its
-	// animation. 900ms window (650 judged real leaps as whiffs — the arc plus
-	// landing recovery outlasts it). Judged loosely — the caller's cooldown
-	// absorbs a whiff.
-	time.Sleep(1200 * time.Millisecond)
-	after := gr.GetData().PlayerUnit.Position
+	// Displacement postcondition, POLLED (night-2 audit finding 5: one sample
+	// at a fixed 1200ms judged slow arcs still airborne as whiffs — paid casts
+	// read as failures and the displacement telemetry lied all day). Poll to
+	// 2.5s, believe the first ≥2-tile move, stop sleeping the moment it lands.
+	after := me
+	dl := time.Now().Add(2500 * time.Millisecond)
+	for time.Now().Before(dl) {
+		time.Sleep(150 * time.Millisecond)
+		after = gr.GetData().PlayerUnit.Position
+		if dx := after.X - me.X; dx >= 2 || dx <= -2 {
+			break
+		}
+		if dy := after.Y - me.Y; dy >= 2 || dy <= -2 {
+			break
+		}
+	}
 	if chebyshev := func(a, b data.Position) int {
 		dx, dy := a.X-b.X, a.Y-b.Y
 		if dx < 0 {
