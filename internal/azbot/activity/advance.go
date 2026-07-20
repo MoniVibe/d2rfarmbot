@@ -24,6 +24,7 @@ import (
 	"github.com/hectorgimenez/d2go/pkg/data/area"
 	"github.com/hectorgimenez/koolo/internal/azbot/arbiter"
 	"github.com/hectorgimenez/koolo/internal/azbot/journey"
+	"github.com/hectorgimenez/koolo/internal/azbot/memory"
 	"github.com/hectorgimenez/koolo/internal/azbot/percept"
 	"github.com/hectorgimenez/koolo/internal/azbot/verbs"
 	"github.com/hectorgimenez/koolo/internal/game"
@@ -43,6 +44,15 @@ func BorderKey(seed uint, from, to area.ID) string {
 // order"). Recorded by the executive's road recorder on every real crossing.
 func RoadKey(seed uint, from, to area.ID) string {
 	return fmt.Sprintf("road.%d.%d.%d", seed, int(from), int(to))
+}
+
+// LitKey: the per-CHARACTER waypoint activation ledger (the owner, 05:05:
+// "aware of its waypoints instead of wasting 30 seconds on the pad"). The
+// panel's list is broken on this mod; the ledger learns from honest sources:
+// a TOUCH proves that pad lit, a successful RIDE proves the landing lit.
+// Unknown is not lit. Activation is permanent and per character.
+func LitKey(char string, ar area.ID) string {
+	return fmt.Sprintf("wplit.%s.%d", char, int(ar))
 }
 
 // Leg is one stop on an itinerary: the area, and the character level that makes entering
@@ -363,10 +373,17 @@ func (a *Advance) Step(ctx *Ctx) Verdict {
 				Evidence: fmt.Sprintf("no pad known in area %d: map objects=%d, live objects=%d", int(s.Me.Area), mapObjs, len(dd.Objects))})
 		}
 		if padDist < 1<<30 {
+			charName := ctx.GR.GetData().PlayerUnit.Name
 			var wants []area.ID
 			for i := len(a.Itinerary) - 1; i > a.idx; i-- {
 				if s.Me.Level >= a.Itinerary[i].MinLevel {
-					wants = append(wants, a.Itinerary[i].Area)
+					lit := false
+					if ctx.Mem != nil {
+						ctx.Mem.GetJSON(LitKey(charName, a.Itinerary[i].Area), &lit)
+					}
+					if lit {
+						wants = append(wants, a.Itinerary[i].Area)
+					}
 				}
 			}
 			if len(wants) > 0 {
@@ -401,6 +418,11 @@ func (a *Advance) Step(ctx *Ctx) Verdict {
 					a.wpAt, a.wpWalkAt = time.Now(), time.Time{}
 					o := verbs.UseWaypoint{Want: wants}.Do(ctx.M, ctx.GR, ctx.P, ctx.Led, a.Name())
 					if o.Result == verbs.ResDone {
+						if ctx.Mem != nil { // the ride PROVES the landing lit
+							landed := area.ID(ctx.GR.GetData().PlayerUnit.Area)
+							ctx.Mem.PutJSON(LitKey(charName, landed), memory.ScopeForever,
+								memory.Provenance{Source: "measured", Evidence: "rode to it"}, true)
+						}
 						return Running // a new area: the adopt logic takes it from here
 					}
 					// whiff/deaf/refused: the gate march resumes below
@@ -422,7 +444,14 @@ func (a *Advance) Step(ctx *Ctx) Verdict {
 		if ad, ok := dd.Areas[s.Me.Area]; ok {
 			mapPads = append(append([]data.Object{}, dd.Objects...), ad.Objects...)
 		}
+		litHere := false
+		if ctx.Mem != nil {
+			ctx.Mem.GetJSON(LitKey(ctx.GR.GetData().PlayerUnit.Name, s.Me.Area), &litHere)
+		}
 		for _, ob := range mapPads {
+			if litHere {
+				break // in the ledger — no ritual needed, ever again
+			}
 			if ob.IsWaypoint() && chebyshev(s.Me.Pos, ob.Position) <= 40 {
 				if a.wpTouched == nil {
 					a.wpTouched = map[area.ID]time.Time{}
@@ -455,7 +484,12 @@ func (a *Advance) Step(ctx *Ctx) Verdict {
 						wants = append(wants, a.Itinerary[i].Area)
 					}
 				}
-				verbs.UseWaypoint{Want: wants}.Do(ctx.M, ctx.GR, ctx.P, ctx.Led, a.Name())
+				ot := verbs.UseWaypoint{Want: wants}.Do(ctx.M, ctx.GR, ctx.P, ctx.Led, a.Name())
+				if ot.Result == verbs.ResDone && ctx.Mem != nil {
+					// touched OR rode: this pad is lit forever in the ledger
+					ctx.Mem.PutJSON(LitKey(ctx.GR.GetData().PlayerUnit.Name, s.Me.Area), memory.ScopeForever,
+						memory.Provenance{Source: "measured", Evidence: "touched/rode the pad"}, true)
+				}
 				return Running
 			}
 		}
