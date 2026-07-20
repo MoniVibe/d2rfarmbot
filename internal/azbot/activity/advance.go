@@ -632,7 +632,12 @@ func (a *Advance) Step(ctx *Ctx) Verdict {
 		// that eats a full leg with zero progress earns a breaker-grade
 		// strike; two strikes and CursedNear disbelieves the exit, handing
 		// the march to search() and the real stairs.
-		if a.tgtFromMap {
+		if a.tgtFromMap && a.bestDist <= 30 {
+			// A strike requires ARRIVAL (01:23: the rule convicted the honest
+			// Black Marsh exit for a blocked ROUTE — overworld doors validated
+			// truthful; only grinding NEAR the door testifies against the
+			// door itself. A far stall is the journey's failure: reset the
+			// leg, convict nobody).
 			NoteBreakerSite(a.marchGoal)
 			// Strikes persist to the WAL (21:52: the forced swap reset the
 			// in-process count and the disbelief had to be re-earned — a
