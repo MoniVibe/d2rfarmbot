@@ -1886,6 +1886,15 @@ func main() {
 			}
 		}
 		if s.Me.Area != lastArea && lastArea != 0 && s.Me.Area != 0 {
+			// THE TOWN-HOP WITNESS (night 2: three field→town teleports with NO
+			// verb logged — portal ambush, stale walk order, or something still
+			// unnamed; the log could not say). Every arrival in town from the
+			// field is now stamped so the next forensic run has a timestamp to
+			// correlate against the ledger's final verbs.
+			if s.Me.Area == 1 {
+				logger.Warn("cartographer: TOWN HOP — field to town", "from", int(lastArea),
+					"at", fmt.Sprintf("(%d,%d)", lastPos.X, lastPos.Y))
+			}
 			// Portals teleport (town↔field): near sides = a walked door. But cave
 			// WARPS teleport coordinates too (03:45: the owner's manual click into
 			// the Underground Passage jumped 3000 tiles and the anti-TP rule threw

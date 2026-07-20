@@ -176,6 +176,10 @@ type Advance struct {
 	rerouteCastAt time.Time
 	rerouteTries  int
 	clearAt       time.Time // clearing gets a deadline (audit finding 4)
+	// far-stall conviction (audit finding 3): consecutive wasted legs at a
+	// map target he never even got NEAR — the maze-interior phantom detector.
+	farStallKey string
+	farStallN   int
 }
 
 // FrontierFor is the P-5F hint: the itinerary leg the march owns at this
@@ -831,6 +835,33 @@ func (a *Advance) Step(ctx *Ctx) Verdict {
 			}
 			ctx.Led.Append(verbs.Outcome{Verb: "nav", Holder: a.Name(), Result: verbs.ResDeaf,
 				Evidence: fmt.Sprintf("map-oracle exit (%d,%d) ate a 60s leg — strike recorded", a.marchGoal.X, a.marchGoal.Y)})
+		} else if a.tgtFromMap {
+			// NIGHT-2 AUDIT FINDING 3, LIVE IN THE UP AT 02:47: a maze
+			// interior's map target sits 478 tiles from truth — he can never
+			// ARRIVE at it, so the arrival-gated strike never fires and he
+			// marches the same phantom forever (stall → abandon → shuffle →
+			// repeat). Three consecutive far-stalls at the same pair = one
+			// arrival-grade strike: the phantom is barred and the coverage
+			// search finally gets its turn to find the REAL door.
+			fk := fmt.Sprintf("%d.%d", int(s.Me.Area), int(hop))
+			if fk != a.farStallKey {
+				a.farStallKey, a.farStallN = fk, 0
+			}
+			a.farStallN++
+			if a.farStallN >= 3 {
+				a.farStallN = 0
+				NoteBreakerSite(a.marchGoal)
+				if ctx.Mem != nil {
+					n := 0
+					key := fmt.Sprintf("badexit.%d.%d.%d", ctx.GR.MapSeed(), int(s.Me.Area), int(hop))
+					ctx.Mem.GetJSON(key, &n)
+					n += 2 // straight to conviction: three whole legs is proof enough
+					ctx.Mem.PutJSON(key, memory.ScopeSeed,
+						memory.Provenance{Source: "measured", Evidence: fmt.Sprintf("3 far-stall legs at phantom (%d,%d) — maze-interior lie convicted", a.marchGoal.X, a.marchGoal.Y)}, n)
+				}
+				ctx.Led.Append(verbs.Outcome{Verb: "nav", Holder: a.Name(), Result: verbs.ResDeaf,
+					Evidence: fmt.Sprintf("map-oracle exit (%d,%d) ate 3 far legs — phantom convicted, the search owns this door", a.marchGoal.X, a.marchGoal.Y)})
+			}
 		}
 		a.resetLeg(me)
 		return Abandoned
