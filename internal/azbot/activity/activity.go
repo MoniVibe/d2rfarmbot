@@ -1343,27 +1343,23 @@ func (f *Fight) Step(ctx *Ctx) Verdict {
 			}
 			return Running
 		}
-		if contact > 4 && dryBow {
-			verbs.Stride{To: f.targetPos, Hold: 900 * time.Millisecond}.Do(ctx.M, ctx.GR, ctx.P, ctx.Led, f.Name())
+		// THE ATTACK COMMAND IS THE CHASE (the owner, 04:12: "make it a
+		// priority for him to attack — he just runs around monsters"): a
+		// melee char clicks the MONSTER, not the ground beside it — the
+		// game's own attack command pursues and swings, tracking the target
+		// (HoverStrike, the M4 verb, finally reliable under the hover pump).
+		// Plain strides only close truly long gaps.
+		if d > 10 && contact > 10 {
+			verbs.Stride{To: f.targetPos, Hold: 700 * time.Millisecond}.Do(ctx.M, ctx.GR, ctx.P, ctx.Led, f.Name())
 			return Running
 		}
-		if d > 4 {
-			// The chosen target is far but something else is in contact — stab THAT.
-			if contact <= 4 {
-				f.strike(ctx, f.nearestID(s), contactPos, mk)
-				return Running
-			}
-			if dryBow { // melee is all she has: close the gap
-				verbs.Stride{To: f.targetPos, Hold: 700 * time.Millisecond}.Do(ctx.M, ctx.GR, ctx.P, ctx.Led, f.Name())
-				return Running
-			}
-			// Contact at 5: shove the gap open HARD — wall-aware; cornered = stab.
-			if !kiteAway(ctx, s, contactPos, 1300*time.Millisecond) {
-				f.strike(ctx, f.nearestID(s), contactPos, mk)
-			}
-			return Running
+		tid, tpos := f.target, f.targetPos
+		if contact < d {
+			tid, tpos = f.nearestID(s), contactPos // the closest tooth first
 		}
-		f.strike(ctx, f.target, f.targetPos, mk)
+		o := verbs.HoverStrike{Target: tid, TargetPos: tpos, SelectKey: mk, Volley: true}.
+			Do(ctx.M, ctx.GR, ctx.P, ctx.Led, f.Name())
+		f.assess(o)
 		return Running
 	}
 
