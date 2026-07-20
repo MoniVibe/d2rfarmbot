@@ -115,6 +115,17 @@ func (hid *HID) AimPhysical(x, y int) {
 	wx, wy := worldAimClient(hid.gr, x, y)
 	px, py := clientToPhysical(hid.gr.WindowLeftX, hid.gr.WindowTopY, wx, wy)
 	hid.gi.OverridePhysicalCursorPos(px, py)
+	// THE HOVER PUMP (03:15, the owner: "she sometimes misses stuff, like
+	// waypoints and portals, npcs" — she cast a fresh TP beside a standing
+	// one): the game refreshes hover on MOUSE EVENTS, and this function set
+	// the virtual cursor without ever posting them — hover then updated only
+	// when the game happened to poll, so sweeps eventually hit but single
+	// reads whiffed. MovePointer (the farmbot control, proven for weeks)
+	// always pumped this exact trio.
+	lParam := calculateLparam(wx, wy)
+	win.SendMessage(hid.gr.HWND, win.WM_NCHITTEST, 0, lParam)
+	win.SendMessage(hid.gr.HWND, win.WM_SETCURSOR, 0x000105A8, 0x2010001)
+	win.PostMessage(hid.gr.HWND, win.WM_MOUSEMOVE, 0, lParam)
 	iMoveScreen(hid.gr.WindowLeftX+x, hid.gr.WindowTopY+y) // no-op unless -hwmove rel/abs
 }
 
