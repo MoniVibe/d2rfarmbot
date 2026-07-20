@@ -1904,6 +1904,19 @@ func main() {
 				(adjacent && !lastArea.IsTown() && !s.Me.Area.IsTown()) {
 				seed := gr.MapSeed()
 				prov := memory.Provenance{Source: "measured", Evidence: fmt.Sprintf("crossed %d->%d seed %d", int(lastArea), int(s.Me.Area), seed)}
+				// THE CONTRADICTION SPEAKS (the owner, 21:40: "there's only one
+				// door though" — two learned 4->10 doors 83 tiles apart swapped
+				// silently, and one was necessarily a lie, likely a sparse-crumb
+				// stamp during a fast manual walk). A re-learn far from the old
+				// truth is SAID, not swallowed; latest still wins.
+				var oldDoor data.Position
+				if mem.GetJSON(activity.BorderKey(seed, lastArea, s.Me.Area), &oldDoor) &&
+					oldDoor.X != 0 && chebyshev(oldDoor, lastPos) > 30 {
+					logger.Warn("cartographer: door CONTRADICTION — one of these is a lie",
+						"pair", fmt.Sprintf("%d->%d", int(lastArea), int(s.Me.Area)),
+						"old", fmt.Sprintf("(%d,%d)", oldDoor.X, oldDoor.Y),
+						"new", fmt.Sprintf("(%d,%d)", lastPos.X, lastPos.Y))
+				}
 				mem.PutJSON(activity.BorderKey(seed, lastArea, s.Me.Area), memory.ScopeSeed, prov, lastPos)
 				mem.PutJSON(activity.BorderKey(seed, s.Me.Area, lastArea), memory.ScopeSeed, prov, s.Me.Pos)
 				if len(crumbs) >= 3 {
@@ -1950,6 +1963,8 @@ func main() {
 	stallWarnAt := time.Time{}
 	deadmanPos := data.Position{}
 	deadmanAt := time.Now()
+	prevEngaged := true
+	engagedAt := time.Now()
 	sawInvalid := false
 	wasFocused := true
 	var trail []string // the last moments, for the owner's death reports
@@ -2340,7 +2355,14 @@ func main() {
 		// him at one tile for 100+ seconds, invisible to the Survive-only
 		// alarm — the owner saw it before the log did, again). Survive
 		// stalls at 2s; everyone else gets 4s of grace before being named.
-		if grant != nil && time.Since(stallWarnAt) > 2*time.Second && !led.LastAppend().IsZero() {
+		// Engage-transition grace (21:39: the ledger is naturally silent while
+		// the OWNER drives, so the alarm fired the instant F10 handed back).
+		if m.Engage.Engaged() != prevEngaged {
+			prevEngaged = m.Engage.Engaged()
+			engagedAt = time.Now()
+		}
+		if grant != nil && time.Since(stallWarnAt) > 2*time.Second && !led.LastAppend().IsZero() &&
+			time.Since(engagedAt) > 5*time.Second {
 			silent := time.Since(led.LastAppend())
 			bar := 4 * time.Second
 			if grant.Demand.Class == arbiter.ClassSurvive {

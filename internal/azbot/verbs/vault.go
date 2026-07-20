@@ -77,7 +77,7 @@ func (v Vault) Do(m *motor.Motor, gr *game.MemoryReader, p *percept.Perceptor, l
 	// animation. 900ms window (650 judged real leaps as whiffs — the arc plus
 	// landing recovery outlasts it). Judged loosely — the caller's cooldown
 	// absorbs a whiff.
-	time.Sleep(900 * time.Millisecond)
+	time.Sleep(1200 * time.Millisecond)
 	after := gr.GetData().PlayerUnit.Position
 	if chebyshev := func(a, b data.Position) int {
 		dx, dy := a.X-b.X, a.Y-b.Y
@@ -91,7 +91,7 @@ func (v Vault) Do(m *motor.Motor, gr *game.MemoryReader, p *percept.Perceptor, l
 			return dx
 		}
 		return dy
-	}; chebyshev(me, after) >= 3 {
+	}; chebyshev(me, after) >= 2 { // bar 3→2 (21:42: lvl-1 arcs land 2-3 tiles; honest short hops read as whiffs)
 		o.Result = ResDone
 		o.Evidence = fmt.Sprintf("leapt (%d,%d)→(%d,%d)", me.X, me.Y, after.X, after.Y)
 	} else {

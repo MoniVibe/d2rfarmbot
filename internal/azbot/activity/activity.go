@@ -786,6 +786,12 @@ func (b *Breakout) Name() string { return "breakout" }
 // skill stand down for a few seconds so the pool builds to the jump.
 var vaultHungerUntil time.Time
 
+// fightCoolUntil — THE SIGHT DIVERGENCE cool (21:43): Demand's Walled filter
+// is looser than the pick's losClear, so a pack can be biddable yet
+// untargetable; without this cool the arbiter churns grant/done while the
+// march starves.
+var fightCoolUntil time.Time
+
 func canVault(ctx *Ctx, s *percept.Snapshot) bool {
 	if ctx.Cap == nil || ctx.Cap.Vault == nil {
 		return false
@@ -1246,8 +1252,8 @@ func (f *Fight) Name() string { return "fight" }
 func (f *Fight) Demand(s *percept.Snapshot) *arbiter.Demand {
 	// Stop committing to a fight while wounded — hand the tick to Flee/EscapeTP early,
 	// not at 5% (the bleed-out). With no potions the bar is higher: retreat sooner.
-	if !s.Valid || s.Me.InTown {
-		return nil
+	if !s.Valid || s.Me.InTown || time.Now().Before(fightCoolUntil) {
+		return nil // the sight divergence cool: the pick proved nobody sighted (21:43)
 	}
 	// P-2.0 + P-1.12: the stand-down judges by the BLOOD ORACLE — she fights
 	// any pack she is out-sustaining, and only a genuinely collapsing runway
@@ -1409,7 +1415,15 @@ func (f *Fight) Step(ctx *Ctx) Verdict {
 			}
 		}
 		if !haveClear {
-			return Done // nothing SIGHTED worth fighting
+			// THE SIGHT DIVERGENCE (21:43: Demand bids on unwalled enemies
+			// while this stricter losClear pick had nobody — grant/done churn
+			// and 20s mute-fight windows the owner watched as "bouts of
+			// idleness"). No sighted target = Fight COOLS 2s in writing so
+			// the march owns the wheel instead of the churn.
+			fightCoolUntil = time.Now().Add(2 * time.Second)
+			ctx.Led.Append(verbs.Outcome{Verb: "fight", Holder: f.Name(), Result: verbs.ResRefused,
+				Evidence: "no sighted target within radius — fight cools 2s, the march proceeds"})
+			return Done
 		}
 		f.target, f.targetPos = bestClear.ID, bestClear.Pos
 	}
@@ -1592,6 +1606,10 @@ func (f *Fight) Step(ctx *Ctx) Verdict {
 			liveAt = f.watchSince
 		}
 		if d <= 8 && time.Since(liveAt) > 1200*time.Millisecond {
+			// P-2.10 writes its quarantines (rule zero, 21:43 batch): silent
+			// retargeting was indistinguishable from statue-mode in the log.
+			ctx.Led.Append(verbs.Outcome{Verb: "fight", Holder: f.Name(), Result: verbs.ResRefused,
+				Evidence: fmt.Sprintf("P-2.10 quarantine: target %d silent 1.2s at d=%d — retargeting", int(f.target), d)})
 			f.blacklist[f.target] = time.Now().Add(2 * time.Second)
 			f.target, f.j = 0, nil
 			return Running
