@@ -23,6 +23,11 @@ type Imbibe struct {
 	clickAt  time.Time
 	clickFor data.UnitID
 	tries    int
+	// coolAt: the EMPTINESS COOLDOWN (09:50 postmortem: the percept flag says
+	// 'rite nearby' for any chest-class object, the scorer refused them all,
+	// and grant/Done churned 8,940 times overnight — Loot class starving the
+	// march. Run-26's law: a bid must enclose its step's yield.)
+	coolAt time.Time
 }
 
 func NewImbibe() *Imbibe { return &Imbibe{ban: map[data.UnitID]time.Time{}} }
@@ -85,7 +90,7 @@ func (im *Imbibe) Demand(s *percept.Snapshot) *arbiter.Demand {
 	}
 	// Demand has no Ctx: bid on the snapshot's cheap signal (any candidate is
 	// re-verified in Step against the live object list before a single step).
-	if !s.RiteNearby {
+	if !s.RiteNearby || time.Now().Before(im.coolAt) {
 		return nil
 	}
 	return &arbiter.Demand{Who: im.Name(), Class: arbiter.ClassLoot,
@@ -100,6 +105,7 @@ func (im *Imbibe) Step(ctx *Ctx) Verdict {
 	}
 	ob, _, ok := im.find(ctx)
 	if !ok {
+		im.coolAt = time.Now().Add(45 * time.Second) // the flag lied: cool before re-bidding
 		return Done // nothing worth a detour (or all spent/banned)
 	}
 	d := chebyshev(s.Me.Pos, ob.Position)
