@@ -100,7 +100,16 @@ func (uw UseWaypoint) Do(m *motor.Motor, gr *game.MemoryReader, p *percept.Perce
 
 	// OPEN: hover-confirmed click on the pad base; the click may include the
 	// game's own walk-to, so the panel gets a real wait.
-	if !d.OpenMenus.Waypoint {
+	// THE FLAG LIES AT LEVEL, TRUTH LIVES ON THE EDGE (03:18, fifth lingering-
+	// read organ): OpenMenus.Waypoint stays true from ANY previous open — the
+	// verb skipped the pad click entirely, photographed grass, and whiffed
+	// '0 lit'. She never clicked the pad. A stale true is RESET (ground
+	// click), and only a fresh false->true transition counts as opened.
+	if d.OpenMenus.Waypoint {
+		groundClose()
+		time.Sleep(400 * time.Millisecond)
+	}
+	{
 		opened := false
 		for try := 0; try < 3 && !opened; try++ {
 			dd := gr.GetData()
@@ -132,12 +141,21 @@ func (uw UseWaypoint) Do(m *motor.Motor, gr *game.MemoryReader, p *percept.Perce
 				}
 			}
 			if clicked {
+				// The click may start a WALK to the pad — the wait extends
+				// while she is still closing distance (up to 8s total).
 				dl := time.Now().Add(3500 * time.Millisecond)
-				for time.Now().Before(dl) {
+				hard := time.Now().Add(8 * time.Second)
+				lastP := gr.GetData().PlayerUnit.Position
+				for time.Now().Before(dl) && time.Now().Before(hard) {
 					time.Sleep(150 * time.Millisecond)
-					if gr.GetData().OpenMenus.Waypoint {
+					dd2 := gr.GetData()
+					if dd2.OpenMenus.Waypoint {
 						opened = true
 						break
+					}
+					if dd2.PlayerUnit.Position != lastP {
+						lastP = dd2.PlayerUnit.Position
+						dl = time.Now().Add(1500 * time.Millisecond) // still walking: keep faith
 					}
 				}
 			}
