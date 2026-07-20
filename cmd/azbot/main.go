@@ -1959,6 +1959,7 @@ func main() {
 	}
 	lastUnpause := time.Time{}
 	lastDeEsc := time.Time{}
+	idleSince := time.Time{}
 	stuckRunN := 0
 	stuckRunPos := data.Position{}
 	lastPocketTP := time.Time{}
@@ -2298,9 +2299,23 @@ func main() {
 					"area", int(s.Me.Area), "hp", s.Me.HPPct, "lvl", s.Me.Level)
 				statusAt = time.Now()
 			}
+			// THE IDLE BREAKER (the owner, 04:47: 'hangs on Akara' — a service
+			// abandoned, nothing re-bid, and he stood dead by the healer for
+			// minutes). The advisor's law: bench the strategy, not the mission.
+			// Sustained idle in town cools EVERY service (they hard-gate the
+			// march via ServicesPending) so the march reclaims the actuator and
+			// retries the errands from the field next trip.
+			if idleSince.IsZero() {
+				idleSince = time.Now()
+			} else if time.Since(idleSince) > 12*time.Second {
+				activity.CoolAllServices(90 * time.Second)
+				logger.Warn("idle breaker: services cooled 90s — the march reclaims the wheel")
+				idleSince = time.Time{}
+			}
 			time.Sleep(200 * time.Millisecond)
 			continue
 		}
+		idleSince = time.Time{}
 		if changed {
 			logger.Info("grant", "to", grant.Demand.Who, "class", grant.Demand.Class.String(),
 				"urgency", fmt.Sprintf("%.2f", grant.Demand.Urgency))

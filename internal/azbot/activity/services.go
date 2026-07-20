@@ -226,7 +226,10 @@ func (e *errand) step(ctx *Ctx, who string) (shopOpen bool, dead bool) {
 		by := int(float32((target.Position.X-me.X)+(target.Position.Y-me.Y))*9.9) + ctx.GR.GameAreaSizeY/2
 		confirmed, px, py := false, bx, by
 	sweep:
-		for dy := -8; dy >= -64; dy -= 8 {
+		// Search DOWN through the body too, not only up to the label (04:47:
+		// at dist 4 he clipped into Akara and the upward-only sweep never found
+		// her — a very close NPC fills the vertical band around the base).
+		for dy := 16; dy >= -72; dy -= 8 {
 			for _, dx := range []int{0, -8, 8, -16, 16, -24, 24} {
 				cx, cy := bx+dx, by+dy
 				if cx < 20 || cy < 20 || cx > ctx.GR.GameAreaSizeX-20 || cy > ctx.GR.GameAreaSizeY-20 {
@@ -324,6 +327,17 @@ var healerHeals atomic.Bool
 
 func init() { healerHeals.Store(true) }
 
+// globalServiceCoolUntil: the IDLE BREAKER's lever (the owner, 04:47: 'hangs
+// on Akara'). When the executive sees sustained town idle — a service
+// abandoned with nothing re-bidding — it cools EVERY service at once so the
+// march reclaims the actuator; the errands retry from the field next trip.
+var globalServiceCoolUntil time.Time
+
+// CoolAllServices silences all service demands for d (called by the executive).
+func CoolAllServices(d time.Duration) { globalServiceCoolUntil = time.Now().Add(d) }
+
+func servicesCooled() bool { return time.Now().Before(globalServiceCoolUntil) }
+
 // ServicesPending reports whether a town errand is waiting: a real belt deficit she can
 // afford, gear worn to the quarter, or WOUNDS a free healer can close. The class ladder
 // puts Travel ABOVE Service, so the travel activities consult this and stand down —
@@ -332,6 +346,9 @@ func init() { healerHeals.Store(true) }
 // (measured 04:13:07: Breakout's portal landed her in town with zero gold and zero junk —
 // nothing pended, Advance marched her out wounded two seconds later).
 func ServicesPending(s *percept.Snapshot) bool {
+	if servicesCooled() {
+		return false // the idle breaker handed the wheel to the march
+	}
 	if s.Me.HPPct <= 55 && healerHeals.Load() {
 		return true // Akara's refill is free; leaving town below the drink line is denial
 	}
@@ -557,6 +574,9 @@ func plan(s *percept.Snapshot) (buyHP, buyMana int) {
 }
 
 func (r *Restock) Demand(s *percept.Snapshot) *arbiter.Demand {
+	if servicesCooled() {
+		return nil
+	}
 	if !s.Valid || !s.Me.InTown || s.Me.Gold < 100 || time.Now().Before(r.nextAt) {
 		return nil
 	}
@@ -738,6 +758,9 @@ func tomeCensus(ctx *Ctx) int {
 func (fc *Fence) Name() string { return "fence" }
 
 func (fc *Fence) Demand(s *percept.Snapshot) *arbiter.Demand {
+	if servicesCooled() {
+		return nil
+	}
 	if !s.Valid || !s.Me.InTown || s.Me.JunkCount == 0 || time.Now().Before(fc.coolAt) {
 		return nil
 	}
@@ -866,6 +889,9 @@ func NewHeal() *Heal {
 func (h *Heal) Name() string { return "heal" }
 
 func (h *Heal) Demand(s *percept.Snapshot) *arbiter.Demand {
+	if servicesCooled() {
+		return nil
+	}
 	// P-4.1: in town she tops up below 75 — free is free, and idling at 57
 	// kept Breakout's eject seat armed all morning (11:06). Only below 55
 	// does the wound GATE the march (ServicesPending keeps that line).
@@ -948,6 +974,9 @@ func NewIdentify() *Identify { return &Identify{lastN: -1} }
 func (idn *Identify) Name() string { return "identify" }
 
 func (idn *Identify) Demand(s *percept.Snapshot) *arbiter.Demand {
+	if servicesCooled() {
+		return nil
+	}
 	if !s.Valid || !s.Me.InTown || s.Me.UnidentCount == 0 || !identifyWorks.Load() {
 		return nil
 	}
@@ -1065,6 +1094,9 @@ func NewEquip() *Equip { return &Equip{lastN: -1} }
 func (eq *Equip) Name() string { return "equip" }
 
 func (eq *Equip) Demand(s *percept.Snapshot) *arbiter.Demand {
+	if servicesCooled() {
+		return nil
+	}
 	if !s.Valid || !s.Me.InTown {
 		return nil
 	}
@@ -1377,6 +1409,9 @@ func NewSpend() *Spend { return &Spend{} }
 func (sp *Spend) Name() string { return "spend" }
 
 func (sp *Spend) Demand(s *percept.Snapshot) *arbiter.Demand {
+	if servicesCooled() {
+		return nil
+	}
 	if !s.Valid || !s.Me.InTown {
 		return nil
 	}
@@ -1593,6 +1628,9 @@ func NewRepair() *Repair {
 func (rp *Repair) Name() string { return "repair" }
 
 func (rp *Repair) Demand(s *percept.Snapshot) *arbiter.Demand {
+	if servicesCooled() {
+		return nil
+	}
 	if !s.Valid || !s.Me.InTown || s.Me.Gold < 10 || s.Me.MinDurPct > 25 || time.Now().Before(rp.coolAt) {
 		return nil
 	}
