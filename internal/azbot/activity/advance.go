@@ -651,6 +651,10 @@ func (a *Advance) borderTarget(ctx *Ctx, d game.Data, hop area.ID, me data.Posit
 	if ad, ok := d.Areas[d.PlayerUnit.Area]; ok {
 		for _, lv := range ad.AdjacentLevels {
 			if lv.Area == hop && (lv.Position.X != 0 || lv.Position.Y != 0) {
+				if CursedNear(lv.Position) {
+					break // the map exit cost two portals here — a proven lie
+					// on this seed; the live rooms or the search find truth
+				}
 				return lv.Position, true
 			}
 		}

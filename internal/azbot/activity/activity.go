@@ -244,6 +244,33 @@ var brawlerMode bool
 // SetBrawler is called by the executive after every capability calibration.
 func SetBrawler(b bool) { brawlerMode = b }
 
+// breakerSites: CURSED GROUND (the owner, 05:40: "TP every time it reaches
+// that place... refrain from rerunning the same exact path"). Every pocket-
+// breaker firing marks the spot; a MAP-sourced door target near two firings
+// is disbelieved — the map exit is the documented liar on this mod, and a
+// lie that has cost two portals is retired in favor of the search tour,
+// which finds the REAL border by walking and records it as measured fact.
+var breakerSites []data.Position
+
+// NoteBreakerSite is called by the executive on every pocket-breaker firing.
+func NoteBreakerSite(p data.Position) {
+	breakerSites = append(breakerSites, p)
+	if len(breakerSites) > 24 {
+		breakerSites = breakerSites[len(breakerSites)-24:]
+	}
+}
+
+// CursedNear: two or more breaker firings within 20 of p.
+func CursedNear(p data.Position) bool {
+	n := 0
+	for _, b := range breakerSites {
+		if chebyshev(b, p) <= 20 {
+			n++
+		}
+	}
+	return n >= 2
+}
+
 // MenuSanctionUntil: the MENU SENTRY's one exemption (the owner, 00:52: "an
 // aware state that de-escs unless there's a good reason like relogging").
 // Relog sanctions the quit menu while its ritual lives there; everyone else's
