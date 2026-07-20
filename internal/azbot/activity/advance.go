@@ -110,8 +110,9 @@ func Act1Itinerary() []Leg {
 type Advance struct {
 	Itinerary []Leg
 
-	idx       int // current position on the itinerary (highest adopted)
-	legStart  data.Position
+	idx        int // current position on the itinerary (highest adopted)
+	tgtFromMap bool // current border target came from the LYING map oracle (strike accounting)
+	legStart   data.Position
 	j         *journey.Journey
 	grid      *game.Grid // regrown grid (rooms stream in as she walks)
 	regridAt  time.Time
@@ -602,6 +603,19 @@ func (a *Advance) Step(ctx *Ctx) Verdict {
 		a.bestDist, a.bestAt = ed, time.Now()
 	}
 	if time.Since(a.bestAt) > 60*time.Second {
+		// A WASTED LEG IS A STRIKE (the owner, 21:17: "trying to traverse
+		// dark wood from a wrong place, just stuck there"): the map oracle
+		// names a position, known=true, he marches the lie, the 60s leash
+		// resets the leg, and he marches the SAME lie again — forever, while
+		// the live-entrance search never gets its turn. A map-sourced target
+		// that eats a full leg with zero progress earns a breaker-grade
+		// strike; two strikes and CursedNear disbelieves the exit, handing
+		// the march to search() and the real stairs.
+		if a.tgtFromMap {
+			NoteBreakerSite(a.marchGoal)
+			ctx.Led.Append(verbs.Outcome{Verb: "nav", Holder: a.Name(), Result: verbs.ResDeaf,
+				Evidence: fmt.Sprintf("map-oracle exit (%d,%d) ate a 60s leg — strike recorded", a.marchGoal.X, a.marchGoal.Y)})
+		}
 		a.resetLeg(me)
 		return Abandoned
 	}
@@ -673,6 +687,7 @@ func mapWalk(d game.Data, a1, a2 area.ID, p data.Position) bool {
 
 // borderTarget resolves the door toward hop: learned fact, then live border rooms.
 func (a *Advance) borderTarget(ctx *Ctx, d game.Data, hop area.ID, me data.Position) (data.Position, bool) {
+	a.tgtFromMap = false // stamped true only on the map-oracle branch below
 	if ctx.Mem != nil {
 		var p data.Position
 		if ctx.Mem.GetJSON(BorderKey(ctx.GR.MapSeed(), d.PlayerUnit.Area, hop), &p) && p.X != 0 {
@@ -690,6 +705,7 @@ func (a *Advance) borderTarget(ctx *Ctx, d game.Data, hop area.ID, me data.Posit
 					break // the map exit cost two portals here — a proven lie
 					// on this seed; the live rooms or the search find truth
 				}
+				a.tgtFromMap = true
 				return lv.Position, true
 			}
 		}
