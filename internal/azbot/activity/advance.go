@@ -115,6 +115,7 @@ type Advance struct {
 	// visited: search's coverage ledger — 20-boxes walked, per area, process-
 	// lifetime (survives town re-entries; the same-spots loop, 21:50).
 	visited map[area.ID]map[[2]int]int
+	burstAt    time.Time // one-shot door burst rate limit (22:44)
 	legStart   data.Position
 	j         *journey.Journey
 	grid      *game.Grid // regrown grid (rooms stream in as she walks)
@@ -911,11 +912,12 @@ func (a *Advance) cross(ctx *Ctx, d game.Data, me data.Position, tgt data.Positi
 	// mouths — was gated off at this door every single time; all he ever did
 	// there was seam-leap and re-arm. The unit list lies by omission; the
 	// owner's own crossing at this spot is stronger evidence than its silence.)
-	if !hasEnt && hop != 0 && ctx.Mem != nil {
+	learnedDoor := false
+	if hop != 0 && ctx.Mem != nil {
 		var p data.Position
 		if ctx.Mem.GetJSON(BorderKey(ctx.GR.MapSeed(), d.PlayerUnit.Area, hop), &p) && p.X != 0 &&
 			chebyshev(p, tgt) <= 8 {
-			hasEnt = true
+			hasEnt, learnedDoor = true, true
 		}
 	}
 	if !hasEnt {
@@ -942,6 +944,29 @@ func (a *Advance) cross(ctx *Ctx, d game.Data, me data.Position, tgt data.Positi
 	me2 := ctx.GR.GetData().PlayerUnit.Position
 	bx := int(float32((tgt.X-1-me2.X)-(tgt.Y-1-me2.Y))*19.8) + ctx.GR.GameAreaSizeX/2
 	by := int(float32((tgt.X-1-me2.X)+(tgt.Y-1-me2.Y))*9.9) + ctx.GR.GameAreaSizeY/2
+	// THE ONE-SHOT ENTRY (22:44: Fight steals the actuator at the door — the
+	// drip of one spiral probe per grant never reached burst try 2 in six
+	// approaches). At a LEARNED warp door the whole hardware burst runs NOW,
+	// inline, once per 20s: nine real clicks base-to-arch inside one held
+	// step, judged by the area like everything else.
+	if learnedDoor && chebyshev(me2, tgt) <= 8 && time.Since(a.burstAt) > 20*time.Second {
+		a.burstAt = time.Now()
+		for _, off := range []data.Position{{X: 0, Y: 0}, {X: 0, Y: -30}, {X: 0, Y: -60},
+			{X: -30, Y: -30}, {X: 30, Y: -30}, {X: -30, Y: 0}, {X: 30, Y: 0},
+			{X: -20, Y: -55}, {X: 20, Y: -55}} {
+			if !ctx.M.RealMenuClick(bx+off.X, by+off.Y) {
+				ctx.Led.Append(verbs.Outcome{Verb: "cross", Holder: a.Name(), Result: verbs.ResRefused,
+					Evidence: "one-shot burst: foreground refused — the owner holds the desktop"})
+				break
+			}
+			time.Sleep(700 * time.Millisecond)
+			if ctx.GR.GetData().PlayerUnit.Area != d.PlayerUnit.Area {
+				return // THE DOOR OPENED
+			}
+		}
+		ctx.Led.Append(verbs.Outcome{Verb: "cross", Holder: a.Name(), Result: verbs.ResDeaf,
+			Evidence: fmt.Sprintf("one-shot burst at learned door (%d,%d): nine clicks, no transition", tgt.X, tgt.Y)})
+	}
 	sp := spiral(a.clickTry)
 	a.clickTry++
 	ctx.M.AimPhysical(bx+sp.X, by+sp.Y)
