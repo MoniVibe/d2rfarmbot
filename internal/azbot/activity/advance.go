@@ -1022,7 +1022,12 @@ func (a *Advance) cross(ctx *Ctx, d game.Data, me data.Position, tgt data.Positi
 			// carries them through the doorway. Plain ground clicks at the
 			// door and just past it, exactly their gesture; the game does the
 			// walking.
-			for _, off := range []data.Position{{X: 0, Y: 0}, {X: -20, Y: 10}, {X: 20, Y: -10}} {
+			// The 23:01 screenshot, HIM standing ON the fact: the fact projects
+			// onto HIMSELF (every click aimed at his own feet) while the cabin
+			// doorway renders ~290px WEST — the fact marks where the area
+			// FLIPS, past the visual door. Click the DOORWAY, not the fact.
+			for _, off := range []data.Position{{X: -290, Y: -10}, {X: -260, Y: -30},
+				{X: -310, Y: 10}, {X: 0, Y: 0}, {X: -20, Y: 10}} {
 				ctx.M.BareClick(bx+off.X, by+off.Y)
 				time.Sleep(1400 * time.Millisecond)
 				if ctx.GR.GetData().PlayerUnit.Area != d.PlayerUnit.Area {
