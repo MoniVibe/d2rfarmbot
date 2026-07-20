@@ -259,16 +259,22 @@ func (e *errand) step(ctx *Ctx, who string) (shopOpen bool, dead bool) {
 					chebyshev(data.Position{X: me.X, Y: me.Y}, target.Position), bx, by, confirmed)})
 		}
 		if !confirmed {
-			// The same bearing that failed hover will fail it again — the torch
-			// owns this line of sight, not the town. Two hover misses walk the
-			// 90° arc before re-approaching.
-			if e.hoverFails++; e.hoverFails >= 2 {
+			// A WALL OWNS THE HOVER, not the town (04:53, the screenshot: a
+			// stone wall between the barbarian and Akara ate every aim). For a
+			// STATIONARY town NPC whose position is solid, a blind talk-click
+			// at the projection is safe — no shift means walk-or-talk, never an
+			// attack — and the walk-to-talk clears the wall the hover couldn't.
+			// After 3 hover misses, click blind at the label; keep arcing too.
+			if e.hoverFails++; e.hoverFails >= 3 {
 				e.hoverFails = 0
-				adx, ady := s.Me.Pos.X-target.Position.X, s.Me.Pos.Y-target.Position.Y
-				arc := data.Position{X: target.Position.X + ady, Y: target.Position.Y - adx}
-				slideStride(ctx, arc, 900*time.Millisecond, 1, who+"/hoverarc")
+				ctx.M.BareClick(bx, by-30) // the label sits above the base
+				e.clickAt = time.Now()
+				return false, false
 			}
-			e.phase = 1 // re-approach fresh — never click blind
+			adx, ady := s.Me.Pos.X-target.Position.X, s.Me.Pos.Y-target.Position.Y
+			arc := data.Position{X: target.Position.X + ady, Y: target.Position.Y - adx}
+			slideStride(ctx, arc, 900*time.Millisecond, 1, who+"/hoverarc")
+			e.phase = 1 // re-approach fresh from a new bearing
 			return false, false
 		}
 		e.hoverFails = 0
