@@ -116,6 +116,7 @@ type Advance struct {
 	// lifetime (survives town re-entries; the same-spots loop, 21:50).
 	visited map[area.ID]map[[2]int]int
 	burstAt    time.Time // one-shot door burst rate limit (22:44)
+	huntLogAt  time.Time // unfiltered-hover naming rate limit (23:00)
 	legStart   data.Position
 	j         *journey.Journey
 	grid      *game.Grid // regrown grid (rooms stream in as she walks)
@@ -986,6 +987,14 @@ func (a *Advance) cross(ctx *Ctx, d game.Data, me data.Position, tgt data.Positi
 				ctx.M.AimPhysical(cx, cy)
 				time.Sleep(45 * time.Millisecond)
 				hd := ctx.GR.GetData().HoverData
+				if hd.IsHovered && hd.UnitType != 5 && hd.UnitType != 2 && time.Since(a.huntLogAt) > 3*time.Second {
+					// NAME EVERY HOVER (23:00: the sweep found "nothing" — or
+					// found the door under a unit type we refuse; the filter
+					// must not hide what the cursor actually sees).
+					a.huntLogAt = time.Now()
+					ctx.Led.Append(verbs.Outcome{Verb: "cross", Holder: a.Name(), Result: verbs.ResRefused,
+						Evidence: fmt.Sprintf("hunt hovered UNFILTERED unit type=%d id=%d at offset (%d,%d)", hd.UnitType, int(hd.UnitID), dx, dy)})
+				}
 				if hd.IsHovered && (hd.UnitType == 5 || hd.UnitType == 2) {
 					found = true
 					ctx.Led.Append(verbs.Outcome{Verb: "cross", Holder: a.Name(), Result: verbs.ResDone,
@@ -1007,14 +1016,22 @@ func (a *Advance) cross(ctx *Ctx, d game.Data, me data.Position, tgt data.Positi
 			}
 		}
 		if !found {
+			// THE OWNER'S ACTUAL INPUT (23:00, "back and forth — something is
+			// wrong"): they don't force-walk in — they CLICK, and the GAME'S
+			// pathfinder (which knows the true walkability our grid doesn't)
+			// carries them through the doorway. Plain ground clicks at the
+			// door and just past it, exactly their gesture; the game does the
+			// walking.
+			for _, off := range []data.Position{{X: 0, Y: 0}, {X: -20, Y: 10}, {X: 20, Y: -10}} {
+				ctx.M.BareClick(bx+off.X, by+off.Y)
+				time.Sleep(1400 * time.Millisecond)
+				if ctx.GR.GetData().PlayerUnit.Area != d.PlayerUnit.Area {
+					return // WALKED IN — the game pathed him through
+				}
+			}
 			ctx.Led.Append(verbs.Outcome{Verb: "cross", Holder: a.Name(), Result: verbs.ResDeaf,
-				Evidence: fmt.Sprintf("hover hunt at learned door (%d,%d): no entrance hover — arming the walk-through push", tgt.X, tgt.Y)})
-			// THE GRID VETO AUTOPSY (22:57): no entrance unit, no hover — and
-			// grid-filtered movement REFUSES the doorway because warp
-			// interiors read non-walkable, while the owner walked through
-			// freely. The FORCE push (verbs.Stride, grid-blind) is the entry;
-			// its 5s window re-arms here — the old re-arm lived in the branch
-			// learnedDoor now skips.
+				Evidence: fmt.Sprintf("hover hunt at learned door (%d,%d): no entrance hover, 3 ground clicks deaf — arming the walk-through push", tgt.X, tgt.Y)})
+			// Grid-blind force pushes as the last rung (the grid veto autopsy).
 			a.contactAt = time.Now()
 			return
 		}
