@@ -770,7 +770,7 @@ func canVault(ctx *Ctx, s *percept.Snapshot) bool {
 	if ctx.Cap == nil || ctx.Cap.Vault == nil {
 		return false
 	}
-	if s.Me.MaxMana >= 20 {
+	if s.Me.MaxMana >= 8 { // real pool (the 19-vs-20 lesson, 11:41)
 		return s.Me.MPPct >= 10
 	}
 	return s.Me.MPPct >= 50
@@ -1471,7 +1471,10 @@ func (f *Fight) Step(ctx *Ctx) Verdict {
 			// its cost, silent do-nothing right-clicks): on a tiny pool the
 			// skill fires only at a full tank; the pool belongs to the LEAP.
 			// Plain attack is the bread — it costs nothing and always swings.
-			if s.Me.MaxMana >= 20 {
+			// Cutoff 8, not 20 (11:41: the honest read is 19 base — a REAL
+			// pool that missed the old gate by one; the doctrine was written
+			// for the truly-4 case, and mana-per-hit sustains everything above it).
+			if s.Me.MaxMana >= 8 {
 				if s.Me.MPPct > 10 {
 					mk = ctx.Cap.Contact.Key
 				}
