@@ -71,6 +71,32 @@ func (uw UseWaypoint) Do(m *motor.Motor, gr *game.MemoryReader, p *percept.Perce
 
 	m.MoveStop()
 	m.ModifierAmnesty()
+	// SINGLE-FLIGHT PRECONDITION (the advisor; and 03:08's "0 lit" race): no
+	// pad click while movement is still in flight — wait until two reads
+	// agree she is STATIONARY, so no queued click can evaporate the panel.
+	prev := gr.GetData().PlayerUnit.Position
+	for i := 0; i < 10; i++ {
+		time.Sleep(150 * time.Millisecond)
+		now := gr.GetData().PlayerUnit.Position
+		if now == prev {
+			break
+		}
+		prev = now
+	}
+	// groundClose: the ONLY safe panel-closer. ESC raises the quit menu when
+	// the panel is already gone, and the Waypoint flag LINGERS after close
+	// (03:08 — the fourth organ of the lingering-read disease), so no byte
+	// can authorize an ESC. A ground click closes any world panel and at
+	// worst walks her one step.
+	groundClose := func() {
+		bx := gr.GameAreaSizeX/2 + 60 // a few tiles south-east of her feet
+		by := gr.GameAreaSizeY/2 + 60
+		m.AimPhysical(bx, by)
+		time.Sleep(50 * time.Millisecond)
+		if !gr.GetData().HoverData.IsHovered { // never click a unit by accident
+			m.BareClick(bx, by)
+		}
+	}
 
 	// OPEN: hover-confirmed click on the pad base; the click may include the
 	// game's own walk-to, so the panel gets a real wait.
@@ -136,17 +162,21 @@ func (uw UseWaypoint) Do(m *motor.Motor, gr *game.MemoryReader, p *percept.Perce
 
 	// TOUCH mode: the open was the point — the pad is lit now and forever.
 	if len(uw.Want) == 0 {
-		if gr.GetData().OpenMenus.Waypoint { // an ESC into a vanished panel raises the QUIT MENU (02:19)
-			m.KeyLane().Press(0x1B)
-		}
+		groundClose()
 		o.Result = ResDone
 		o.Evidence = "pad touched — the network grows"
 		led.Append(o)
 		return o
 	}
 
-	// CHOOSE: the panel's own list is the only honest activation read.
+	// CHOOSE: the panel's own list is the only honest activation read — read
+	// TWICE (the advisor's two-consecutive-observations law): a mid-
+	// evaporation read says "0 lit" and a race must not be believed.
 	avail := gr.GetData().PlayerUnit.AvailableWaypoints
+	if len(avail) == 0 {
+		time.Sleep(300 * time.Millisecond)
+		avail = gr.GetData().PlayerUnit.AvailableWaypoints
+	}
 	var dest area.ID
 	for _, w := range uw.Want {
 		for _, av := range avail {
@@ -160,9 +190,7 @@ func (uw UseWaypoint) Do(m *motor.Motor, gr *game.MemoryReader, p *percept.Perce
 		}
 	}
 	if dest == 0 {
-		if gr.GetData().OpenMenus.Waypoint { // conditional: the void must not be ESC'd (02:19)
-			m.KeyLane().Press(0x1B)
-		}
+		groundClose()
 		o.Result = ResWhiff
 		o.Evidence = fmt.Sprintf("no wanted destination lit (%d lit on this tab)", len(avail))
 		led.Append(o)
@@ -251,9 +279,7 @@ func (uw UseWaypoint) Do(m *motor.Motor, gr *game.MemoryReader, p *percept.Perce
 			f.Close()
 		}
 	}
-	if gr.GetData().OpenMenus.Waypoint {
-		m.KeyLane().Press(0x1B)
-	}
+	groundClose()
 	o.Result = ResDeaf
 	o.Evidence = fmt.Sprintf("panel open, %s lit, but every row click left the area unchanged (photo saved)", area.Areas[dest].Name)
 	led.Append(o)
