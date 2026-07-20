@@ -802,6 +802,10 @@ func (fc *Fence) Step(ctx *Ctx) Verdict {
 	}
 	open, dead := fc.e.step(ctx, fc.Name())
 	if dead {
+		// P-4.2a: an abandoned trip stays abandoned (05:17: Fence re-bid 0.65
+		// the instant it gave up on a wall-blocked Akara — the idle breaker
+		// never sees idle, so the SERVICE must cool itself). Retry next town.
+		fc.coolAt = time.Now().Add(120 * time.Second)
 		fc.e.reset()
 		return Abandoned
 	}
