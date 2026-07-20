@@ -28,6 +28,12 @@ type UseWaypoint struct {
 	Want []area.ID // preference order, deepest first; empty = touch/activate only
 }
 
+// LastPanelOpenAt: when a waypoint panel last VERIFIABLY stood (10:16: the
+// deaf ride verdict blocked the lit-ledger write while he stood at an open
+// panel — activation was proven and thrown away). Advance reads this to mark
+// the CURRENT pad lit regardless of how the ride went.
+var LastPanelOpenAt time.Time
+
 func wpCheb(a, b data.Position) int {
 	dx, dy := a.X-b.X, a.Y-b.Y
 	if dx < 0 {
@@ -168,6 +174,7 @@ func (uw UseWaypoint) Do(m *motor.Motor, gr *game.MemoryReader, p *percept.Perce
 		}
 	}
 	time.Sleep(300 * time.Millisecond)
+	LastPanelOpenAt = time.Now() // the open is PROVEN: this pad is lit
 	// Photograph the OPEN panel every session (00:54: the failure photo showed
 	// no panel at all — the first bad row click had closed it, and the picture
 	// that could have named the true rows was taken twenty seconds too late).
@@ -207,14 +214,20 @@ func (uw UseWaypoint) Do(m *motor.Motor, gr *game.MemoryReader, p *percept.Perce
 			break
 		}
 	}
-	// THE LIST MAY NOT VETO THE RIDE (photo 03:23: three destinations lit,
-	// AvailableWaypoints read zero — the sixth broken byte on this mod).
-	// With a standing panel, the wants are clicked by KNOWN row order,
-	// deepest first: an unlit row is a harmless no-op, a lit row rides, and
-	// the area change is the only judge that never lied.
-	cands := uw.Want
+	// THE LIST MAY NOT VETO — NOR NARROW (photo 03:23: three lit, list read
+	// zero; photo 10:16: list claimed Stony lit, pixels showed it DARK — the
+	// list lies in both directions). It may only REORDER: the claimed-lit
+	// candidate goes first, but every want gets its row clicked — an unlit
+	// row is a harmless no-op and the area change is the only judge.
+	cands := append([]area.ID{}, uw.Want...)
 	if dest != 0 {
-		cands = []area.ID{dest}
+		reordered := []area.ID{dest}
+		for _, w := range cands {
+			if w != dest {
+				reordered = append(reordered, w)
+			}
+		}
+		cands = reordered
 	}
 	if len(cands) > 3 {
 		cands = cands[:3]
