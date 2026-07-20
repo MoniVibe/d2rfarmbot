@@ -112,6 +112,9 @@ type Advance struct {
 
 	idx        int // current position on the itinerary (highest adopted)
 	tgtFromMap bool // current border target came from the LYING map oracle (strike accounting)
+	// visited: search's coverage ledger — 20-boxes walked, per area, process-
+	// lifetime (survives town re-entries; the same-spots loop, 21:50).
+	visited map[area.ID]map[[2]int]int
 	legStart   data.Position
 	j         *journey.Journey
 	grid      *game.Grid // regrown grid (rooms stream in as she walks)
@@ -752,6 +755,32 @@ func (a *Advance) search(ctx *Ctx, d game.Data, me data.Position) {
 		// initial bearing: away from where the leg began — outward, not backtracking
 		a.heading = bearingFrom(a.legStart, me)
 	}
+	// THE VISITED LEDGER (the owner, 21:50: "he might be running the same
+	// spots over and over in underground passage... definitely isn't finding
+	// the dark wood"): a heading tour with 45° wall-turns retraces looping
+	// corridors forever, and every town-trip re-entry restarts the same tour
+	// from the same door. Search now remembers 20-boxes it has walked (per
+	// area, process-lifetime — it survives re-entries) and biases each stride
+	// toward the LEAST-visited probe; ties keep the current heading so the
+	// walk stays a line, not a dither.
+	if a.visited == nil {
+		a.visited = map[area.ID]map[[2]int]int{}
+	}
+	av := a.visited[d.PlayerUnit.Area]
+	if av == nil {
+		av = map[[2]int]int{}
+		a.visited[d.PlayerUnit.Area] = av
+	}
+	av[[2]int{me.X / 20, me.Y / 20}]++
+	bestH, bestV := a.heading, 1<<30
+	for hh := a.heading; hh < a.heading+len(bearings); hh++ {
+		o := bearings[hh%len(bearings)]
+		probe := [2]int{(me.X + o.X) / 20, (me.Y + o.Y) / 20} // bearings are ~35-tile strides: one box ahead
+		if v := av[probe]; v < bestV {
+			bestH, bestV = hh, v
+		}
+	}
+	a.heading = bestH
 	o := bearings[a.heading%len(bearings)]
 	res := verbs.Stride{To: data.Position{X: me.X + o.X, Y: me.Y + o.Y}, MinGain: 2}.
 		Do(ctx.M, ctx.GR, ctx.P, ctx.Led, a.Name())
