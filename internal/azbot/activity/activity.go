@@ -537,6 +537,17 @@ func (f *Flee) Demand(s *percept.Snapshot) *arbiter.Demand {
 	// refuse ENCIRCLEMENT: 6+ in true contact closing the ring, or the
 	// 20+ density backstop. Breakout keeps the critical eject.
 	if brawlerMode {
+		// BLOOD JOINS THE RING (11:43 audit: 65 flee grants in barb31's
+		// sixteen minutes, bidding at 96 blood — radius-45 aggression walks
+		// him INTO packs and this branch yanked him straight back out: the
+		// charge-flee oscillator IS the "runs around instead of killing" the
+		// owner watched, wearing Survive-class priority). A brawler leaves a
+		// ring only when his blood argues too (<55); above that the ring is
+		// just customers in a queue. Breakout keeps the critical eject
+		// (TimeToDie, trapped, hard floor) at any count.
+		if s.Me.HPPct >= 55 {
+			return nil
+		}
 		ring := 0
 		for _, e := range s.Enemies {
 			if !e.Walled && chebyshev(s.Me.Pos, e.Pos) <= 4 {
