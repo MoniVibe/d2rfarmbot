@@ -375,7 +375,12 @@ func (a *Advance) Step(ctx *Ctx) Verdict {
 		}
 		if padDist < 1<<30 {
 			charName := ctx.GR.GetData().PlayerUnit.Name
-			var wants []area.ID
+			// KNOWN-LIT destinations always ride. UNKNOWN ones get ONE probe per
+			// cooldown to BOOTSTRAP the ledger (10:26: the ledger starts empty,
+			// so a pure known-lit gate never rides and he walks Blood Moor
+			// forever — the ledger needs a way to fill itself). A probe that
+			// opens the panel records the pad lit; a whiff just cools 90s.
+			var wants, probe []area.ID
 			for i := len(a.Itinerary) - 1; i > a.idx; i-- {
 				if s.Me.Level >= a.Itinerary[i].MinLevel {
 					lit := false
@@ -384,8 +389,13 @@ func (a *Advance) Step(ctx *Ctx) Verdict {
 					}
 					if lit {
 						wants = append(wants, a.Itinerary[i].Area)
+					} else {
+						probe = append(probe, a.Itinerary[i].Area)
 					}
 				}
+			}
+			if len(wants) == 0 && time.Since(a.wpAt) > 90*time.Second {
+				wants = probe // bootstrap: one pad visit to learn what's lit
 			}
 			if len(wants) > 0 {
 				if padDist > 8 {
