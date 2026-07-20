@@ -20,6 +20,12 @@ import (
 type ClickMove struct {
 	To   data.Position
 	Hold time.Duration // judge window; default 1400ms
+	// CombatKey: THE MARCH SWINGS (the owner, 04:33: a melee skill on right-
+	// click walks toward the point and engages whatever it meets on the way).
+	// Nonzero = select this skill and travel by RIGHT-click: the walk itself
+	// is the weapon. A hovered monster under the point is a bonus, not a
+	// hazard — the dodge is skipped.
+	CombatKey byte
 }
 
 // LastWaystation: the point the last ClickMove actually clicked — the nav
@@ -91,21 +97,29 @@ func (cm ClickMove) Do(m *motor.Motor, gr *game.MemoryReader, p *percept.Percept
 	}
 	m.AimPhysical(bx, by)
 	time.Sleep(45 * time.Millisecond)
-	if hd := gr.GetData().HoverData; hd.IsHovered {
-		// A unit under the click point turns the move into an attack/talk —
-		// nudge the aim and re-check once; if still owned, refuse honestly.
-		by += 24
-		m.AimPhysical(bx, by)
-		time.Sleep(45 * time.Millisecond)
-		if hd2 := gr.GetData().HoverData; hd2.IsHovered {
-			o.Result = ResRefused
-			o.Evidence = "every aim point hovered a unit — a click would strike, not walk"
-			led.Append(o)
-			return o
+	if cm.CombatKey == 0 {
+		if hd := gr.GetData().HoverData; hd.IsHovered {
+			// A unit under the click point turns the move into an attack/talk —
+			// nudge the aim and re-check once; if still owned, refuse honestly.
+			by += 24
+			m.AimPhysical(bx, by)
+			time.Sleep(45 * time.Millisecond)
+			if hd2 := gr.GetData().HoverData; hd2.IsHovered {
+				o.Result = ResRefused
+				o.Evidence = "every aim point hovered a unit — a click would strike, not walk"
+				led.Append(o)
+				return o
+			}
 		}
 	}
 	LastWaystation = way
-	m.BareClick(bx, by)
+	if cm.CombatKey != 0 {
+		m.PressKey(cm.CombatKey)
+		time.Sleep(50 * time.Millisecond)
+		m.ClickRight(bx, by) // walk-and-engage: the march swings
+	} else {
+		m.BareClick(bx, by)
+	}
 	deadline := time.Now().Add(hold)
 	for time.Now().Before(deadline) {
 		time.Sleep(150 * time.Millisecond)

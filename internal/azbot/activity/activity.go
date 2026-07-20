@@ -116,7 +116,13 @@ func losClear(g *game.Grid, a, b data.Position) bool {
 // refused or dead click. Travel contexts only — combat footwork keeps the
 // force-move edge (a click near a monster is an attack).
 func clickStride(ctx *Ctx, to data.Position, hold time.Duration, who string) {
-	o := verbs.ClickMove{To: to, Hold: hold}.Do(ctx.M, ctx.GR, ctx.P, ctx.Led, who)
+	// P-5.9 for the brawler (the owner, 04:33): travel by RIGHT-click with
+	// the melee skill selected — the walk itself engages what it meets.
+	key := byte(0)
+	if brawlerMode && ctx.Cap != nil && ctx.Cap.Contact != nil && ctx.Snap.Me.MPPct > 10 {
+		key = ctx.Cap.Contact.Key
+	}
+	o := verbs.ClickMove{To: to, Hold: hold, CombatKey: key}.Do(ctx.M, ctx.GR, ctx.P, ctx.Led, who)
 	if o.Result != verbs.ResDone {
 		slideStride(ctx, to, hold, 1, who)
 	}
