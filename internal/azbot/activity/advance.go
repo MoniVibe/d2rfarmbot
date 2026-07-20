@@ -958,8 +958,11 @@ func (a *Advance) cross(ctx *Ctx, d game.Data, me data.Position, tgt data.Positi
 		// itself names the door on hover: sweep a wide grid, believe only an
 		// entrance-type hover, click THAT — posted first, hardware on deafness).
 		found := false
-		for _, dy := range []int{-40, -80, 0, -120, -160, 40} {
-			for dx := -200; dx <= 200 && !found; dx += 33 {
+		// ±320 wide, -200 high (22:53: the screenshot's doorway sat ~295px
+		// LEFT of the projection; the first sweep capped at ±200 and missed
+		// by width alone).
+		for _, dy := range []int{-40, -80, 0, -120, -160, -200, 40} {
+			for dx := -320; dx <= 320 && !found; dx += 32 {
 				cx, cy := bx+dx, by+dy
 				if cx < 20 || cy < 20 || cx > ctx.GR.GameAreaSizeX-20 || cy > ctx.GR.GameAreaSizeY-20 {
 					continue
