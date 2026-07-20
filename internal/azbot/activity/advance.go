@@ -82,15 +82,16 @@ var areaMlvl = map[area.ID]int{
 }
 
 // ExpWorthwhile is the EXP ORACLE (the owner: "so it knows which area it should go
-// for and not waste time on low level monsters"): fighting here still pays. Gap ≤4 —
-// at 5 the moor kept a level-7 amazon busy with gray trash (the owner: "she still
-// kills in the blood moor and its barely xp, she should try to push for stony field").
+// for and not waste time on low level monsters"): fighting here still pays. Gap ≤3
+// (tightened from 4 at the owner's 05:30 "prioritize travel and progress" — the
+// level-5 barbarian brawled a level-1 moor wall to wall because gap-4 still called
+// it paying ground). Outgrown ground is corridor: radius 10, march doubled.
 func ExpWorthwhile(clvl int, ar area.ID) bool {
 	ml, ok := areaMlvl[ar]
 	if !ok {
 		return true // unknown ground: assume it pays
 	}
-	return clvl-ml <= 4
+	return clvl-ml <= 3
 }
 
 // Act1Itinerary: the full march to Andariel's chamber. Level gates are mild — a rampage,
