@@ -87,6 +87,50 @@ func (cm ClickMove) Do(m *motor.Motor, gr *game.MemoryReader, p *percept.Percept
 			break
 		}
 	}
+	// THE GEOMETRIC PORTAL-SHY (02:52:00, caught by the town-hop witness: the
+	// hover dodge sampled once, read nothing, and the click swallowed him into
+	// the UP-entrance corpse portal — "blocked, moved nothing in 1200ms", then
+	// town. Hover flickers; geometry doesn't): a waystation within 5 tiles of
+	// any live portal is shoved perpendicular before it earns a click.
+	for i := range d.Objects {
+		if !d.Objects[i].IsPortal() && !d.Objects[i].IsRedPortal() {
+			continue
+		}
+		pp := d.Objects[i].Position
+		pdx, pdy := way.X-pp.X, way.Y-pp.Y
+		if pdx < 0 {
+			pdx = -pdx
+		}
+		if pdy < 0 {
+			pdy = -pdy
+		}
+		pd := pdx
+		if pdy > pd {
+			pd = pdy
+		}
+		if pd <= 5 {
+			// perpendicular to the march line, on the side away from the portal
+			mdx, mdy := way.X-start.X, way.Y-start.Y
+			ox, oy := -mdy, mdx
+			if (pp.X-way.X)*ox+(pp.Y-way.Y)*oy > 0 {
+				ox, oy = -ox, -oy
+			}
+			n := ox
+			if n < 0 {
+				n = -n
+			}
+			if m := oy; m > n || -m > n {
+				if m < 0 {
+					m = -m
+				}
+				n = m
+			}
+			if n == 0 {
+				n = 1
+			}
+			way = data.Position{X: way.X + ox*7/n, Y: way.Y + oy*7/n}
+		}
+	}
 	bx := int(float32((way.X-start.X)-(way.Y-start.Y))*19.8) + gr.GameAreaSizeX/2
 	by := int(float32((way.X-start.X)+(way.Y-start.Y))*9.9) + gr.GameAreaSizeY/2
 	if bx < 130 || by < 130 || bx > gr.GameAreaSizeX-130 || by > gr.GameAreaSizeY-170 {
