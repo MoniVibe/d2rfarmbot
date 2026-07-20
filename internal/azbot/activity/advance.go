@@ -226,6 +226,13 @@ func (a *Advance) Demand(s *percept.Snapshot) *arbiter.Demand {
 	if !s.Me.InTown && !ExpWorthwhile(s.Me.Level, s.Me.Area) {
 		urg = 0.4 // outleveled ground pays nothing: the march itself is the best exp here
 	}
+	// THE RIDE OUTRANKS THE ROAD (03:38: 'she's running blood moor again' —
+	// while Advance cooled between ride attempts, Travel 0.15/Return 0.35 won
+	// ticks and marched her out the gate on foot). In town with a plausible
+	// ride, Advance owns the exit.
+	if s.Me.InTown && time.Since(a.wpAt) > 90*time.Second {
+		urg = 0.45
+	}
 	return &arbiter.Demand{Who: a.Name(), Class: arbiter.ClassTravel,
 		Urgency: urg,
 		Commit:  arbiter.Commitment{MinHold: 4 * time.Second}}
