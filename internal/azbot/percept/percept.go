@@ -332,24 +332,33 @@ func (p *Perceptor) Capture() *Snapshot {
 		HPPct:      d.PlayerUnit.HPPercent(),
 		MPPct:      d.PlayerUnit.MPPercent(),
 		MaxMana: func() int {
-			// 3.2 repack: MaxMana can be ABSENT from the live stat list
-			// (maxmana=0 in the 11:38 telemetry while the orb held 33 — the
-			// owner: "the bot is still not aware as much as we'd like").
-			// House pattern: Stats first, BaseStats second (gold/level live
-			// there too — "Stats reads 0" on this repack), then DERIVE from
-			// the current-mana stat and the percent read as the last truth.
+			// THE FIXED-POINT LIE (11:39: maxmana=0 while the orb held 33 —
+			// the owner: "the bot is still not aware as much as we'd like").
+			// The stat was never absent: this repack stores it RAW, and the
+			// vanilla >>8 shifted 33 into 0 — every MaxMana gate in the bot
+			// has read zero since the Mamazon era. MPPercent survived because
+			// its ratio is unitless. Heuristic: values big enough to be
+			// fixed-point (≥1<<10, i.e. ≥4 mana shifted) get the shift; small
+			// values are already mana. Stats first, BaseStats second (the
+			// gold/level law), derive from current mana over percent last.
+			deFix := func(v int) int {
+				if v >= 1<<10 {
+					return v >> 8
+				}
+				return v
+			}
 			if v, ok := d.PlayerUnit.Stats.FindStat(stat.MaxMana, 0); ok && v.Value > 0 {
-				return v.Value >> 8 // D2 stores max mana fixed-point
+				return deFix(v.Value)
 			}
 			if v, ok := d.PlayerUnit.BaseStats.FindStat(stat.MaxMana, 0); ok && v.Value > 0 {
-				return v.Value >> 8
+				return deFix(v.Value)
 			}
 			if mp := d.PlayerUnit.MPPercent(); mp > 0 {
 				if v, ok := d.PlayerUnit.Stats.FindStat(stat.Mana, 0); ok && v.Value > 0 {
-					return (v.Value >> 8) * 100 / mp
+					return deFix(v.Value) * 100 / mp
 				}
 				if v, ok := d.PlayerUnit.BaseStats.FindStat(stat.Mana, 0); ok && v.Value > 0 {
-					return (v.Value >> 8) * 100 / mp
+					return deFix(v.Value) * 100 / mp
 				}
 			}
 			return 0
