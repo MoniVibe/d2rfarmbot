@@ -10,6 +10,7 @@ package verbs
 
 import (
 	"fmt"
+	"math"
 	"time"
 
 	"github.com/hectorgimenez/d2go/pkg/data"
@@ -48,6 +49,14 @@ func (v Vault) Do(m *motor.Motor, gr *game.MemoryReader, p *percept.Perceptor, l
 	}
 	d := gr.GetData()
 	me := d.PlayerUnit.Position
+	// RANGE CLAMP (13:47: override in place, mana FLAT across the click — the
+	// game simply DECLINED the cast; level-1 Leap reaches ~9 tiles and an
+	// over-range ask may refuse outright on this mod). The verb clamps every
+	// caller's ambition to 9 tiles along the line rather than trusting them.
+	if dx, dy := float64(v.To.X-me.X), float64(v.To.Y-me.Y); dx*dx+dy*dy > 81 {
+		k := 9 / math.Sqrt(dx*dx+dy*dy)
+		v.To = data.Position{X: me.X + int(dx*k), Y: me.Y + int(dy*k)}
+	}
 	bx := int(float32((v.To.X-me.X)-(v.To.Y-me.Y))*19.8) + gr.GameAreaSizeX/2
 	by := int(float32((v.To.X-me.X)+(v.To.Y-me.Y))*9.9) + gr.GameAreaSizeY/2
 	if bx < 20 {
