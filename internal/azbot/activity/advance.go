@@ -136,6 +136,12 @@ type Advance struct {
 	driveTgt  data.Position
 	driveFrom data.Position
 	driveAt   time.Time
+	// P-5.2b ARC-LENGTH ROAD PROGRESS (the advisor, 02:40: nearest-crumb
+	// targeting is a dance generator — project onto the polyline, progress
+	// MONOTONICALLY, aim a lookahead point; never let ordinary navigation
+	// reduce routeS).
+	roadKey string
+	roadS   int
 }
 
 // FrontierFor is the P-5F hint: the itinerary leg the march owns at this
@@ -293,9 +299,13 @@ func (a *Advance) Step(ctx *Ctx) Verdict {
 	if a.clearing {
 		me := s.Me.Pos
 		crossingBracketUntil = time.Now().Add(3 * time.Second) // P-5.10: the push-clear is part of the crossing
-		if chebyshev(me, a.clearDoor) >= 12 {
+		// SIGNED forward clearance, not euclidean distance (the advisor: a
+		// crossing is not clear because the area ID changed once, and plain
+		// distance from the door is satisfied by running back through it
+		// sideways). dot((me-door), clearDir) — forward only counts.
+		if (me.X-a.clearDoor.X)*a.clearDir.X+(me.Y-a.clearDoor.Y)*a.clearDir.Y >= 12 {
 			a.clearing = false
-			return Done // adopted AND clear of the ribbon — the next leg re-bids fresh
+			return Done // adopted AND geometrically clear — the next leg re-bids fresh
 		}
 		out := data.Position{X: me.X + a.clearDir.X*14, Y: me.Y + a.clearDir.Y*14}
 		clickStride(ctx, out, 1200*time.Millisecond, a.Name())
@@ -454,23 +464,44 @@ func (a *Advance) Step(ctx *Ctx) Verdict {
 	// find the furthest crumb we can still see ourselves near, then walk the
 	// chain crumb by crumb (click gait; the game handles the ground truth).
 	if ctx.Mem != nil {
+		rk := RoadKey(ctx.GR.MapSeed(), s.Me.Area, hop)
 		var road []data.Position
-		if ctx.Mem.GetJSON(RoadKey(ctx.GR.MapSeed(), s.Me.Area, hop), &road) && len(road) >= 3 {
-			ni := -1
-			for i := len(road) - 1; i >= 0; i-- { // furthest-ahead crumb within reach
-				if chebyshev(me, road[i]) <= 30 {
-					ni = i
-					break
+		if ctx.Mem.GetJSON(rk, &road) && len(road) >= 3 {
+			if a.roadKey != rk {
+				a.roadKey, a.roadS = rk, 0
+			}
+			// Project onto the polyline: the arc position of the nearest
+			// on-road point — but routeS is MONOTONIC (the advisor's law):
+			// a projection behind current progress is measurement noise or
+			// a dance about to happen; never adopt it.
+			arc, bestArc, bestD := 0, -1, 1<<30
+			for i := 0; i < len(road); i++ {
+				if i > 0 {
+					arc += chebyshev(road[i-1], road[i])
+				}
+				if dd := chebyshev(me, road[i]); dd < bestD {
+					bestD, bestArc = dd, arc
 				}
 			}
-			if ni >= 0 {
-				// walk at the NEXT crumb past the one we're near (or the last)
-				step := minInt(ni+1, len(road)-1)
-				if chebyshev(me, road[step]) <= 6 && step == len(road)-1 {
-					// at the trailhead's end: the drive/cross takes the seam
+			total := arc
+			if bestD <= 25 { // on or near the road at all
+				if bestArc > a.roadS {
+					a.roadS = bestArc // forward progress only
+				}
+				if a.roadS >= total-4 {
+					// trailhead reached: the drive/cross owns the seam now
 				} else {
-					NavDebug(ctx, road[step], "road")
-					clickStride(ctx, road[step], 1100*time.Millisecond, a.Name())
+					// LOOKAHEAD: the point ~12 tiles of arc ahead of progress.
+					look, acc := road[len(road)-1], 0
+					for i := 1; i < len(road); i++ {
+						acc += chebyshev(road[i-1], road[i])
+						if acc >= a.roadS+12 {
+							look = road[i]
+							break
+						}
+					}
+					NavDebug(ctx, look, "road")
+					clickStride(ctx, look, 1100*time.Millisecond, a.Name())
 					return Running
 				}
 			}
