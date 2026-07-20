@@ -1355,6 +1355,16 @@ func (f *Fight) Step(ctx *Ctx) Verdict {
 			verbs.Stride{To: f.targetPos, Hold: 700 * time.Millisecond}.Do(ctx.M, ctx.GR, ctx.P, ctx.Led, f.Name())
 			return Running
 		}
+		// THE RING IS THE QUEUE (the owner, 04:22: "a small delay after
+		// striking a monster down — can we have a queue so it keeps going?"):
+		// in true contact, precision is wasted motion — a positional swing
+		// hits whatever stands in the arc, no hover, no sweep, 350ms cadence.
+		// When one body drops, the next is already in range: the transition
+		// disappears. HoverStrike remains the PURSUIT verb only.
+		if contact <= 3 {
+			f.strike(ctx, f.nearestID(s), contactPos, mk)
+			return Running
+		}
 		// THE LOCK AND THE BITER (the owner, 04:19: "meaningfully attack any
 		// creature dumb enough to approach, rather than run back and forth"):
 		// re-picking nearest EVERY step ping-ponged him between half-pursuits.
