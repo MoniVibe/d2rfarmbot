@@ -1047,10 +1047,15 @@ func (idn *Identify) Step(ctx *Ctx) Verdict {
 		return Running // WARNING 9: the tome ritual clicks cells — parking first
 	}
 	if s.Me.UnidentCount == 0 {
-		if s.MenuOpen {
-			closeShop(ctx) // close the inventory the cast opened
+		// THE BAG IS BYTE-BLIND (00:19, the owner: "what the hell is he doing
+		// chilling" — identify cast, released 8s later, and the inventory
+		// STOOD because MenuOpen never reads it; the march resumed with half
+		// the screen eating clicks). If this trip CAST, the bag stands
+		// whatever the byte says — close what we know we opened.
+		if s.MenuOpen || !idn.clickAt.IsZero() {
+			closeShop(ctx)
 		}
-		idn.tries, idn.lastN = 0, -1
+		idn.tries, idn.lastN, idn.clickAt = 0, -1, time.Time{}
 		return Done
 	}
 	// Progress audit: the count dropping IS the proof the ritual works.
@@ -1091,10 +1096,10 @@ func (idn *Identify) coolOff(ctx *Ctx, why string) {
 	identifyWorks.Store(false)
 	ctx.Led.Append(verbs.Outcome{Verb: "identify", Holder: idn.Name(), Result: verbs.ResDeaf,
 		Evidence: why + " — identify belief retired (drill the ritual manually)"})
-	if ctx.Snap.MenuOpen {
-		closeShop(ctx)
+	if ctx.Snap.MenuOpen || !idn.clickAt.IsZero() {
+		closeShop(ctx) // the bag is byte-blind: close what we know we opened (00:19)
 	}
-	idn.tries, idn.lastN = 0, -1
+	idn.tries, idn.lastN, idn.clickAt = 0, -1, time.Time{}
 }
 
 // ---------------------------------------------------------------- Equip (ClassService)
