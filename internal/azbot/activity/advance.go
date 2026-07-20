@@ -792,8 +792,18 @@ func (a *Advance) cross(ctx *Ctx, d game.Data, me data.Position, tgt data.Positi
 	// its warp mouths may too. Every 15th spiral try: ONE focused real
 	// click at the mouth, judged like everything else by the area change.
 	if a.clickTry == 15 || a.clickTry == 30 {
-		ctx.M.RealMenuClick(bx, by)
-		time.Sleep(1200 * time.Millisecond)
+		// ACROSS THE ARCH, not one pixel (03:42: center-projection hardware
+		// clicks fired and nothing entered — a cave's clickable region often
+		// lives in the arch above the base). Nine real clicks, base to arch.
+		for _, off := range []data.Position{{X: 0, Y: 0}, {X: 0, Y: -30}, {X: 0, Y: -60},
+			{X: -30, Y: -30}, {X: 30, Y: -30}, {X: -30, Y: 0}, {X: 30, Y: 0},
+			{X: -20, Y: -55}, {X: 20, Y: -55}} {
+			ctx.M.RealMenuClick(bx+off.X, by+off.Y)
+			time.Sleep(700 * time.Millisecond)
+			if ctx.GR.GetData().PlayerUnit.Area != d.PlayerUnit.Area {
+				return // THE CAVE OPENED — the adopt logic takes it from here
+			}
+		}
 	}
 	if a.clickTry > 40 { // a full spiral with no confirmed hover: restart the ritual
 		a.contactAt, a.clickTry = time.Time{}, 0
