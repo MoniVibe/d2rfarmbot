@@ -986,6 +986,31 @@ func (a *Advance) cross(ctx *Ctx, d game.Data, me data.Position, tgt data.Positi
 				}
 				ctx.M.AimPhysical(cx, cy)
 				time.Sleep(45 * time.Millisecond)
+				// THE ENTRANCE'S OWN FLAG (23:03, the last oracle: entrances
+				// carry per-unit IsHovered like items do — the pickup lesson —
+				// and their POSITION field can lie while the flag tells truth;
+				// HoverData never named this door because entrance hover lives
+				// HERE, position-blind).
+				for ei := range ctx.GR.GetData().Entrances {
+					if ctx.GR.GetData().Entrances[ei].IsHovered {
+						found = true
+						ctx.Led.Append(verbs.Outcome{Verb: "cross", Holder: a.Name(), Result: verbs.ResDone,
+							Evidence: fmt.Sprintf("entrance flag HOVERED at offset (%d,%d) — clicking the door", dx, dy)})
+						ctx.M.BareClick(cx, cy)
+						time.Sleep(1600 * time.Millisecond)
+						if ctx.GR.GetData().PlayerUnit.Area != d.PlayerUnit.Area {
+							return
+						}
+						ctx.M.RealMenuClick(cx, cy)
+						time.Sleep(1400 * time.Millisecond)
+						if ctx.GR.GetData().PlayerUnit.Area != d.PlayerUnit.Area {
+							return
+						}
+					}
+				}
+				if found {
+					break
+				}
 				hd := ctx.GR.GetData().HoverData
 				if hd.IsHovered && hd.UnitType != 5 && hd.UnitType != 2 && time.Since(a.huntLogAt) > 3*time.Second {
 					// NAME EVERY HOVER (23:00: the sweep found "nothing" — or
