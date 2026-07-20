@@ -2340,7 +2340,7 @@ func main() {
 		// him at one tile for 100+ seconds, invisible to the Survive-only
 		// alarm — the owner saw it before the log did, again). Survive
 		// stalls at 2s; everyone else gets 4s of grace before being named.
-		if grant != nil && time.Since(stallWarnAt) > 2*time.Second {
+		if grant != nil && time.Since(stallWarnAt) > 2*time.Second && !led.LastAppend().IsZero() {
 			silent := time.Since(led.LastAppend())
 			bar := 4 * time.Second
 			if grant.Demand.Class == arbiter.ClassSurvive {

@@ -83,7 +83,12 @@ func (s *Sentinel) Run(stop <-chan struct{}) {
 		}
 
 		// KILL-SWITCH: one physical resource the human always owns — their keyboard.
-		if realKeyTapped(s.cfg.KillVK) {
+		// BOTH bits (21:34, the owner: "f10 isnt waking it"): the tapped-since-
+		// last-call bit is CONSUMED by any other reader of the key — including
+		// the game's own constant polling — so taps vanished. The held bit
+		// (0x8000) is level-truth nobody can eat; a normal press spans several
+		// 100ms ticks. killHeld keeps the once-per-press debounce.
+		if realKeyTapped(s.cfg.KillVK) || realKeyDown(s.cfg.KillVK) {
 			if !killHeld {
 				killHeld = true
 				if s.m.Engage.Engaged() {
