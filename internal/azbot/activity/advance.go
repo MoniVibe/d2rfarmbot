@@ -167,6 +167,14 @@ type Advance struct {
 	// reduce routeS).
 	roadKey string
 	roadS   int
+	// P-10.2 THE REROUTE: field-side network ride — behind the front line
+	// with a deeper pad lit, TP home and ride instead of walking conquered
+	// ground. began marks an active reroute (45 s to reach the portal);
+	// cool bars re-attempts; castAt/tries are the empty-tome detector.
+	rerouteBegan  time.Time
+	rerouteCool   time.Time
+	rerouteCastAt time.Time
+	rerouteTries  int
 }
 
 // FrontierFor is the P-5F hint: the itinerary leg the march owns at this
@@ -375,6 +383,92 @@ func (a *Advance) Step(ctx *Ctx) Verdict {
 	if a.idx >= len(a.Itinerary)-1 && s.Me.Area == a.Itinerary[a.idx].Area {
 		return Done
 	}
+	// P-10.2 THE REROUTE (owner, 02:35 night 2: "its our bot. it should do
+	// what we want it to do. not walk into blood moor while it has
+	// waypoints"): in the field, BEHIND the front line, with a deeper pad
+	// lit — walking conquered ground is a bug, not a journey. Cast the town
+	// portal, step through; the staging ride carries him to the deepest lit
+	// pad and the march resumes at the front. Calm-gated (no cast under
+	// pressure), 3-minute cooldown on failure, empty-tome detector ported
+	// from Withdraw.
+	if s.Me.InTown && !a.rerouteBegan.IsZero() {
+		// the portal carried him: reroute complete. Cool it so the stale state
+		// can never cast him home again the moment he rides back out.
+		a.rerouteBegan = time.Time{}
+		a.rerouteCool = time.Now().Add(3 * time.Minute)
+	}
+	if !s.Me.InTown && ctx.Cap != nil && ctx.Cap.TownTP != nil && time.Now().After(a.rerouteCool) {
+		if a.rerouteBegan.IsZero() {
+			cur := a.place(s.Me.Area)
+			deeper := area.ID(0)
+			if cur < a.campIdx() && ctx.Mem != nil {
+				charName := ctx.GR.GetData().PlayerUnit.Name
+				for i := a.campIdx(); i > cur; i-- {
+					lit := false
+					ctx.Mem.GetJSON(LitKey(charName, a.Itinerary[i].Area), &lit)
+					if lit {
+						deeper = a.Itinerary[i].Area
+						break
+					}
+				}
+			}
+			calm := true
+			for _, e := range s.Enemies {
+				if !e.Walled && chebyshev(s.Me.Pos, e.Pos) <= 12 {
+					calm = false
+					break
+				}
+			}
+			if deeper != 0 && calm {
+				a.rerouteBegan = time.Now()
+				a.rerouteCastAt, a.rerouteTries = time.Time{}, 0
+				ctx.Led.Append(verbs.Outcome{Verb: "reroute", Holder: a.Name(), Result: verbs.ResDone,
+					Evidence: fmt.Sprintf("behind the front (leg %d < %d) with pad %d lit — riding the network home", cur, a.campIdx(), int(deeper))})
+			}
+		}
+		if !a.rerouteBegan.IsZero() {
+			if time.Since(a.rerouteBegan) > 45*time.Second {
+				// the portal never carried him: stand down, march on foot a while
+				a.rerouteBegan = time.Time{}
+				a.rerouteCool = time.Now().Add(3 * time.Minute)
+			} else {
+				var best percept.PortalRef
+				bd := 1 << 30
+				for _, pt := range s.Portals {
+					if verbs.IsDeadDoor(pt.ID) {
+						continue
+					}
+					if d := chebyshev(s.Me.Pos, pt.Pos); d < bd {
+						best, bd = pt, d
+					}
+				}
+				if bd < 1<<30 {
+					if bd > 20 {
+						verbs.Stride{To: best.Pos, Hold: 1200 * time.Millisecond, MinGain: 1}.
+							Do(ctx.M, ctx.GR, ctx.P, ctx.Led, a.Name())
+					} else {
+						verbs.EnterPortal{Target: best.ID, TargetPos: best.Pos}.Do(ctx.M, ctx.GR, ctx.P, ctx.Led, a.Name())
+					}
+					return Running
+				}
+				if time.Since(a.rerouteCastAt) > 2500*time.Millisecond {
+					if !a.rerouteCastAt.IsZero() {
+						a.rerouteTries++
+					}
+					if a.rerouteTries >= 3 {
+						// tome proven empty — the walk it is, for a while
+						a.rerouteBegan = time.Time{}
+						a.rerouteCool = time.Now().Add(3 * time.Minute)
+					} else {
+						verbs.CastSelf{Key: ctx.Cap.TownTP.Key}.Do(ctx.M, ctx.GR, ctx.P, ctx.Led, a.Name())
+						a.rerouteCastAt = time.Now()
+					}
+				}
+				return Running
+			}
+		}
+	}
+
 	next := a.Itinerary[minInt(a.campIdx()+1, len(a.Itinerary)-1)]
 
 	// P-10 THE NETWORK BEATS THE ROAD (the owner, 23:35: "she's not taking

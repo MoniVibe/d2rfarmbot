@@ -1288,11 +1288,14 @@ func (f *Fight) Demand(s *percept.Snapshot) *arbiter.Demand {
 	// SHOT — nearby aggro dies, the far field is ignored, and the march owns
 	// the ground between camps.
 	radius := 45
-	if !ExpWorthwhile(s.Me.Level, s.Me.Area) && !brawlerMode {
-		// A BRAWLER'S RADIUS IS HIS EYESIGHT (11:20, third aggression order:
-		// "we want it to be more aggressive... it just walks around"): the
-		// corridor contraction never applies to him — anything sighted and
-		// unwalled is a customer; the march resumes when the field is quiet.
+	if !ExpWorthwhile(s.Me.Level, s.Me.Area) {
+		// THE CORRIDOR LAW (owner, 02:35 night 2: "killing only monsters in
+		// its way, but otherwise prioritizing progressing the map"): on
+		// outleveled ground the corridor binds EVERYONE, brawler included.
+		// The old brawler exemption was tuned when Cold Plains was food — at
+		// level 16 the 45-tile eyesight is a leash: every pack preempts the
+		// march by class and he farms nothing for hours. Aggression on worthy
+		// ground stays 45; conquered ground belongs to the march.
 		radius = 10
 	}
 	if time.Now().Before(crossingBracketUntil) {
@@ -1360,8 +1363,8 @@ func (f *Fight) Step(ctx *Ctx) Verdict {
 		// ONE radius with Demand (10, reviewer 10): a target that never earned
 		// the bid must never win the selection.
 		radius := 45
-		if !ExpWorthwhile(s.Me.Level, s.Me.Area) && !brawlerMode {
-			radius = 10 // brawler: eyesight (11:20); others: corridor contraction
+		if !ExpWorthwhile(s.Me.Level, s.Me.Area) {
+			radius = 10 // THE CORRIDOR LAW: conquered ground belongs to the march
 		}
 		if time.Now().Before(crossingBracketUntil) {
 			horde := 0
