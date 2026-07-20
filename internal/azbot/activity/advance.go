@@ -418,6 +418,11 @@ func (a *Advance) Step(ctx *Ctx) Verdict {
 				} else {
 					a.wpAt, a.wpWalkAt = time.Now(), time.Time{}
 					o := verbs.UseWaypoint{Want: wants}.Do(ctx.M, ctx.GR, ctx.P, ctx.Led, a.Name())
+					if ctx.Mem != nil && time.Since(verbs.LastPanelOpenAt) < 30*time.Second {
+						// the panel STOOD: this pad is lit, ride or no ride (10:16)
+						ctx.Mem.PutJSON(LitKey(charName, s.Me.Area), memory.ScopeForever,
+							memory.Provenance{Source: "measured", Evidence: "panel stood at this pad"}, true)
+					}
 					if o.Result == verbs.ResDone {
 						if ctx.Mem != nil { // the ride PROVES the landing lit
 							landed := area.ID(ctx.GR.GetData().PlayerUnit.Area)
@@ -485,11 +490,12 @@ func (a *Advance) Step(ctx *Ctx) Verdict {
 						wants = append(wants, a.Itinerary[i].Area)
 					}
 				}
-				ot := verbs.UseWaypoint{Want: wants}.Do(ctx.M, ctx.GR, ctx.P, ctx.Led, a.Name())
-				if ot.Result == verbs.ResDone && ctx.Mem != nil {
-					// touched OR rode: this pad is lit forever in the ledger
+				verbs.UseWaypoint{Want: wants}.Do(ctx.M, ctx.GR, ctx.P, ctx.Led, a.Name())
+				if ctx.Mem != nil && time.Since(verbs.LastPanelOpenAt) < 30*time.Second {
+					// the panel STOOD: lit forever, ride or no ride (10:16 — a
+					// deaf verdict must never eat a proven activation)
 					ctx.Mem.PutJSON(LitKey(ctx.GR.GetData().PlayerUnit.Name, s.Me.Area), memory.ScopeForever,
-						memory.Provenance{Source: "measured", Evidence: "touched/rode the pad"}, true)
+						memory.Provenance{Source: "measured", Evidence: "panel stood at this pad"}, true)
 				}
 				return Running
 			}
