@@ -234,6 +234,16 @@ region; the cursor-empty read is the only proof of success.
 
 ### P-2 RETREAT
 
+-2. THE BRAWLER'S CREED (the owner, 04:08, the barbarian's first law:
+   "he doesn't have ranged attacks — he should refrain from running
+   away; keeping it out of locked walls of bodies would do; priority
+   is still to progress the map"). CAPABILITY, not class: a fighter
+   with no REACH and no THROW tool has no kiting game — footwork is
+   denial. He fights at ANY blood. Flee exists for him only to refuse
+   ENCIRCLEMENT: six or more in true contact (4) closing the ring, or
+   the 20+ density backstop. Breakout keeps the critical eject (24)
+   unchanged. Fight's oracle stand-down never binds a brawler — a
+   brawler who stops swinging is already dead.
 -1. THE FLEE FLOOR (the owner, 23:20: "that flee at any hp is messing
    with my vibes — not flee unless she has less than 33% hp"): FLEE
    DOES NOT EXIST AT 33 BLOOD OR ABOVE. No crowd bar, no density

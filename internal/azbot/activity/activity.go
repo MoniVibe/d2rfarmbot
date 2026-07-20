@@ -229,6 +229,15 @@ var potionCoolUntil time.Time
 // from the crossing. Advance re-arms this each Step near its door.
 var crossingBracketUntil time.Time
 
+// brawlerMode: P-2.-2 THE BRAWLER'S CREED — capability truth set by the
+// executive after every calibration: no REACH and no THROW tool means
+// footwork is denial. Demands read it because their signature sees only
+// the snapshot.
+var brawlerMode bool
+
+// SetBrawler is called by the executive after every capability calibration.
+func SetBrawler(b bool) { brawlerMode = b }
+
 // MenuSanctionUntil: the MENU SENTRY's one exemption (the owner, 00:52: "an
 // aware state that de-escs unless there's a good reason like relogging").
 // Relog sanctions the quit menu while its ritual lives there; everyone else's
@@ -488,6 +497,24 @@ func (f *Flee) Demand(s *percept.Snapshot) *arbiter.Demand {
 	// there has ONE job — fleeing away from her own gear is how she loops
 	// flee→die→respawn forever. Recovery owns her; Flee stands down.
 	if s.Me.WeaponKind == "none" && s.Me.CorpseFound {
+		return nil
+	}
+	// P-2.-2 THE BRAWLER'S CREED (the owner, 04:08): no ranged game means
+	// footwork is denial — he fights at ANY blood. Flee exists only to
+	// refuse ENCIRCLEMENT: 6+ in true contact closing the ring, or the
+	// 20+ density backstop. Breakout keeps the critical eject.
+	if brawlerMode {
+		ring := 0
+		for _, e := range s.Enemies {
+			if !e.Walled && chebyshev(s.Me.Pos, e.Pos) <= 4 {
+				ring++
+			}
+		}
+		if ring >= 6 || near >= 20 {
+			return &arbiter.Demand{Who: f.Name(), Class: arbiter.ClassSurvive,
+				Urgency: 0.9,
+				Commit:  arbiter.Commitment{MinHold: 2 * time.Second}}
+		}
 		return nil
 	}
 	// P-2.-1 THE FLEE FLOOR (the owner, 23:20): flee does not exist at 33
@@ -1038,7 +1065,8 @@ func (f *Fight) Demand(s *percept.Snapshot) *arbiter.Demand {
 	// entirely so she blasts instead of orbiting.
 	// P-2.-1: the stand-down honors the FLEE FLOOR — above 33 blood Flee
 	// cannot bid, so Fight never hands it the moment (a dead band otherwise).
-	if TimeToDie(s) < 8 && s.Me.HPPct < 33 && !time.Now().Before(fleeFatigueUntil) {
+	// P-2.-2: it NEVER binds a brawler — a brawler who stops swinging is dead.
+	if !brawlerMode && TimeToDie(s) < 8 && s.Me.HPPct < 33 && !time.Now().Before(fleeFatigueUntil) {
 		near25 := 0
 		for _, e := range s.Enemies {
 			if e.Walled { // WARNING 10
@@ -1299,7 +1327,11 @@ func (f *Fight) Step(ctx *Ctx) Verdict {
 		}
 		// A dry bow set is no bow at all: while Arrows==0 the javelins ARE the build —
 		// chase and stab instead of kiting toward a weapon that whiffs at air.
-		dryBow := s.Me.Arrows == 0
+		// A char with NO bow at all is definitionally dry (04:07: the barbarian
+		// reads arrows=-1, dryBow read false, and the melee path KITED him
+		// along the river like a javelin-zon waiting on a bow that will never
+		// exist — melee is all he has; close the gap and swing).
+		dryBow := s.Me.Arrows == 0 || !s.Me.HasBow
 		// P-1.7 (the owner, 11:50: the javelin CQB switch is DROPPED): holding
 		// the javelins with a live quiver, she swaps back to the bow at ONCE —
 		// any range, any contact — and stabs only while the swap pends. Never

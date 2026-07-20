@@ -1829,6 +1829,7 @@ func main() {
 		return c
 	}
 	cap := calibrate()
+	activity.SetBrawler(cap.Reach == nil && cap.Throw == nil) // P-2.-2: no ranged game = the Brawler's Creed
 	arb := &arbiter.Arbiter{}
 	acts := map[string]activity.Activity{}
 	road := []data.Position{{X: 6020, Y: 4952}, {X: 5992, Y: 4941}, {X: 5963, Y: 5001}, {X: 5962, Y: 4956}, {X: 5952, Y: 4944}}
@@ -2099,6 +2100,7 @@ func main() {
 		if (s.Me.Armed != wasArmed || (wasDead && !deadNow)) && !deadNow {
 			logger.Info("executive: self-model event — recalibrating", "armed", s.Me.Armed, "revived", wasDead)
 			cap = calibrate()
+			activity.SetBrawler(cap.Reach == nil && cap.Throw == nil)
 			fight.Recalibrated() // the audit follows the hands (P-7.1)
 			wasArmed = s.Me.Armed
 		}
