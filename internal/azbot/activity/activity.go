@@ -778,14 +778,27 @@ func (b *Breakout) Name() string { return "breakout" }
 // canVault: the ONE mana gate for every leap site (11:20: three whiffs, all
 // mana-dry). A tiny pool must hold the leap's cost (~half of 4); a real pool
 // asks only for scraps.
+//
+// vaultHungerUntil — MANA HUNGER (13:39: mana-per-hit lands 4 points and
+// Double Swing drinks them the same instant; the leap's gate never opens —
+// the two skills race for one starved pool and the swing always wins). When
+// a leap site is READY but mana-short, the hunger window makes the contact
+// skill stand down for a few seconds so the pool builds to the jump.
+var vaultHungerUntil time.Time
+
 func canVault(ctx *Ctx, s *percept.Snapshot) bool {
 	if ctx.Cap == nil || ctx.Cap.Vault == nil {
 		return false
 	}
-	if s.Me.MaxMana >= 8 { // real pool (the 19-vs-20 lesson, 11:41)
-		return s.Me.MPPct >= 10
+	need := 10
+	if s.Me.MaxMana < 8 {
+		need = 50
 	}
-	return s.Me.MPPct >= 50
+	if s.Me.MPPct >= need {
+		return true
+	}
+	vaultHungerUntil = time.Now().Add(4 * time.Second)
+	return false
 }
 
 // travelVaultAt: one clock for the travel gait — leaps spent on distance never
@@ -1531,6 +1544,9 @@ func (f *Fight) Step(ctx *Ctx) Verdict {
 				}
 			} else if s.Me.MPPct >= 95 && (ctx.Cap == nil || ctx.Cap.Vault == nil) {
 				mk = ctx.Cap.Contact.Key // no leap to save for: full tank may swing
+			}
+			if time.Now().Before(vaultHungerUntil) {
+				mk = 0 // the pool is spoken for: the leap eats first (13:39)
 			}
 		}
 		// A dry bow set is no bow at all: while Arrows==0 the javelins ARE the build —
