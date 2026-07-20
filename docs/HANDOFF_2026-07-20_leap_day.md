@@ -92,3 +92,37 @@ recognizer (602/607 are Mamazon-era; the barb's drops differ).**
   `-goal rampage -meleekey f3 -seconds 86400 > logs/barbN.log 2>&1 &`
   (barb43 is next). NEVER two azbot processes. cd FIRST — cwd resets.
 - STE spec was REFORMATTED by the owner today — read structure before editing.
+
+## NIGHT 2 ADDENDUM (2026-07-21 ~02:00 — the doors campaign)
+
+State at freeze: lvl 16, 22k gold, FROZEN mid-Moor at (5023,4679) since
+01:48 (game unfocused 01:35, owner asleep — world paused, he is safe).
+Self-resume armed: on refocus the deadman completes its town escape, the
+waiter (bzxkbnkb0) restarts the bot there, wplit.6 loads, staging rides go
+deep. Monitor b82so96nn (milestone-only).
+
+PROGRESS: Act 1 itinerary now LEARNED through Black Marsh — doors+roads on
+the WAL: town↔Moor↔ColdPlains↔Stony (walked), Stony→UP at the OWNER-
+CALIBRATED (5027,5175) cliff arch (the cabin fact was sparse-crumb POISON),
+UP→DarkWood (owner-shepherded, recorded on an engaged tick), DarkWood→
+BlackMarsh (bot solo). Waypoints lit: 1/3/4(rode)/6(seeded from observed
+pad-stand — next ride proves). Dark Wood pad still unlit (outran the touch).
+
+LAWS BOUGHT TONIGHT: the watcher never sleeps (disengaged ticks record
+crossings — owner walks are guaranteed lessons); seed-then-RESTART (WAL
+appends don't reach a live process); a strike requires ARRIVAL (bestDist<=30
+— route stalls convicted honest doors); the staging ride (deepest lit pad
+behind = on-ramp to unlit targets; PROVEN "rode to it" 00:28); the pacer's
+deadman (EMA drift <12/3min); the deadman box (75s/6-box, any holder);
+calibration law (owner parks char 3s engaged = ground truth beating every
+derivation); maze doctrine MEASURED (classic-gen interiors diverge 478
+tiles from live D2R; overworld anchors validated TRUE; mod files are
+byte-identical for levels/lvlmaze — the mod changes no layouts); byte-blind
+bag closes (identify closes what it opened); fight sight-divergence cool;
+uniques-only loot; F10 held-bit + 1s cooldown.
+
+OPEN: DW pad touch (return pass); ride-proof of wplit.6; Monastery Gate leg
+(16 reached!); pad ambush needs a crossing-bracket-style shield; instant-
+whiff burst autopsy (4 whiffs/19ms); leap displacement telemetry (paid
+casts read as whiffs — bar 2 unverified); RESCUE CAIN activity + quest-item
+pickup exception (owner interested); persist strikes ledger already WAL'd.
