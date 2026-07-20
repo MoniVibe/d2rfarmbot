@@ -214,10 +214,13 @@ var ManaWells = map[object.Name]bool{
 	object.ArcaneManaWell: true, object.Act3KurastManaWell: true,
 }
 
-// IsRite: any object the Imbibe activity might want — a giving shrine or a well.
+// IsRite: any object the Imbibe activity might want — a giving shrine, a
+// well, or a CHEST (the owner, 05:32, night orders: "make sure it pops
+// chests"). Chests share the rites' honest machinery: Selectable until
+// opened, hover-clicked, yielded under pressure.
 func IsRite(ob data.Object) bool {
 	return (ob.IsShrine() && GivingShrines[ob.Shrine.ShrineType]) ||
-		HealthWells[ob.Name] || ManaWells[ob.Name]
+		HealthWells[ob.Name] || ManaWells[ob.Name] || ob.IsChest()
 }
 
 // AttachReport is the M0 epistemics gate verdict: behavioral probes over the channels

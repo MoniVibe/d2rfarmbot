@@ -44,6 +44,13 @@ func (im *Imbibe) rite(s *percept.Snapshot, ob data.Object) float64 {
 		return 0.65
 	case percept.ManaWells[ob.Name] && s.Me.MPPct < 50 && s.Me.MaxMana >= 20:
 		return 0.5 // the skill-law is thirsty (P-1.13)
+	case ob.IsChest():
+		// Night orders (05:32): "make sure it pops chests." Below shrines and
+		// need-wells — treasure that waits beats a buff that expires — and
+		// only with a bit of bag room for what falls out.
+		if s.Me.InvFree >= 2 {
+			return 0.35
+		}
 	}
 	return 0
 }
