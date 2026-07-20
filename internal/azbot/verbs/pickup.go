@@ -33,6 +33,11 @@ func (pk Pickup) Do(m *motor.Motor, gr *game.MemoryReader, p *percept.Perceptor,
 		return o
 	}
 	m.MoveStop()
+	m.ModifierAmnesty() // a latched shift turns the pickup click into an attack
+	// swing at the ground (04:30, the brawler: hover confirmed, click landed,
+	// item stayed — his ring-queue spams shift-attacks hundreds of times a
+	// minute and one lost release latches it; the zon's right-click volleys
+	// never exposed this). The EnterPortal lesson, third organ.
 	d := gr.GetData()
 	// P-6.2: evidence names its item — "why did she pick THAT up" must be
 	// answerable from the ledger (the owner asked and the log had no answer).
