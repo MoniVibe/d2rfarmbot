@@ -1965,6 +1965,9 @@ func main() {
 	deadmanAt := time.Now()
 	prevEngaged := true
 	engagedAt := time.Now()
+	emaX, emaY := 0.0, 0.0
+	emaRef := data.Position{}
+	emaRefAt := time.Now()
 	sawInvalid := false
 	wasFocused := true
 	var trail []string // the last moments, for the owner's death reports
@@ -2380,9 +2383,24 @@ func main() {
 		// strides, and a fight-class holder never strides. Position truth
 		// needs no holder's cooperation: 75s inside a 6-box on hostile ground
 		// refutes everything — the portal is the door, WHOEVER holds.)
+		//
+		// THE PACER'S DEADMAN (00:44, the owner: "going back and forth most
+		// of the time — his new favorite spot"): shuttling between two pockets
+		// 20 tiles apart resets every box-based breaker forever. The EMA of
+		// his position barely moves while his feet never stop: <12 tiles of
+		// centroid drift in 3 field-minutes refutes footwork the same way.
+		emaX = emaX*0.98 + float64(s.Me.Pos.X)*0.02
+		emaY = emaY*0.98 + float64(s.Me.Pos.Y)*0.02
+		if s.Me.InTown || s.Me.HPPct <= 0 ||
+			chebyshev(data.Position{X: int(emaX), Y: int(emaY)}, emaRef) > 12 {
+			emaRef, emaRefAt = data.Position{X: int(emaX), Y: int(emaY)}, time.Now()
+		}
+		pacerTripped := time.Since(emaRefAt) > 3*time.Minute
 		if chebyshev(s.Me.Pos, deadmanPos) > 6 || s.Me.InTown || s.Me.HPPct <= 0 {
 			deadmanPos, deadmanAt = s.Me.Pos, time.Now()
-		} else if time.Since(deadmanAt) > 75*time.Second && cap.TownTP != nil &&
+		}
+		if (time.Since(deadmanAt) > 75*time.Second || pacerTripped) && !s.Me.InTown && s.Me.HPPct > 0 &&
+			cap.TownTP != nil &&
 			m.Engage.Engaged() && time.Since(lastPocketTP) > 120*time.Second {
 			who := "none"
 			if grant != nil {
@@ -2400,6 +2418,7 @@ func main() {
 			}
 			lastPocketTP = time.Now()
 			deadmanPos, deadmanAt = data.Position{}, time.Now()
+			emaRefAt = time.Now()
 			continue
 		}
 		if time.Since(statusAt) > 10*time.Second {
