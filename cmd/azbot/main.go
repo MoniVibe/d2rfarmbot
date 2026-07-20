@@ -2329,8 +2329,13 @@ func main() {
 			arb.Release()
 		}
 		if time.Since(statusAt) > 10*time.Second {
+			// mp/maxmana joined 2026-07-20 11:30 (the owner: "he has about 33
+			// mana now and gains mana per hit — the bot is still not aware as
+			// much as we'd like"): the read was always live; the TELEMETRY
+			// wasn't, and stale assumptions grew in the dark.
 			logger.Info("status", "pos", fmt.Sprintf("(%d,%d)", s.Me.Pos.X, s.Me.Pos.Y),
-				"area", int(s.Me.Area), "hp", s.Me.HPPct, "lvl", s.Me.Level, "gold", s.Me.Gold,
+				"area", int(s.Me.Area), "hp", s.Me.HPPct, "mp", s.Me.MPPct, "maxmana", s.Me.MaxMana,
+				"lvl", s.Me.Level, "gold", s.Me.Gold,
 				"weapon", s.Me.WeaponKind, "arrows", s.Me.Arrows, "holder", grant.Demand.Who)
 			statusAt = time.Now()
 		}

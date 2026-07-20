@@ -209,7 +209,12 @@ BELONGS TO THE LEAP — three vault whiffs, all mana-dry: on a tiny pool
 every leap site shares one mana gate (canVault: 50% of a tiny pool, scraps
 of a real one). Silent skill fizzles (right-click costing more than the
 pool holds) are a do-nothing cycle class — the tiny-pool doctrine
-eliminates them. AND THE THIRD AGGRESSION ORDER: a brawler's Fight radius
+eliminates them. (11:30 correction, the owner: "he has about 33 mana now
+and gains mana per hit — the bot is still not aware as much as we'd like."
+The pool GROWS: every gate here is written against the LIVE MaxMana read,
+never against a remembered number — at 33 the tiny-pool branch retires
+itself. Awareness debt paid: mp/maxmana joined the status telemetry, and
+vault whiffs name their mana instead of shrugging.) AND THE THIRD AGGRESSION ORDER: a brawler's Fight radius
 is his EYESIGHT (45) on all ground — the corridor contraction never
 applies to him; the march resumes when the field is quiet.
 

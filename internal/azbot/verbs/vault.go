@@ -60,10 +60,13 @@ func (v Vault) Do(m *motor.Motor, gr *game.MemoryReader, p *percept.Perceptor, l
 	} else if by > gr.GameAreaSizeY-20 {
 		by = gr.GameAreaSizeY - 20
 	}
+	mpBefore := gr.GetData().PlayerUnit.MPPercent()
 	m.ClickRight(bx, by)
 	// Displacement postcondition: a leap that fired moves the body within its
-	// animation (~600ms). Judged loosely — the caller's cooldown absorbs a whiff.
-	time.Sleep(650 * time.Millisecond)
+	// animation. 900ms window (650 judged real leaps as whiffs — the arc plus
+	// landing recovery outlasts it). Judged loosely — the caller's cooldown
+	// absorbs a whiff.
+	time.Sleep(900 * time.Millisecond)
 	after := gr.GetData().PlayerUnit.Position
 	if chebyshev := func(a, b data.Position) int {
 		dx, dy := a.X-b.X, a.Y-b.Y
@@ -82,7 +85,10 @@ func (v Vault) Do(m *motor.Motor, gr *game.MemoryReader, p *percept.Perceptor, l
 		o.Evidence = fmt.Sprintf("leapt (%d,%d)→(%d,%d)", me.X, me.Y, after.X, after.Y)
 	} else {
 		o.Result = ResWhiff
-		o.Evidence = "no displacement after leap click (mana dry or bad landing)"
+		// Named evidence, not a shrug (11:30: "mana dry or bad landing" hid
+		// that his pool was 33 and the whiffs were something else entirely).
+		o.Evidence = fmt.Sprintf("no displacement after leap click (mp %d%%→%d%% at click, land=(%d,%d))",
+			mpBefore, gr.GetData().PlayerUnit.MPPercent(), v.To.X, v.To.Y)
 	}
 	led.Append(o)
 	return o
