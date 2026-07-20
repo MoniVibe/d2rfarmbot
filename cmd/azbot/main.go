@@ -1832,6 +1832,14 @@ func main() {
 	arb := &arbiter.Arbiter{}
 	acts := map[string]activity.Activity{}
 	road := []data.Position{{X: 6020, Y: 4952}, {X: 5992, Y: 4941}, {X: 5963, Y: 5001}, {X: 5962, Y: 4956}, {X: 5952, Y: 4944}}
+	// The hand-piloted road belongs to ONE world — its own provenance says
+	// "seed 466817790". On Fableboi's fresh seed it marched him into the
+	// corners of a town that doesn't exist (04:03, the barbarian's first
+	// minutes). Foreign seed: no legacy road — Advance's border oracle and
+	// the road recorder are seed-independent and learn his world instead.
+	if gr.MapSeed() != 466817790 {
+		road = nil
+	}
 	mem.PutJSON("road.town.blood_moor_gate", memory.ScopeSeed, memory.Provenance{Source: "hand-piloted", Evidence: "2026-07-18, seed 466817790"}, road)
 	// Seed the one door already proven — under the seed it was MEASURED in (the world
 	// re-rolls per game; other seeds learn their own doors from the live oracle).
