@@ -1104,6 +1104,7 @@ type Fight struct {
 	// Travel while feeding nothing — the advisor's "tiny bureaucratic collapse".
 	watchTarget data.UnitID
 	watchSince  time.Time
+	vaultAt     time.Time // P-2.11(3): leap-to-the-raiser cooldown
 	// March is Advance's live door hint. P-5.8: within 12 of the march door the
 	// REACH TOOL holds — the clinch swap is suppressed and the volley fires
 	// point-blank; the funnel rewards the pierce, not the poke.
@@ -1491,13 +1492,44 @@ func (f *Fight) Step(ctx *Ctx) Verdict {
 			f.strike(ctx, f.nearestID(s), contactPos, mk)
 			return Running
 		}
+		// P-2.11(3) THE LEAP TO THE NECROMANCER (the owner, 11:12: "the leap
+		// may also be used to get to resurrectors easily — so he wouldn't be
+		// blocked by their resurrecting minions"): the minion wall is the
+		// raiser's whole defense, and a vault makes it scenery — land beside
+		// the shaman and the ring-yield rule above finishes the sentence.
+		// Grid-vouched landing 2 tiles short; one try per 8s, a whiff falls
+		// through to the walking pursuit.
+		if lockIsRaiser && d >= 5 && d <= 16 && ctx.Cap != nil && ctx.Cap.Vault != nil &&
+			time.Since(f.vaultAt) > 8*time.Second {
+			land := f.targetPos
+			if land.X > s.Me.Pos.X {
+				land.X -= 2
+			} else if land.X < s.Me.Pos.X {
+				land.X += 2
+			}
+			if land.Y > s.Me.Pos.Y {
+				land.Y -= 2
+			} else if land.Y < s.Me.Pos.Y {
+				land.Y += 2
+			}
+			if vaultLandable(ctx, land) {
+				f.vaultAt = time.Now()
+				verbs.Vault{To: land, Key: ctx.Cap.Vault.Key, SkillID: int(ctx.Cap.Vault.Skill)}.
+					Do(ctx.M, ctx.GR, ctx.P, ctx.Led, f.Name())
+				return Running
+			}
+		}
 		// THE LOCK AND THE BITER (the owner, 04:19: "meaningfully attack any
 		// creature dumb enough to approach, rather than run back and forth"):
 		// re-picking nearest EVERY step ping-ponged him between half-pursuits.
 		// The brawler LOCKS one victim until it dies; only a creature that
 		// closes to true contact while the lock stands clearly farther earns
 		// the new lock (hysteresis: no flapping between similar ranges).
-		if contact <= 5 && d > contact+3 {
+		// A RAISER LOCK IS NEVER STOLEN BY A BITER (11:12 audit): adopting the
+		// minion that bit him mid-pursuit is the resurrection loop wearing a
+		// different hat — the shaman rezzes the biter's brothers while he
+		// turns his back on it.
+		if contact <= 5 && d > contact+3 && !lockIsRaiser {
 			if nid := f.nearestID(s); nid != 0 {
 				f.target, f.targetPos = nid, contactPos // the biter IS the fight now
 			}

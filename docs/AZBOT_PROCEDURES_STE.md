@@ -190,8 +190,14 @@ closed or pinned ring is the leap's whole reason to exist — jump THROUGH the
 thinnest sector to grid-vouched ground and the ring becomes scenery (Breakout,
 one try per 8s, whiff falls through to shove-and-fight); (2) a door spiral
 that grinds without an entry leaps AT the doorstep once (clickTry 12) to
-re-roll the approach angle. Landings must be map-walkable — a leap cannot be
-steered mid-air, so unknown terrain is refused (stricter than dodge).
+re-roll the approach angle; (3) THE LEAP TO THE NECROMANCER (the owner,
+11:12: "get to resurrectors easily, so he wouldn't be blocked by their
+resurrecting minions") — a raiser lock at 5–16 tiles vaults to land 2 tiles
+beside the shaman, where the ring-yield rule finishes it; and the biter rule
+never steals a raiser lock (adopting the minion that bit him mid-pursuit is
+the resurrection loop wearing a different hat). Landings must be
+map-walkable — a leap cannot be steered mid-air, so unknown terrain is
+refused (stricter than dodge).
 
 **P-4.9 — THE BELT THAT EATS NOTHING.** A buy is only a RESTOCK if the
 BELT rises. The owned-count delta (belt+bag) proves the purchase happened;
