@@ -1536,6 +1536,17 @@ func (f *Fight) Step(ctx *Ctx) Verdict {
 		}
 		o := verbs.HoverStrike{Target: f.target, TargetPos: f.targetPos, SelectKey: mk, Volley: true}.
 			Do(ctx.M, ctx.GR, ctx.P, ctx.Led, f.Name())
+		if o.Result == verbs.ResWhiff && time.Since(f.lastStrikeAt) >= 350*time.Millisecond {
+			// THE WHIFF STILL SWINGS (the owner, 11:15: "still kind of runs
+			// around instead of killing"): 31 hover whiffs in barb29's ten
+			// minutes, each a cycle with NO click issued — he walked beside
+			// monsters looking busy. A missed hover downgrades to a
+			// march-swing AT the target's position (the right-click melee
+			// walk: the game closes and swings); the aimed strike resumes
+			// the moment hover confirms.
+			volleyAt(ctx, f.targetPos, mk, false)
+			f.lastStrikeAt = time.Now()
+		}
 		f.assess(o)
 		return Running
 	}
