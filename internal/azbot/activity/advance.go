@@ -840,6 +840,25 @@ func (a *Advance) cross(ctx *Ctx, d game.Data, me data.Position, tgt data.Positi
 		ctx.M.BareClick(bx+sp.X, by+sp.Y)
 		time.Sleep(1000 * time.Millisecond) // the click starts a walk-and-enter
 	}
+	// P-2.11 AT THE DOOR (the owner, 2026-07-20: "jump through doors or
+	// something"): when the spiral grinds without an entry, one leap AT the
+	// doorstep — clutter between us and the mouth is scenery to a leap, and
+	// the landing re-rolls the approach angle for every click that follows.
+	if a.clickTry == 12 && ctx.Cap != nil && ctx.Cap.Vault != nil {
+		land := tgt
+		if land.X > me2.X {
+			land.X -= 2
+		} else if land.X < me2.X {
+			land.X += 2
+		}
+		if land.Y > me2.Y {
+			land.Y -= 2
+		} else if land.Y < me2.Y {
+			land.Y += 2
+		}
+		verbs.Vault{To: land, Key: ctx.Cap.Vault.Key, SkillID: int(ctx.Cap.Vault.Skill)}.
+			Do(ctx.M, ctx.GR, ctx.P, ctx.Led, a.Name())
+	}
 	// THE STATIC-CLICK LAW, finally challenged (03:31: three tiles from the
 	// Underground Passage, a minute of stucks, a breaker TP from the very
 	// doorstep — the farmbot era FENCED every cave because id=0 stairs never

@@ -567,8 +567,12 @@ func plan(s *percept.Snapshot) (buyHP, buyMana int) {
 	// A FULL BELT BUYS NOTHING (measured 09:59: 6 HP + 2 mana on an 8-slot
 	// belt, doctrine wanting 4 mana — the deficit re-bid an unwinnable errand
 	// three times in a minute). Buys are capped by free slots; the mix
-	// corrects itself as she drinks.
-	free := s.Me.BeltSlots - s.Me.BeltHP - s.Me.BeltMana
+	// corrects itself as she drinks. Free slots come from OCCUPANCY (BeltUsed),
+	// not the ID-filtered counts: a belt full of bottles the filter doesn't
+	// recognize read as empty, and the phantom deficit bought ~2,300 gold of
+	// potions into the bag in two grants (the owner, 2026-07-20: "spammed
+	// health potions from akara").
+	free := s.Me.BeltSlots - s.Me.BeltUsed
 	if free < 0 {
 		free = 0
 	}
@@ -632,6 +636,31 @@ func (r *Restock) Step(ctx *Ctx) Verdict {
 	// Shop open: ONE purchase per step (instant-buy cells). Potions first, then
 	// scrolls (P-4.5): blood before the escape hatch.
 	if buyMana > 0 || buyHP > 0 {
+		// THE BELT THAT EATS NOTHING (P-4.9; the owner, 2026-07-20: "spammed
+		// health potions from akara"): a buy is only a RESTOCK if the belt
+		// rises — bottles that keep landing in the bag satisfy the owned-count
+		// delta and never the deficit, so the trip would buy forever. Three
+		// consecutive buys with a frozen belt end the trip and cool potions
+		// hard; the beltFrozen field was declared for exactly this and never
+		// wired until the spam.
+		if r.potBought == 0 {
+			r.lastBeltHP, r.lastBeltMN, r.beltFrozen = s.Me.BeltHP, s.Me.BeltMana, 0
+		} else if s.Me.BeltHP != r.lastBeltHP || s.Me.BeltMana != r.lastBeltMN {
+			r.beltFrozen = 0
+			r.lastBeltHP, r.lastBeltMN = s.Me.BeltHP, s.Me.BeltMana
+		} else {
+			r.beltFrozen++
+		}
+		if r.beltFrozen >= 3 {
+			potionCoolUntil = time.Now().Add(5 * time.Minute)
+			r.nextAt = time.Now().Add(5 * time.Minute)
+			ctx.Led.Append(verbs.Outcome{Verb: "buy", Holder: r.Name(), Result: verbs.ResDeaf,
+				Evidence: "belt frozen through 3 buys — bottles land in the bag; trip ended, potions cooled 5m"})
+			closeShop(ctx)
+			r.e.reset()
+			r.resetCounters()
+			return Abandoned
+		}
 		// Potion buys carry the scroll machinery's discipline (12:15): probed,
 		// learned, judged by the OWNED-count delta — the shop layout shifts
 		// with level and the belt-only check misread bag-landings as ghosts.
@@ -648,6 +677,10 @@ func (r *Restock) Step(ctx *Ctx) Verdict {
 		}
 		r.potBought++
 		if r.potBought > s.Me.BeltSlots+2+8 { // runaway guard, probe headroom included
+			// The runaway abandon must COOL or it re-grants in seconds and buys
+			// another armful — the 10:56 spam re-granted 25s after abandoning.
+			potionCoolUntil = time.Now().Add(4 * time.Minute)
+			r.nextAt = time.Now().Add(4 * time.Minute)
 			closeShop(ctx)
 			r.e.reset()
 			r.resetCounters()

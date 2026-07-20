@@ -180,6 +180,30 @@ resumes. Liveness is fed only by actually-issued clicks (strike() and
 assess(ResDone)), never by hover probes or hope; the clock starts at
 lock-acquisition so fresh engagements get their full grace.
 
+**P-2.11 — THE VAULT.** The owner granted Leap (F5, 2026-07-20: "get
+through problematic situations, jump through doors or something"). Doctrine:
+RoleVault in the priors (Leap-family: cursor-targeted self-displacement),
+seeded into Capability.Vault by the same readback calibration as every tool.
+The verb (verbs.Vault) never leaps blind — the readback must name the proven
+skill before the click — and judges itself by displacement. Uses: (1) a
+closed or pinned ring is the leap's whole reason to exist — jump THROUGH the
+thinnest sector to grid-vouched ground and the ring becomes scenery (Breakout,
+one try per 8s, whiff falls through to shove-and-fight); (2) a door spiral
+that grinds without an entry leaps AT the doorstep once (clickTry 12) to
+re-roll the approach angle. Landings must be map-walkable — a leap cannot be
+steered mid-air, so unknown terrain is refused (stricter than dodge).
+
+**P-4.9 — THE BELT THAT EATS NOTHING.** A buy is only a RESTOCK if the
+BELT rises. The owned-count delta (belt+bag) proves the purchase happened;
+it cannot prove it helped — bottles landing in the bag satisfy the delta
+and never the deficit, and the ID-filtered belt counts read a belt full of
+unrecognized bottles as EMPTY (measured 2026-07-20: ~2,300 gold of potions
+bought into the bag in two grants, re-granting 25s after each runaway abandon
+— the owner: "spammed health potions from akara"). Three laws: free slots
+come from OCCUPANCY (BeltUsed counts every bottle, stranger or not), three
+consecutive buys with a frozen belt end the trip and cool potions 5 minutes,
+and EVERY abandon path cools — an uncooled abandon is a re-grant in seconds.
+
 **WARNING 9 — THE CURSOR ITEM.** An item on the cursor owns every click:
 panel buttons do not press, world clicks DROP it, and the stuck-detector
 reads the paralysis as walls (measured 09:30: one missed put-back sent

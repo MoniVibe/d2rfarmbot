@@ -52,6 +52,11 @@ type PlayerState struct {
 	BeltSlots int
 	BeltHP    int
 	BeltMana  int
+	// BeltUsed: EVERY occupied belt slot, whatever the bottle — the occupancy
+	// truth. BeltHP/BeltMana are ID-filtered and blind to unknown bottles; a
+	// belt full of strangers read as empty and Restock bought forever into the
+	// bag (the owner, 2026-07-20: "spammed health potions from akara").
+	BeltUsed int
 	// MinDurPct: the worst equipped item's durability percent (100 when nothing
 	// tracks durability) — what the Repair service bids on.
 	MinDurPct int
@@ -460,6 +465,7 @@ func (p *Perceptor) Capture() *Snapshot {
 		}
 	}
 	s.Me.BeltSlots = d.Inventory.Belt.Rows() * 4
+	s.Me.BeltUsed = len(d.Inventory.Belt.Items)
 	for _, bp := range d.Inventory.Belt.Items {
 		n := string(bp.Name)
 		if bp.ID == 602 || contains(n, "Healing") || contains(n, "Rejuvenation") {

@@ -31,6 +31,7 @@ type Capability struct {
 	Reach    *Binding         // REACH TOOL seed: proven projected shot/cast selection
 	TownTP   *Binding         // proven town portal selection
 	Identify *Binding         // proven identify selection
+	Vault    *Binding         // proven cursor-targeted displacement (Leap-family)
 }
 
 // Calibrate presses each candidate key once and reads RightSkill back. Run at session
@@ -77,6 +78,9 @@ func Calibrate(log *slog.Logger, gr *game.MemoryReader, hid *game.HID, mem *memo
 			case RoleIdentify:
 				v := b
 				cap.Identify = &v
+			case RoleVault:
+				v := b
+				cap.Vault = &v
 			}
 			before = after
 		} else {

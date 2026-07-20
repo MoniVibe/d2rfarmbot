@@ -746,6 +746,7 @@ func (f *Flee) Step(ctx *Ctx) Verdict {
 type Breakout struct {
 	castAt       time.Time
 	lastStrikeAt time.Time
+	vaultAt      time.Time // P-2.11: leap cooldown — a deaf leap falls through to the old doctrine
 	castTries    int // casts that never produced a portal (empty tome — the poverty spiral)
 	// engaged: Breakout has committed to a portal (cast it or fought its doormen).
 	// Rule zero evicted it mid-rescue when one potion tick dropped 'surrounded' below
@@ -761,6 +762,21 @@ type Breakout struct {
 }
 
 func (b *Breakout) Name() string { return "breakout" }
+
+// vaultLandable: a leap landing must be ground the grid vouches for — leaping
+// into unknown terrain trades a known ring for an unknown wall (dodge is
+// optimistic about unknowns; a leap is not: it cannot be steered mid-air).
+func vaultLandable(ctx *Ctx, p data.Position) bool {
+	g := ctx.Grid
+	if g == nil {
+		return false
+	}
+	rp := g.RelativePosition(p)
+	if rp.X < 0 || rp.Y < 0 || rp.X >= g.Width || rp.Y >= g.Height {
+		return false
+	}
+	return g.CollisionGrid[rp.Y][rp.X] != game.CollisionTypeNonWalkable
+}
 
 func (b *Breakout) ringSectors(s *percept.Snapshot) (counts [8]int, nearest [8]percept.EnemyRef, hasNear [8]bool) {
 	for _, en := range s.Enemies {
@@ -985,6 +1001,22 @@ func (b *Breakout) Step(ctx *Ctx) Verdict {
 		b.pinRef, b.pinAt = s.Me.Pos, time.Now()
 	}
 	pinned := time.Since(b.pinAt) > 3*time.Second
+	// P-2.11 THE VAULT (the owner, 2026-07-20: "i gave our barb leap — get
+	// through problematic situations"): a closed or pinned ring is the leap's
+	// whole reason to exist — jump THROUGH the thinnest sector to walkable
+	// ground and the ring becomes scenery. One try per 8s; a whiff (dry mana,
+	// bad landing) falls through to the shove-and-fight doctrine below.
+	if ctx.Cap != nil && ctx.Cap.Vault != nil && (gapCount > 0 || pinned) &&
+		time.Since(b.vaultAt) > 8*time.Second {
+		dir := sectorDir[gap]
+		land := data.Position{X: s.Me.Pos.X + dir.X*10, Y: s.Me.Pos.Y + dir.Y*10}
+		if vaultLandable(ctx, land) {
+			b.vaultAt = time.Now()
+			verbs.Vault{To: land, Key: ctx.Cap.Vault.Key, SkillID: int(ctx.Cap.Vault.Skill)}.
+				Do(ctx.M, ctx.GR, ctx.P, ctx.Led, b.Name())
+			return Running
+		}
+	}
 	if gapCount == 0 && !pinned {
 		// Open gap: stride through it hard (sliding off any wall on the line).
 		dir := sectorDir[gap]

@@ -21,6 +21,7 @@ const (
 	RoleThrow         // thrown-ammo attacks: reach with an ammo FUEL gauge
 	RoleTownTP        // town-portal utility (not a TOOL)
 	RoleIdentify      // identify utility — the panel side door (WARNING 5)
+	RoleVault         // cursor-targeted self-displacement: the ring becomes scenery
 )
 
 // rolePriors seeds every class's early-to-mid kit plus the universal item
@@ -101,6 +102,7 @@ var rolePriors = map[skill.ID]Role{
 
 	// Barbarian
 	skill.Bash:        RoleContact,
+	skill.Leap:        RoleVault, // the owner granted it 2026-07-20: "jump through problematic situations"
 	skill.DoubleSwing: RoleContact,
 	skill.Stun:        RoleContact,
 	skill.Concentrate: RoleContact,
