@@ -1008,7 +1008,15 @@ func (a *Advance) cross(ctx *Ctx, d game.Data, me data.Position, tgt data.Positi
 		}
 		if !found {
 			ctx.Led.Append(verbs.Outcome{Verb: "cross", Holder: a.Name(), Result: verbs.ResDeaf,
-				Evidence: fmt.Sprintf("hover hunt at learned door (%d,%d): no entrance hover in ±200px — reposition and retry", tgt.X, tgt.Y)})
+				Evidence: fmt.Sprintf("hover hunt at learned door (%d,%d): no entrance hover — arming the walk-through push", tgt.X, tgt.Y)})
+			// THE GRID VETO AUTOPSY (22:57): no entrance unit, no hover — and
+			// grid-filtered movement REFUSES the doorway because warp
+			// interiors read non-walkable, while the owner walked through
+			// freely. The FORCE push (verbs.Stride, grid-blind) is the entry;
+			// its 5s window re-arms here — the old re-arm lived in the branch
+			// learnedDoor now skips.
+			a.contactAt = time.Now()
+			return
 		}
 	}
 	sp := spiral(a.clickTry)
