@@ -1067,6 +1067,11 @@ type Fight struct {
 	rangedShots  int
 	rangedFlinch int
 	rangedDead   bool
+	// Mutual-veto watchdog (P-2.10): when the lock changed and when we last
+	// ISSUED an attack input. An in-reach lock that produces no input starves
+	// Travel while feeding nothing — the advisor's "tiny bureaucratic collapse".
+	watchTarget data.UnitID
+	watchSince  time.Time
 	// March is Advance's live door hint. P-5.8: within 12 of the march door the
 	// REACH TOOL holds — the clinch swap is suppressed and the volley fires
 	// point-blank; the funnel rewards the pierce, not the poke.
@@ -1402,6 +1407,27 @@ func (f *Fight) Step(ctx *Ctx) Verdict {
 			}
 			return Running
 		}
+		// P-2.10 THE MUTUAL-VETO DETECTOR (the advisor, 2026-07-20: "Travel
+		// says combat is active; combat says I cannot attack this target yet;
+		// nobody acts — a tiny bureaucratic collapse"): an IN-REACH lock that
+		// has produced no issued input for 1.2s is not a fight, it is a
+		// hostage-taking of the actuator. Quarantine it briefly and pick
+		// another victim; if none remains the Demand dies and the march
+		// resumes. Liveness = the newer of lock-acquisition and last issued
+		// click (strike() and assess(ResDone) both stamp it), so a fresh
+		// engagement gets its full 1.2s before judgment.
+		if f.watchTarget != f.target {
+			f.watchTarget, f.watchSince = f.target, time.Now()
+		}
+		liveAt := f.lastStrikeAt
+		if f.watchSince.After(liveAt) {
+			liveAt = f.watchSince
+		}
+		if d <= 8 && time.Since(liveAt) > 1200*time.Millisecond {
+			f.blacklist[f.target] = time.Now().Add(2 * time.Second)
+			f.target, f.j = 0, nil
+			return Running
+		}
 		// THE ATTACK COMMAND IS THE CHASE (the owner, 04:12: "make it a
 		// priority for him to attack — he just runs around monsters"): a
 		// melee char clicks the MONSTER, not the ground beside it — the
@@ -1570,6 +1596,7 @@ func (f *Fight) nearestID(s *percept.Snapshot) data.UnitID {
 func (f *Fight) assess(o verbs.Outcome) {
 	if o.Result == verbs.ResDone {
 		f.noEvid = 0
+		f.lastStrikeAt = time.Now() // an issued click IS liveness — P-2.10 feeds on this
 		return
 	}
 	f.noEvid++

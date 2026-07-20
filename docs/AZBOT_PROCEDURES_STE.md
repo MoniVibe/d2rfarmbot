@@ -158,6 +158,28 @@ fallback that journeyed at walled targets is DELETED. No path is ever
 planned at what no arrow can reach; the map tour walks the rooms, and
 whatever steps into the line dies.
 
+**WARNING 11 — THE HOSTAGE LAW.** A cross-thread SendMessage blocks until
+the game's window thread processes it — against a loading frame or a modal
+pump that wait is UNBOUNDED, and the caller is the whole executive (the
+advisor, 2026-07-20: "a few 500ms or multi-second SendMessage calls would
+explain the apparently random standing immediately"). Every aim/click send
+goes through SendMessageTimeout (150ms, SMTO_ABORTIFHUNG); sends slower
+than 60ms are logged ([motor] SLOW SEND). Companion laws from the same
+audit: NCHITTEST takes SCREEN coords, MOUSEMOVE takes CLIENT coords — one
+lParam can never serve both; and THE CONVEYOR-BELT RULE — hover can lag
+the cursor by a frame, so a sweep that advances on every read judges each
+probe by its predecessor's cursor: an offset is HELD for a second fresh
+sample before being declared wrong.
+
+**P-2.10 — THE MUTUAL-VETO DETECTOR.** "Travel says combat is active;
+combat says I cannot attack this target yet; nobody acts — a tiny
+bureaucratic collapse" (the advisor). An in-reach Fight lock (d≤8) that
+has ISSUED no attack input for 1.2s is quarantined for 2s and the lock
+released; if no other victim remains, the Demand dies and the march
+resumes. Liveness is fed only by actually-issued clicks (strike() and
+assess(ResDone)), never by hover probes or hope; the clock starts at
+lock-acquisition so fresh engagements get their full grace.
+
 **WARNING 9 — THE CURSOR ITEM.** An item on the cursor owns every click:
 panel buttons do not press, world clicks DROP it, and the stuck-detector
 reads the paralysis as walls (measured 09:30: one missed put-back sent

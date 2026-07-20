@@ -1,12 +1,44 @@
 package game
 
 import (
+	"log"
 	"math"
 	"math/rand"
+	"syscall"
 	"time"
+	"unsafe"
 
 	"github.com/lxn/win"
 )
+
+// THE HOSTAGE LAW (WARNING 11; the advisor, 2026-07-20): a cross-thread
+// SendMessage blocks until the receiving thread processes it — against a busy
+// loading frame or a modal pump that wait is UNBOUNDED, and the caller is our
+// whole executive. We documented exactly this hazard when deleting
+// MouseMoveClientSync ("SendMessage BLOCKS against a frozen D2R window") and
+// then kept three raw sends in the hover pump. Every send now goes through
+// sendTimed: 150ms is longer than any healthy frame answers (<35ms) and shorter
+// than any stall worth waiting inside. A timed-out message is still delivered
+// to the queue — the pump's effect survives; only the hostage-taking dies.
+// Slow sends are logged: the advisor's first question about any statue episode
+// is "how long did the sends take."
+var procSendMessageTimeout = syscall.NewLazyDLL("user32.dll").NewProc("SendMessageTimeoutW")
+
+func sendTimed(hwnd win.HWND, msg uint32, wParam, lParam uintptr) {
+	t0 := time.Now()
+	var dwRes uintptr
+	procSendMessageTimeout.Call(uintptr(hwnd), uintptr(msg), wParam, lParam,
+		0x0002 /*SMTO_ABORTIFHUNG*/, 150, uintptr(unsafe.Pointer(&dwRes)))
+	if el := time.Since(t0); el > 60*time.Millisecond {
+		log.Printf("[motor] SLOW SEND msg=0x%04X took=%s", msg, el)
+	}
+}
+
+// setCursorLparam: WM_SETCURSOR's lParam is NOT coordinates — low word is the
+// hit-test result (HTCLIENT=1), high word the triggering mouse message
+// (WM_MOUSEMOVE=0x0200). The old magic 0x2010001 claimed WM_LBUTTONDOWN
+// triggered it; corrected per the advisor's message-correctness audit.
+const setCursorLparam = uintptr(0x0200<<16 | 0x0001)
 
 const (
 	RightButton MouseButton = win.MK_RBUTTON
@@ -57,10 +89,16 @@ func (hid *HID) MovePointer(x, y int) {
 	if !hid.gi.AliasesPhysicalCursorPos() {
 		hid.gi.CursorPos(x, y)
 	}
-	lParam := calculateLparam(x, y)
-	win.SendMessage(hid.gr.HWND, win.WM_NCHITTEST, 0, lParam)
-	win.SendMessage(hid.gr.HWND, win.WM_SETCURSOR, 0x000105A8, 0x2010001)
-	win.PostMessage(hid.gr.HWND, win.WM_MOUSEMOVE, 0, lParam)
+	// MESSAGE SPACES (the advisor's audit): NCHITTEST takes SCREEN coords,
+	// MOUSEMOVE takes CLIENT coords — one lParam can never serve both. The
+	// world hit-test ignores lParam either way (it polls the cursor we patch),
+	// but UI panels DO read the MOUSEMOVE lParam, and they read it in client
+	// space — feeding them screen coords was a background lie.
+	lpScreen := calculateLparam(x, y) // x,y are screen here (origin added above)
+	lpClient := calculateLparam(x-hid.gr.WindowLeftX, y-hid.gr.WindowTopY)
+	sendTimed(hid.gr.HWND, win.WM_NCHITTEST, 0, lpScreen)
+	sendTimed(hid.gr.HWND, win.WM_SETCURSOR, uintptr(hid.gr.HWND), setCursorLparam)
+	win.PostMessage(hid.gr.HWND, win.WM_MOUSEMOVE, 0, lpClient)
 }
 
 // physicalScale converts logical screen pixels to the physical (DPI-actual) pixels that
@@ -122,17 +160,19 @@ func (hid *HID) AimPhysical(x, y int) {
 	// when the game happened to poll, so sweeps eventually hit but single
 	// reads whiffed. MovePointer (the farmbot control, proven for weeks)
 	// always pumped this exact trio.
-	lParam := calculateLparam(wx, wy)
-	win.SendMessage(hid.gr.HWND, win.WM_NCHITTEST, 0, lParam)
-	win.SendMessage(hid.gr.HWND, win.WM_SETCURSOR, 0x000105A8, 0x2010001)
-	win.PostMessage(hid.gr.HWND, win.WM_MOUSEMOVE, 0, lParam)
+	// Correct spaces per the advisor's audit: NCHITTEST screen, MOUSEMOVE client.
+	lpScreen := calculateLparam(hid.gr.WindowLeftX+wx, hid.gr.WindowTopY+wy)
+	lpClient := calculateLparam(wx, wy)
+	sendTimed(hid.gr.HWND, win.WM_NCHITTEST, 0, lpScreen)
+	sendTimed(hid.gr.HWND, win.WM_SETCURSOR, uintptr(hid.gr.HWND), setCursorLparam)
+	win.PostMessage(hid.gr.HWND, win.WM_MOUSEMOVE, 0, lpClient)
 	// DOUBLE-TAP (04:40, the owner: "he just missed her hover a few times —
 	// happens to items and waypoints too"): one pulse races the game's frame
 	// sampling and loses a few percent of the time, on every unit type. A
 	// second pulse one frame later turns a coin-flip edge into near-certainty.
 	time.Sleep(25 * time.Millisecond)
-	win.SendMessage(hid.gr.HWND, win.WM_NCHITTEST, 0, lParam)
-	win.PostMessage(hid.gr.HWND, win.WM_MOUSEMOVE, 0, lParam)
+	sendTimed(hid.gr.HWND, win.WM_NCHITTEST, 0, lpScreen)
+	win.PostMessage(hid.gr.HWND, win.WM_MOUSEMOVE, 0, lpClient)
 	iMoveScreen(hid.gr.WindowLeftX+x, hid.gr.WindowTopY+y) // no-op unless -hwmove rel/abs
 }
 
@@ -170,10 +210,10 @@ func (hid *HID) Click(btn MouseButton, x, y int) {
 		buttonUp = win.WM_RBUTTONUP
 	}
 
-	win.SendMessage(hid.gr.HWND, buttonDown, 1, lParam)
+	sendTimed(hid.gr.HWND, buttonDown, 1, lParam)
 	sleepTime := rand.Intn(keyPressMaxTime-keyPressMinTime) + keyPressMinTime
 	time.Sleep(time.Duration(sleepTime) * time.Millisecond)
-	win.SendMessage(hid.gr.HWND, buttonUp, 1, lParam)
+	sendTimed(hid.gr.HWND, buttonUp, 1, lParam)
 }
 
 // LeftClickNoMove sends a discrete left button down+up at client (x,y) WITHOUT moving the
@@ -185,10 +225,10 @@ func (hid *HID) LeftClickNoMove(x, y int) {
 	sx := hid.gr.WindowLeftX + x
 	sy := hid.gr.WindowTopY + y
 	lParam := calculateLparam(sx, sy)
-	win.SendMessage(hid.gr.HWND, win.WM_LBUTTONDOWN, 1, lParam)
+	sendTimed(hid.gr.HWND, win.WM_LBUTTONDOWN, 1, lParam)
 	sleepTime := rand.Intn(keyPressMaxTime-keyPressMinTime) + keyPressMinTime
 	time.Sleep(time.Duration(sleepTime) * time.Millisecond)
-	win.SendMessage(hid.gr.HWND, win.WM_LBUTTONUP, 1, lParam)
+	sendTimed(hid.gr.HWND, win.WM_LBUTTONUP, 1, lParam)
 }
 
 // LeftClickNoMoveClient is like LeftClickNoMove but packs CLIENT coords into the WM lParam
@@ -197,10 +237,10 @@ func (hid *HID) LeftClickNoMove(x, y int) {
 // hit-test off lParam, so panel clicks use this correct-space variant.
 func (hid *HID) LeftClickNoMoveClient(x, y int) {
 	lParam := calculateLparam(x, y)
-	win.SendMessage(hid.gr.HWND, win.WM_LBUTTONDOWN, 1, lParam)
+	sendTimed(hid.gr.HWND, win.WM_LBUTTONDOWN, 1, lParam)
 	sleepTime := rand.Intn(keyPressMaxTime-keyPressMinTime) + keyPressMinTime
 	time.Sleep(time.Duration(sleepTime) * time.Millisecond)
-	win.SendMessage(hid.gr.HWND, win.WM_LBUTTONUP, 1, lParam)
+	sendTimed(hid.gr.HWND, win.WM_LBUTTONUP, 1, lParam)
 }
 
 // MouseMoveClient posts a WM_MOUSEMOVE at CLIENT (x,y) — some UI panels only make a row

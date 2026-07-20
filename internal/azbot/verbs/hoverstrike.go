@@ -70,9 +70,16 @@ func (h HoverStrike) Do(m *motor.Motor, gr *game.MemoryReader, p *percept.Percep
 	// the sweep from up to 25 probes to one.
 	confirmed := false
 	px, py := bx, by
+	// THE CONVEYOR-BELT RULE (the advisor, 2026-07-20): hover can lag the
+	// cursor by a game frame, so a single wrong read may describe the PREVIOUS
+	// offset — advancing the sweep on every read makes each observation judge
+	// the probe before it, forever. Each offset is now HELD for a second fresh
+	// sample before being declared spatially wrong. The fan is trimmed 26→10
+	// (the advisor: 3–5 offsets, then reposition — a whiff sweep was 780ms of
+	// statue; now ≤550ms and the watchdog above eats what remains).
 	probes := [][2]int{{h.HintDX, h.HintDY}}
-	for _, dy := range []int{-12, 0, -24, -36, 8} {
-		for _, dx := range []int{0, -10, 10, -20, 20} {
+	for _, dy := range []int{-12, 0, -24} {
+		for _, dx := range []int{0, -10, 10} {
 			probes = append(probes, [2]int{dx, dy})
 		}
 	}
@@ -84,6 +91,10 @@ func (h HoverStrike) Do(m *motor.Motor, gr *game.MemoryReader, p *percept.Percep
 		hidAim(m, cx, cy)
 		time.Sleep(30 * time.Millisecond)
 		hd := gr.GetData().HoverData
+		if !(hd.IsHovered && hd.UnitID == h.Target) {
+			time.Sleep(25 * time.Millisecond) // one more fresh frame at THIS offset
+			hd = gr.GetData().HoverData
+		}
 		if hd.IsHovered && hd.UnitID == h.Target {
 			confirmed, px, py = true, cx, cy
 			o.AimDX, o.AimDY = pr[0], pr[1]
