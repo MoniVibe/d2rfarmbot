@@ -616,6 +616,17 @@ func (a *Advance) Step(ctx *Ctx) Verdict {
 		// the march to search() and the real stairs.
 		if a.tgtFromMap {
 			NoteBreakerSite(a.marchGoal)
+			// Strikes persist to the WAL (21:52: the forced swap reset the
+			// in-process count and the disbelief had to be re-earned — a
+			// proven lie must stay proven across processes).
+			if ctx.Mem != nil {
+				n := 0
+				key := fmt.Sprintf("badexit.%d.%d.%d", ctx.GR.MapSeed(), int(s.Me.Area), int(hop))
+				ctx.Mem.GetJSON(key, &n)
+				n++
+				ctx.Mem.PutJSON(key, memory.ScopeSeed,
+					memory.Provenance{Source: "measured", Evidence: fmt.Sprintf("wasted 60s leg #%d at (%d,%d)", n, a.marchGoal.X, a.marchGoal.Y)}, n)
+			}
 			ctx.Led.Append(verbs.Outcome{Verb: "nav", Holder: a.Name(), Result: verbs.ResDeaf,
 				Evidence: fmt.Sprintf("map-oracle exit (%d,%d) ate a 60s leg — strike recorded", a.marchGoal.X, a.marchGoal.Y)})
 		}
@@ -707,6 +718,13 @@ func (a *Advance) borderTarget(ctx *Ctx, d game.Data, hop area.ID, me data.Posit
 				if CursedNear(lv.Position) {
 					break // the map exit cost two portals here — a proven lie
 					// on this seed; the live rooms or the search find truth
+				}
+				if ctx.Mem != nil { // durable strikes (21:52): a proven lie stays proven
+					n := 0
+					ctx.Mem.GetJSON(fmt.Sprintf("badexit.%d.%d.%d", ctx.GR.MapSeed(), int(d.PlayerUnit.Area), int(hop)), &n)
+					if n >= 2 {
+						break
+					}
 				}
 				a.tgtFromMap = true
 				return lv.Position, true
