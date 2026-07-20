@@ -1948,6 +1948,8 @@ func main() {
 	deadline := time.Now().Add(time.Duration(*seconds) * time.Second)
 	statusAt := time.Time{}
 	stallWarnAt := time.Time{}
+	deadmanPos := data.Position{}
+	deadmanAt := time.Now()
 	sawInvalid := false
 	wasFocused := true
 	var trail []string // the last moments, for the owner's death reports
@@ -2350,6 +2352,33 @@ func main() {
 					"hp", s.Me.HPPct, "pos", fmt.Sprintf("(%d,%d)", s.Me.Pos.X, s.Me.Pos.Y))
 				stallWarnAt = time.Now()
 			}
+		}
+		// THE DEADMAN BOX (21:29: ten minutes pinned in a UP pocket across two
+		// binaries while the pocket breaker STARVED — it counts blocked
+		// strides, and a fight-class holder never strides. Position truth
+		// needs no holder's cooperation: 75s inside a 6-box on hostile ground
+		// refutes everything — the portal is the door, WHOEVER holds.)
+		if chebyshev(s.Me.Pos, deadmanPos) > 6 || s.Me.InTown || s.Me.HPPct <= 0 {
+			deadmanPos, deadmanAt = s.Me.Pos, time.Now()
+		} else if time.Since(deadmanAt) > 75*time.Second && cap.TownTP != nil &&
+			m.Engage.Engaged() && time.Since(lastPocketTP) > 120*time.Second {
+			who := "none"
+			if grant != nil {
+				who = grant.Demand.Who
+			}
+			logger.Warn("watchdog: DEADMAN BOX — 75s in a 6-box; the portal is the door, whoever holds",
+				"holder", who)
+			activity.NoteBreakerSite(s.Me.Pos)
+			activity.MarkPortalHot(4 * time.Minute)
+			verbs.CastSelf{Key: cap.TownTP.Key}.Do(m, gr, p, led, "watchdog")
+			time.Sleep(2200 * time.Millisecond)
+			if s2 := p.Capture(); s2.Valid && len(s2.Portals) > 0 {
+				verbs.EnterPortal{Target: s2.Portals[0].ID, TargetPos: s2.Portals[0].Pos}.
+					Do(m, gr, p, led, "watchdog")
+			}
+			lastPocketTP = time.Now()
+			deadmanPos, deadmanAt = data.Position{}, time.Now()
+			continue
 		}
 		if time.Since(statusAt) > 10*time.Second {
 			// mp/maxmana joined 2026-07-20 11:30 (the owner: "he has about 33
