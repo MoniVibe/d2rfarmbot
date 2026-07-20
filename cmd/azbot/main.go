@@ -1877,9 +1877,22 @@ func main() {
 			}
 		}
 		if s.Me.Area != lastArea && lastArea != 0 && s.Me.Area != 0 {
-			// Portals teleport (town↔field): only record when the two sides are near
-			// each other — a real walked/clicked door, not a TP jump.
-			if chebyshev(lastPos, s.Me.Pos) <= 40 {
+			// Portals teleport (town↔field): near sides = a walked door. But cave
+			// WARPS teleport coordinates too (03:45: the owner's manual click into
+			// the Underground Passage jumped 3000 tiles and the anti-TP rule threw
+			// away the human-proven doorstep) — a big jump between topologically
+			// ADJACENT non-town areas is a warp DOOR and records like any other.
+			adjacent := false
+			if ad, ok := gr.GetData().Areas[lastArea]; ok {
+				for _, lv := range ad.AdjacentLevels {
+					if lv.Area == s.Me.Area {
+						adjacent = true
+						break
+					}
+				}
+			}
+			if chebyshev(lastPos, s.Me.Pos) <= 40 ||
+				(adjacent && !lastArea.IsTown() && !s.Me.Area.IsTown()) {
 				seed := gr.MapSeed()
 				prov := memory.Provenance{Source: "measured", Evidence: fmt.Sprintf("crossed %d->%d seed %d", int(lastArea), int(s.Me.Area), seed)}
 				mem.PutJSON(activity.BorderKey(seed, lastArea, s.Me.Area), memory.ScopeSeed, prov, lastPos)
