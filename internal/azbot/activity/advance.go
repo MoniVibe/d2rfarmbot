@@ -187,6 +187,13 @@ type Advance struct {
 	// arrive and the planner can route.
 	farBlockN   int
 	searchUntil time.Time
+	// THE REROUTE JUDGES ITSELF (02:57: it TP'd him out of the UP promising
+	// a deep ride, the ride delivered STONY — behind where he left — and the
+	// loop got a second engine): after each completed reroute, the next field
+	// area adopted must sit DEEPER than the one he left, or the reroute is
+	// benched for the session.
+	rerouteFromIdx int
+	rerouteJudge   bool
 }
 
 // FrontierFor is the P-5F hint: the itinerary leg the march owns at this
@@ -376,6 +383,17 @@ func (a *Advance) Step(ctx *Ctx) Verdict {
 			// engine of the 00:58 push-pong oscillator)
 		}
 		prev := a.lastArea
+		if a.rerouteJudge && !s.Me.InTown {
+			a.rerouteJudge = false
+			if i <= a.rerouteFromIdx {
+				// The ride delivered him AT or BEHIND where the reroute took
+				// him from: the network cannot reach past his feet — every
+				// future reroute would be the same backward trade. Benched.
+				a.rerouteCool = time.Now().Add(60 * time.Minute)
+				ctx.Led.Append(verbs.Outcome{Verb: "reroute", Holder: a.Name(), Result: verbs.ResRefused,
+					Evidence: fmt.Sprintf("ride landed leg %d, left leg %d — the network rides BACKWARD; reroute benched 60m", i, a.rerouteFromIdx)})
+			}
+		}
 		a.idx = i
 		a.resetLeg(s.Me.Pos)
 		a.lastArea, a.pendN = s.Me.Area, 0
@@ -430,9 +448,11 @@ func (a *Advance) Step(ctx *Ctx) Verdict {
 	// from Withdraw.
 	if s.Me.InTown && !a.rerouteBegan.IsZero() {
 		// the portal carried him: reroute complete. Cool it so the stale state
-		// can never cast him home again the moment he rides back out.
+		// can never cast him home again the moment he rides back out — and arm
+		// the judge: the next field landing testifies for or against the ride.
 		a.rerouteBegan = time.Time{}
 		a.rerouteCool = time.Now().Add(3 * time.Minute)
+		a.rerouteJudge = true
 	}
 	// NIGHT-2 AUDIT FINDING 7: rerouting while the town ride is cooling burns
 	// a TP charge to bounce town→portal→field and marches anyway — the reroute
@@ -462,6 +482,7 @@ func (a *Advance) Step(ctx *Ctx) Verdict {
 			}
 			if deeper != 0 && calm {
 				a.rerouteBegan = time.Now()
+				a.rerouteFromIdx = cur
 				a.rerouteCastAt, a.rerouteTries = time.Time{}, 0
 				ctx.Led.Append(verbs.Outcome{Verb: "reroute", Holder: a.Name(), Result: verbs.ResDone,
 					Evidence: fmt.Sprintf("behind the front (leg %d < %d) with pad %d lit — riding the network home", cur, a.campIdx(), int(deeper))})
