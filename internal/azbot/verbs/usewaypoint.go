@@ -168,19 +168,30 @@ func (uw UseWaypoint) Do(m *motor.Motor, gr *game.MemoryReader, p *percept.Perce
 				}
 			} else if try < 2 {
 				// RE-ROLL THE ANGLE (night-2 audit finding 3: three sweeps from
-				// the same standing spot are one sweep done thrice — the hover
-				// fan that missed once misses identically). One ground step
-				// toward the pad changes every projection before the retry.
-				m.BareClick(bx, by+30)
-				time.Sleep(700 * time.Millisecond)
+				// the same standing spot are one sweep done thrice). One ground
+				// step changes every projection — but the step is HOVER-GUARDED
+				// (04:02: this blind click landed on the town-square portal
+				// cluster and rode him back to the field mid-ritual; the town
+				// portals were eating every pad attempt).
+				m.AimPhysical(bx, by+30)
+				time.Sleep(50 * time.Millisecond)
+				if !gr.GetData().HoverData.IsHovered {
+					m.BareClick(bx, by+30)
+					time.Sleep(700 * time.Millisecond)
+				}
 			}
 		}
 		if !opened {
 			o.Result = ResWhiff
+			hd := gr.GetData().HoverData
 			if clickedEver {
 				o.Evidence = "pad clicked but the panel never opened"
 			} else {
-				o.Evidence = "hover never confirmed on the pad — no click ever fired"
+				// Name what the hover DID see — a systematic wp.ID mismatch
+				// (the ghost table's cousin) would show here as a stable
+				// wrong ID under the cursor.
+				o.Evidence = fmt.Sprintf("hover never confirmed on the pad (want id=%d; last hover: is=%v id=%d type=%d) — no click ever fired",
+					int(wp.ID), hd.IsHovered, int(hd.UnitID), int(hd.UnitType))
 			}
 			led.Append(o)
 			return o
