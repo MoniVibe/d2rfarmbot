@@ -56,19 +56,27 @@ func (uw UseWaypoint) Do(m *motor.Motor, gr *game.MemoryReader, p *percept.Perce
 		led.Append(o)
 		return o
 	}
-	// HOVER DIES UNFOCUSED (04:33, the named-evidence whiff: is=false id=0
-	// type=0 across a whole sweep while the game sat unfocused since 04:08 —
-	// the world RUNS unfocused on this mod but the hover oracle goes dark).
-	// A pad ritual against a dark oracle is 8 seconds of statue: refuse fast,
-	// retry when the window has eyes again.
-	if !m.GameFocused() {
-		o.Result = ResRefused
-		o.Evidence = "game unfocused — hover oracle dark, pad ritual deferred"
-		led.Append(o)
-		return o
-	}
 	d := gr.GetData()
 	start := d.PlayerUnit.Area
+	// HOVER DIES UNFOCUSED (04:33) BUT CLICKS DO NOT (the world walks unfocused
+	// on posted clicks — only the hover HIGHLIGHT goes dark). So the ride needs
+	// no hover at all: click the pad's computed base and confirm via the
+	// OpenMenus.Waypoint MEMORY flag, then drive rows by click + area-change.
+	// The blind open is armed only where it is safe: IN TOWN (no monster to
+	// mis-click into an attack) and with NO live portal hugging the pad (a
+	// stray click on a cast town portal would ride to the field). Focused,
+	// the hover sweep still leads; blind is the fallback the sweep hands off to.
+	blindOK := start.IsTown()
+	if blindOK {
+		for i := range d.Objects {
+			if d.Objects[i].IsPortal() || d.Objects[i].IsRedPortal() {
+				if wpCheb(d.Objects[i].Position, d.PlayerUnit.Position) <= 12 {
+					blindOK = false // a portal shares the pad's neighborhood: no blind clicks
+					break
+				}
+			}
+		}
+	}
 
 	var wp data.Object
 	best := 1 << 30
@@ -130,6 +138,13 @@ func (uw UseWaypoint) Do(m *motor.Motor, gr *game.MemoryReader, p *percept.Perce
 		opened := false
 		clickedEver := false
 		for try := 0; try < 3 && !opened; try++ {
+			if try > 0 && !gr.GetData().OpenMenus.Waypoint {
+				// A prior blind click may have opened the WRONG panel (an NPC
+				// under the projection). Ground-click clears any stray menu so
+				// the retry starts clean; harmless if nothing is open.
+				groundClose()
+				time.Sleep(300 * time.Millisecond)
+			}
 			dd := gr.GetData()
 			me := dd.PlayerUnit.Position
 			bx := int(float32((wp.Position.X-me.X)-(wp.Position.Y-me.Y))*19.8) + gr.GameAreaSizeX/2
@@ -156,6 +171,18 @@ func (uw UseWaypoint) Do(m *motor.Motor, gr *game.MemoryReader, p *percept.Perce
 						clicked = true
 						break sweep
 					}
+				}
+			}
+			if !clicked && blindOK {
+				// THE BLIND OPEN (04:53, owner asleep, game unfocused all night):
+				// the hover sweep found nothing because the highlight is dark,
+				// but the pad is a flat ground rune and its base projection is
+				// exact. Click it directly; OpenMenus.Waypoint (memory, not
+				// hover) is the honest confirmation below. Safe: town-only,
+				// portal-guarded (blindOK).
+				if bx >= 20 && by >= 20 && bx <= gr.GameAreaSizeX-20 && by <= gr.GameAreaSizeY-20 {
+					m.ClickLeft(bx, by)
+					clicked = true
 				}
 			}
 			if clicked {
