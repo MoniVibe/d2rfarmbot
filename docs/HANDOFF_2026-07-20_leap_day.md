@@ -126,3 +126,103 @@ OPEN: DW pad touch (return pass); ride-proof of wplit.6; Monastery Gate leg
 whiff burst autopsy (4 whiffs/19ms); leap displacement telemetry (paid
 casts read as whiffs — bar 2 unverified); RESCUE CAIN activity + quest-item
 pickup exception (owner interested); persist strikes ledger already WAL'd.
+
+## NIGHT 2 PART 2 (2026-07-21 ~06:00 — the whole act, and the ghost)
+
+STATE AT WRITING: **Fableboi ALIVE, lvl 18, ~53k gold, 0 DEATHS all night.**
+Running barb88 (PID cycles). Frontier ratcheted to **leg 8 = Outer Cloister**
+(area 27) — he crossed town→ColdPlains→Stony→UP→DarkWood→BlackMarsh→Tamoe→
+MonasteryGate→**OuterCloister**, the DEEPEST point of the campaign, SOLO, on
+foot, via learned doors + roads, repeatedly. Cube 549 safe. The full Act-1
+overland chain is now a routine reproducible march.
+
+THE ARC OF THE NIGHT: three owner reports drove it — (1) "run around killing
+randomly rather than progress"; (2) "leaping constantly against monsters —
+leap doesnt do damage"; (3) "waypoint properly and refrain from walking to
+blood moor." Each exposed a real bug; ~18 commits (90981ac..57748cf).
+
+LAWS BOUGHT TONIGHT (top to bottom by impact):
+- **THE GHOST IS REAL** (d2go-local, sticky GetMainPlayer): after the owner's
+  save-exit rejoins, the unit table holds a STALE main-player ghost at an old
+  spot; first-match selection flapped ghost↔man — phantom "town teleports,"
+  hallucinated rides, door-ledger pollution (the flight recorder caught the
+  status log claiming "town" the same ms the recorder walked Cold Plains).
+  Selection is sticky by UnitID; a pick frozen ~200 reads while another
+  candidate moves is abandoned. MUTEXED (sentinel+executive read concurrently).
+- **LEAP IS NOT A WEAPON**: the mod SCRAMBLES npc IDs, so raisers[e.NPC]
+  matched ordinary monsters — he raiser-locked normal creatures and vaulted
+  at them every 8s for ZERO damage. Combat/raiser leap RETIRED; raisers
+  chased on foot. Leap keeps travel + ring-escape only.
+- **HOVER DIES UNFOCUSED**: D2R drops posted WM_MOUSEMOVE when not foreground,
+  so the hover oracle goes dark unfocused (is=false id=0 across a whole
+  sweep). Both hover verbs refuse fast; positional volleys carry the fight
+  (they always did — gold rose through every whiff storm).
+- **THE BLIND OPEN**: rides need CLICKS + MEMORY, never hover — posted clicks
+  register unfocused, OpenMenus.Waypoint is a memory flag. Pad-open falls back
+  from the hover sweep to a direct click at the pad's base projection,
+  confirmed by memory. Town-only + portal-guarded. Rows already drove by
+  UIClick + area-change.
+- **THE PANEL IS THE ORACLE** (photo wp_panel_open.png 03:47): TRUE row
+  geometry is y=262+59.5*(row-1) on a 1051-high capture (the legacy 158+41
+  put the Cloister click on a boundary → shallow rides). Lit-ledger
+  CORRECTED: Dark Wood + Black Marsh circles are EMPTY — "stood at the pad"
+  does NOT activate on this mod; the panel is the only honest lit oracle.
+- **A HOLDER OWNS ONLY ITS OWN BOX** (watchdog tenure gate): town services
+  idled 19s, Advance won the wheel, 373ms later the stuck-box convicted
+  ADVANCE and cooled it 15s on arrival every town visit — the pad ride never
+  ran. Stuck now needs 8s of holder tenure.
+- **DRIVE RE-ARM COOLDOWN** (seam unpin): at the flickering Monastery-Gate
+  7↔26 seam the crossing-drive (my own "finally drives" fix) re-armed on
+  every 4s flip and ping-ponged him for minutes (WAL bloat, zero progress).
+  Drive arms once per 20s; faster seams fall to the maze-search relay. WAL
+  DEDUP: a crossing within 15 tiles of a known door skips the write.
+- **THE CORRIDOR LAW**: whenever Advance lawfully bids, Fight contracts to a
+  10-tile corridor act-wide (marchLawfulUntil) — kills what's in the way,
+  ignores the field. 45-tile hunt only when under-leveled (grinding IS the job).
+- **ESCAPES WERE THE LOOP**: the UP 3-min circle was never the maze — it was
+  the reroute/pocket-breaker yanking him out ~90s in and resetting interior
+  progress. Reroute SELF-BENCHES when a ride lands at-or-behind its departure
+  leg (rides BACKWARD → 60min bench). With escapes off, the ordinary march
+  ground the whole maze on its own; the search relay never even needed to fire.
+- **PHANTOM CONVICTION**: maze-interior map targets sit ~400-478 tiles from
+  truth (arrival-gated strike can't fire). 3 consecutive far-stall legs at the
+  same (area,hop) convict outright → coverage search finds the REAL door.
+  PROVEN twice: found Tamoe (6→7) and Monastery Gate (7→26) on NEW ground.
+- **SEAM DEBOUNCE**: cartographer records a crossing only after the new area
+  HOLDS 1.5s (a gate brawl flapped the area read and stamped a door per flip).
+- **PAD WITNESS**: any brush within 3 of a pad lights it in the ledger,
+  whoever drives (owner manual rides taught nothing before).
+- **STRICT UNIQUES**: quality>=7 only — rearm/quiver/gold exceptions retired
+  (they fired on transient Armed=false frames and grabbed whites).
+- **AUDIT (13 fixes, commit 5c008df)**: crossing-drive was DEAD CODE (never
+  armed → door idling); waypoint rows used the wrong click lane; portal
+  ambush (brawler marches skipped the hover-dodge → rode corpse portals to
+  town); whiffs were FREE (off-screen projection skipped every sleep → 16/s
+  storms); no executive tick floor (busy-spin); vault displacement judged too
+  early; roadS never reset (roads skipped after one walk); clearing had no
+  deadline; frontier ratchet made level-lawful.
+
+OPEN (morning priorities):
+1. **TOWN RIDE never completes** (wpdiag proof 05:59: padDist=33 padPos=
+   (4499,4609) frontier=8, wants=[Cloister], but wpAtAge=2005s — never
+   attempted a real ride). He visits town only briefly between Cloister
+   grinding and doesn't linger the few seconds to walk 33 tiles to the pad;
+   ALSO suspect the corpse/reroute portal he arrives through sits near the
+   pad and trips blindOK=false (portal-guard). FIX IDEA: raise walk-to-pad
+   urgency in town so errands/gate-march can't pull him off it; or move the
+   portal-guard to check pad-vicinity not player-vicinity. This is the last
+   mile of "waypoint properly" + "stop walking to Blood Moor" (same bug: no
+   ride → march out gate → Blood Moor).
+2. **wpdiag is still in the code** (verb=wpdiag, rate-limited 8s) — REMOVE or
+   gate behind a debug flag before it's permanent noise.
+3. Frontier ratchet lag: was still idx=7 briefly after reaching Cloister
+   (area 27); ratcheted to 8 later. Adopt-in-Step timing, cosmetic.
+4. Silent-Stony forensic + belt potion IDs (the death-with-potions wound,
+   still unaddressed — he hasn't died since, but the recognizer gap remains).
+5. Barracks leg (9, MinLevel 18 — now unlocked at 18): watch door 27→28.
+
+RITUAL UNCHANGED: build PATH=/c/dev/tools/goroot/go/
+bin:$PATH GOTMPDIR=/c/dev/koolo-build/gotmp go build -o azbot.exe.new2 ./cmd/
+azbot; swap taskkill→farmbot -fixinput→cp→relaunch barbN. d2go-local is a
+`replace` in go.mod (C:/dev/d2go-local) — the ghost filter lives THERE, its
+own git repo. NEVER two azbot processes. cd FIRST.
