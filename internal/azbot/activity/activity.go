@@ -1919,32 +1919,14 @@ func (l *Loot) Name() string { return "loot" }
 // every gear pickup into a 3-fail ban cycle (the owner watched it) — gold always
 // fits, potions ride the belt, gear needs real cells.
 func (l *Loot) wanted(s *percept.Snapshot, it percept.ItemRef) float64 {
-	n := it.Name
-	gearRoom := s.Me.InvFree >= 8 // the largest footprints are 2x4
-	switch {
-	case !s.Me.Armed && (contains(n, "Dagger") || contains(n, "Sword") || contains(n, "Axe") ||
-		contains(n, "Club") || contains(n, "Javelin") || contains(n, "Spear") || contains(n, "Wand") ||
-		contains(n, "Mace") || contains(n, "Scepter")):
-		if gearRoom {
-			return 0.95
-		}
-	case s.Me.Arrows == 0 && (contains(n, "Arrow") || contains(n, "Quiver")):
-		// Quivers SELF-REPLENISH on this mod (owner-confirmed) — ammo only matters
-		// when the quiver itself is GONE (vanished/never had one). No stockpiling.
-		if s.Me.InvFree >= 4 {
-			return 0.9
-		}
-	case it.Quality >= 7: // UNIQUE (and crafted) — the only quality tier picked
-		// UNIQUES ONLY (the owner, 13:08: "it also picked some weird items,
-		// like some whites and rares — make it so only uniques are picked for
-		// now"). The set/rare tier (5-6) and the magic tier (4) are OFF the
-		// docket until the owner re-opens them; the naked-rearm and dry-quiver
-		// cases above survive (a weapon in the hand outranks loot doctrine).
-		if s.Me.InvFree >= 2 {
-			return 0.85
-		}
-	case n == "Gold":
-		return 0.4 // gold has no footprint
+	// STRICTLY UNIQUES, NOTHING ELSE (the owner, 04:0x night 2: "id prefer it
+	// strictly picked uniques, and nothing else" — tightening 13:08's
+	// uniques-only). The old naked-rearm exception fired on TRANSIENT
+	// Armed=false frames (swap moments, ghost reads) and grabbed white
+	// weapons — the very "random stuff" the owner watched. Rearm, quiver,
+	// and gold cases all retired; the corpse reclaim owns gear recovery.
+	if it.Quality >= 7 && s.Me.InvFree >= 2 {
+		return 0.85
 	}
 	return 0
 }
