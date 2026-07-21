@@ -1674,37 +1674,15 @@ func (f *Fight) Step(ctx *Ctx) Verdict {
 			f.strike(ctx, f.nearestID(s), contactPos, mk)
 			return Running
 		}
-		// P-2.11(3) THE LEAP TO THE NECROMANCER (the owner, 11:12: "the leap
-		// may also be used to get to resurrectors easily — so he wouldn't be
-		// blocked by their resurrecting minions"): the minion wall is the
-		// raiser's whole defense, and a vault makes it scenery — land beside
-		// the shaman and the ring-yield rule above finishes the sentence.
-		// Grid-vouched landing 2 tiles short; one try per 8s, a whiff falls
-		// through to the walking pursuit.
-		if lockIsRaiser && d >= 5 && d <= 16 && ctx.Cap != nil && ctx.Cap.Vault != nil &&
-			!canVault(ctx, s) {
-			noteVaultHunger() // a REAL leap want found the pool short: save it
-		}
-		if lockIsRaiser && d >= 5 && d <= 16 && canVault(ctx, s) &&
-			time.Since(f.vaultAt) > 8*time.Second {
-			land := f.targetPos
-			if land.X > s.Me.Pos.X {
-				land.X -= 2
-			} else if land.X < s.Me.Pos.X {
-				land.X += 2
-			}
-			if land.Y > s.Me.Pos.Y {
-				land.Y -= 2
-			} else if land.Y < s.Me.Pos.Y {
-				land.Y += 2
-			}
-			if vaultLandable(ctx, land) {
-				f.vaultAt = time.Now()
-				verbs.Vault{To: land, Key: ctx.Cap.Vault.Key, SkillID: int(ctx.Cap.Vault.Skill)}.
-					Do(ctx.M, ctx.GR, ctx.P, ctx.Led, f.Name())
-				return Running
-			}
-		}
+		// THE LEAP IS NOT A WEAPON (the owner, 04:5x night 2: "its leaping
+		// constantly against monsters instead of attacking them — leap doesnt
+		// do damage"). The old raiser-leap (P-2.11(3)) fired at any target
+		// this mod's SCRAMBLED npc IDs happened to match against the raisers
+		// table — ordinary monsters read as shamans, and he vaulted at them
+		// every 8s for zero damage instead of swinging. Combat leap is RETIRED:
+		// raisers are chased and struck on foot like everything else. Leap
+		// keeps its honest roles — travel gait and ring-escape (Breakout),
+		// which are locomotion, never an attack.
 		// THE LOCK AND THE BITER (the owner, 04:19: "meaningfully attack any
 		// creature dumb enough to approach, rather than run back and forth"):
 		// re-picking nearest EVERY step ping-ponged him between half-pursuits.
