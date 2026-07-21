@@ -1957,6 +1957,32 @@ func main() {
 		}
 		lastArea, lastPos = s.Me.Area, s.Me.Pos
 	}
+	// THE PAD WITNESS (the owner, 03:5x: "it didnt take any waypoints... i had
+	// to manually take it"): the touch ritual only ran while the MARCH held —
+	// grind mode and fights walked him past pads forever, and the owner's own
+	// manual rides taught the lit-ledger nothing. Proximity activates on this
+	// game: standing within 3 of a pad IS the activation, whoever is driving,
+	// engaged or not. The watcher ledgers it forever, once per area.
+	padSeen := map[area.ID]bool{}
+	padWitness := func(s *percept.Snapshot) {
+		if s.Me.Area == 0 || padSeen[s.Me.Area] {
+			return
+		}
+		dd := gr.GetData()
+		for _, ob := range dd.Objects {
+			if ob.IsWaypoint() && chebyshev(s.Me.Pos, ob.Position) <= 3 {
+				padSeen[s.Me.Area] = true
+				lit := false
+				mem.GetJSON(activity.LitKey(dd.PlayerUnit.Name, s.Me.Area), &lit)
+				if !lit {
+					mem.PutJSON(activity.LitKey(dd.PlayerUnit.Name, s.Me.Area), memory.ScopeForever,
+						memory.Provenance{Source: "measured", Evidence: "stood at the pad — proximity activates"}, true)
+					logger.Info("cartographer: PAD lit by proximity", "area", int(s.Me.Area))
+				}
+				return
+			}
+		}
+	}
 	// Regrid: mid-area grid regrowth for the leg-walker — rooms stream in as she walks,
 	// and a grid built at the border knows nothing of the far exit.
 	regrid := func() *game.Grid {
@@ -2055,6 +2081,7 @@ func main() {
 			// shepherding is a TEACHING MODE now, guaranteed, not a coin flip.
 			if s.Valid {
 				recordCrossing(s)
+				padWitness(s) // the owner's pad stands teach the ledger too
 			}
 			sawInvalid = sawInvalid || !s.Valid
 			time.Sleep(200 * time.Millisecond)
@@ -2095,6 +2122,7 @@ func main() {
 			}
 		}
 		recordCrossing(s)
+		padWitness(s) // any brush with a pad lights it, whatever the holder
 		activity.ObserveBlood(s) // P-2.0: one blood truth for every Demand this cycle
 		// Grid follows the area (the re-align, owned in one place) — and REGROWS on a
 		// clock in the field: rooms stream in as she walks, and a grid built at the
