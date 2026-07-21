@@ -53,9 +53,11 @@ type Verdict struct {
 }
 
 type Watchdog struct {
-	pos    []posSample
-	grants []grantSample
-	lastRx time.Time
+	pos      []posSample
+	grants   []grantSample
+	lastRx   time.Time
+	holder   string
+	holderAt time.Time
 }
 
 func New() *Watchdog { return &Watchdog{} }
@@ -95,9 +97,16 @@ func (w *Watchdog) Observe(pos data.Position, holder string) {
 // 2026-07-19); it suppresses Stuck/Orbit but never Thrash.
 func (w *Watchdog) Check(holder string, stationaryOK bool) Verdict {
 	now := time.Now()
+	if holder != w.holder {
+		w.holder, w.holderAt = holder, now
+	}
 
 	// STUCK: an active holder, yet the trailing 20s of positions fit in a 5-tile box.
-	if holder != "" && !stationaryOK && len(w.pos) >= 8 {
+	// A HOLDER OWNS ONLY ITS OWN BOX (04:40 night 2: town services idled 19s,
+	// Advance won the wheel, and 373ms later the box convicted ADVANCE — cooled
+	// 15s on arrival, every town visit, so the pad ride never ran and Return's
+	// corpse portal shipped him to the moor). Tenure under 8s convicts nobody.
+	if holder != "" && !stationaryOK && len(w.pos) >= 8 && now.Sub(w.holderAt) > 8*time.Second {
 		var recent []posSample
 		for _, s := range w.pos {
 			if now.Sub(s.at) <= 20*time.Second {
