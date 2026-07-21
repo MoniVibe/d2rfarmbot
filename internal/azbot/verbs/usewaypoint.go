@@ -252,8 +252,14 @@ func (uw UseWaypoint) Do(m *motor.Motor, gr *game.MemoryReader, p *percept.Perce
 	// flag true, NO panel on screen — our own queued approach-click closed it
 	// within 300ms and the rows fired into the void). Verify before each
 	// click; re-open on evaporation.
-	scale := float64(gr.GameAreaSizeY) / 720.0
-	rx := int(200.0 * scale)
+	// MEASURED GEOMETRY (03:47 photo, logs/wp_panel_open.png: nine rows,
+	// Rogue Encampment y≈262 → Catacombs 2 y≈738 at 1051-high capture — row
+	// pitch 59.5, NOT the legacy 158+41 formula, whose row-6 click landed on
+	// the Black Marsh/Outer Cloister boundary and rode nowhere). Fractions of
+	// the capture height travel to any client size.
+	fh := float64(gr.GameAreaSizeY)
+	rowY := func(row int) int { return int(fh * (262.0 + 59.5*float64(row-1)) / 1051.0) }
+	rx := int(fh * 395.0 / 1051.0)
 	for _, cand := range cands {
 		addr, okAddr := area.WPAddresses[cand]
 		if !okAddr {
@@ -289,7 +295,7 @@ func (uw UseWaypoint) Do(m *motor.Motor, gr *game.MemoryReader, p *percept.Perce
 				}
 				time.Sleep(250 * time.Millisecond)
 			}
-			ry := int((158.0+41.0*float64(addr.Row-1))*scale) + dyOff
+			ry := rowY(addr.Row) + dyOff
 			if !gr.GetData().OpenMenus.Waypoint {
 				continue // evaporated before the click: never click the void
 			}
