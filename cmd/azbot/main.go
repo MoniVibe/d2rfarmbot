@@ -1876,8 +1876,16 @@ func main() {
 	// crossing as road.<seed>.<from>.<to>. The march replays proven roads
 	// crumb by crumb instead of re-deriving geometry every night.
 	var crumbs []data.Position
+	// THE SEAM DEBOUNCE (03:29, the Monastery Gate: a brawl ON the seam
+	// flapped the area read 7<->26 every second and the cartographer stamped
+	// a fresh "door" per flip — ledger pollution at event-spam rate. The
+	// adopt logic has had this law since P-5.3a; the cartographer never did):
+	// a crossing is recorded only after the new area HOLDS 1.5s unbroken.
+	crossPend := area.ID(0)
+	crossPendAt := time.Time{}
 	recordCrossing := func(s *percept.Snapshot) {
 		if s.Me.Area == lastArea && lastArea != 0 {
+			crossPend = 0 // the flicker died; the seam keeps its secrets
 			if len(crumbs) == 0 || chebyshev(crumbs[len(crumbs)-1], s.Me.Pos) >= 12 {
 				crumbs = append(crumbs, s.Me.Pos)
 				if len(crumbs) > 12 {
@@ -1886,6 +1894,14 @@ func main() {
 			}
 		}
 		if s.Me.Area != lastArea && lastArea != 0 && s.Me.Area != 0 {
+			if s.Me.Area != crossPend {
+				crossPend, crossPendAt = s.Me.Area, time.Now()
+				return // a one-frame flip records nothing
+			}
+			if time.Since(crossPendAt) < 1500*time.Millisecond {
+				return // still proving itself; the old side keeps the stamp
+			}
+			crossPend = 0
 			// THE TOWN-HOP WITNESS (night 2: three field→town teleports with NO
 			// verb logged — portal ambush, stale walk order, or something still
 			// unnamed; the log could not say). Every arrival in town from the
