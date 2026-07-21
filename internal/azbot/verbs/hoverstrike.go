@@ -57,6 +57,16 @@ func (h HoverStrike) Do(m *motor.Motor, gr *game.MemoryReader, p *percept.Percep
 		led.Append(o)
 		return o
 	}
+	// HOVER DIES UNFOCUSED (04:33): the world runs unfocused on this mod but
+	// the hover oracle goes dark — every sweep is a guaranteed whiff. Refuse
+	// instantly; the caller's positional volley carries the fight (it did all
+	// the killing through every unfocused whiff storm tonight anyway).
+	if !m.GameFocused() {
+		o.Result = ResWhiff
+		o.Evidence = "game unfocused — hover oracle dark, volley carries"
+		led.Append(o)
+		return o
+	}
 	m.MoveStop() // attack aim must never double as a walk order
 
 	// Fresh self-position for the projection — the stale-coordinate disease dies here.

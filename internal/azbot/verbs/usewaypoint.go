@@ -56,6 +56,17 @@ func (uw UseWaypoint) Do(m *motor.Motor, gr *game.MemoryReader, p *percept.Perce
 		led.Append(o)
 		return o
 	}
+	// HOVER DIES UNFOCUSED (04:33, the named-evidence whiff: is=false id=0
+	// type=0 across a whole sweep while the game sat unfocused since 04:08 —
+	// the world RUNS unfocused on this mod but the hover oracle goes dark).
+	// A pad ritual against a dark oracle is 8 seconds of statue: refuse fast,
+	// retry when the window has eyes again.
+	if !m.GameFocused() {
+		o.Result = ResRefused
+		o.Evidence = "game unfocused — hover oracle dark, pad ritual deferred"
+		led.Append(o)
+		return o
+	}
 	d := gr.GetData()
 	start := d.PlayerUnit.Area
 
