@@ -1935,8 +1935,17 @@ func main() {
 				// stamp during a fast manual walk). A re-learn far from the old
 				// truth is SAID, not swallowed; latest still wins.
 				var oldDoor data.Position
-				if mem.GetJSON(activity.BorderKey(seed, lastArea, s.Me.Area), &oldDoor) &&
-					oldDoor.X != 0 && chebyshev(oldDoor, lastPos) > 30 {
+				haveOld := mem.GetJSON(activity.BorderKey(seed, lastArea, s.Me.Area), &oldDoor) && oldDoor.X != 0
+				if haveOld && chebyshev(oldDoor, lastPos) <= 15 {
+					// ALREADY KNOWN (05:19, the Monastery-Gate seam pin: a 4s
+					// oscillation re-wrote the same door hundreds of times, WAL
+					// bloat and a drifting stamp). A crossing within 15 of the
+					// recorded door teaches nothing — skip the write entirely.
+					crumbs = crumbs[:0]
+					lastArea, lastPos = s.Me.Area, s.Me.Pos
+					return
+				}
+				if haveOld && chebyshev(oldDoor, lastPos) > 30 {
 					logger.Warn("cartographer: door CONTRADICTION — one of these is a lie",
 						"pair", fmt.Sprintf("%d->%d", int(lastArea), int(s.Me.Area)),
 						"old", fmt.Sprintf("(%d,%d)", oldDoor.X, oldDoor.Y),

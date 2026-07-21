@@ -178,8 +178,9 @@ type Advance struct {
 	clearAt       time.Time // clearing gets a deadline (audit finding 4)
 	// far-stall conviction (audit finding 3): consecutive wasted legs at a
 	// map target he never even got NEAR — the maze-interior phantom detector.
-	farStallKey string
-	farStallN   int
+	farStallKey  string
+	farStallN    int
+	driveArmedAt time.Time // re-arm cooldown so a flickering seam can't ping-pong the drive
 	// THE MAZE SEARCH RELAY (02:54, the UP loop: far journey NoPath through
 	// unstreamed rooms, fallback clicks judged by the LYING map grid, orbit,
 	// breaker, town — forever): repeated far-journey refusals hand the march
@@ -561,7 +562,15 @@ func (a *Advance) Step(ctx *Ctx) Verdict {
 				}
 			}
 		}
-		if padDist == 1<<30 && time.Since(a.wpLogAt) > 60*time.Second {
+		if time.Since(a.wpLogAt) > 8*time.Second {
+			// DIAGNOSTIC (04:59, owner asleep: zero pad activity all run — is the
+			// pad unfound, unreachable, or the block ungated?). Rate-limited.
+			a.wpLogAt = time.Now()
+			ctx.Led.Append(verbs.Outcome{Verb: "wpdiag", Holder: a.Name(), Result: verbs.ResRefused,
+				Evidence: fmt.Sprintf("in-town ride: padDist=%d padPos=(%d,%d) frontier=%d idx=%d wpAtAge=%.0fs",
+					padDist, padPos.X, padPos.Y, a.frontier, a.idx, time.Since(a.wpAt).Seconds())})
+		}
+		if padDist == 1<<30 && false {
 			// P-6.2: a silent failure is a failure twice — run 89 left town on
 			// foot and the log could not say why the ride never fired.
 			a.wpLogAt = time.Now()
@@ -1157,21 +1166,25 @@ func (a *Advance) cross(ctx *Ctx, d game.Data, me data.Position, tgt data.Positi
 				through, haveFar = far, true
 			}
 		}
-		if haveFar {
+		if haveFar && time.Since(a.driveArmedAt) > 20*time.Second {
 			// P-5.3a: a known far side arms THE DRIVE — one committed run at a
 			// point beyond it, deaf to the flickering reads, instead of 300ms
 			// read-reactive pushes that the seam turns into an oscillator.
 			// NIGHT-2 AUDIT FINDING 1: this branch set only driveAt and armed
-			// NOTHING — a.driving/driveTgt/driveFrom were never assigned
-			// anywhere, the whole drive was dead code, and at every learned
-			// door he stood motionless through the push window (the door
-			// idling the owner watched all night). The drive finally drives.
+			// NOTHING — the drive was dead code and every learned door idled.
+			// THE RE-ARM COOLDOWN (05:19, owner asleep, the Monastery-Gate pin:
+			// at a flickering 7<->26 seam the drive RE-ARMED on every 4s area
+			// flip and ping-ponged him across the boundary for minutes, WAL
+			// pollution and zero progress. One arm per 20s; a seam that flips
+			// faster falls through to the journey + maze-search relay, which
+			// walks him OFF the seam on real streamed ground.
 			me := d.PlayerUnit.Position
 			dir := stepDir(me, through)
 			a.driving = true
 			a.driveFrom = me
 			a.driveTgt = data.Position{X: through.X + dir.X*10, Y: through.Y + dir.Y*10}
 			a.driveAt = time.Now()
+			a.driveArmedAt = time.Now()
 			return
 		}
 		if !haveFar {
