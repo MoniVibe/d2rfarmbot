@@ -125,8 +125,8 @@ func runReplay(logger *slog.Logger, path string, legs []activity.Leg) {
 				demands = append(demands, *d)
 			}
 		}
-		grant, changed := arb.Decide(demands)
-		if changed || (grant == nil && last != "-") {
+		grant, ch := arb.Decide(demands)
+		if ch.Changed() || (grant == nil && last != "-") {
 			holder, urg := "-", 0.0
 			if grant != nil {
 				holder, urg = grant.Demand.Who, grant.Demand.Urgency
@@ -2314,7 +2314,7 @@ func main() {
 				demands = benched
 			}
 		}
-		grant, changed := arb.Decide(demands)
+		grant, gch := arb.Decide(demands)
 
 		// SELF-OBSERVATION (the owner's ask: "tell what the bot is up to, moments where
 		// it's stuck, looping, thrashing — and unstuck itself"): the bot consumes its own
@@ -2502,9 +2502,9 @@ func main() {
 			continue
 		}
 		idleSince = time.Time{}
-		if changed {
-			logger.Info("grant", "to", grant.Demand.Who, "class", grant.Demand.Class.String(),
-				"urgency", fmt.Sprintf("%.2f", grant.Demand.Urgency))
+		if gch.Changed() {
+			logger.Info("grant", "from", gch.From, "to", grant.Demand.Who, "class", grant.Demand.Class.String(),
+				"urgency", fmt.Sprintf("%.2f", grant.Demand.Urgency), "why", gch.Why())
 		}
 		act := acts[grant.Demand.Who]
 		v := act.Step(&activity.Ctx{M: m, GR: gr, P: p, Led: led, Grid: grid, Cap: &cap, Snap: s, SwapKey: hid.GetASCIICode(*swapKey), InvKey: hid.GetASCIICode(*invKeyF), Regrid: regrid, Mem: mem})
