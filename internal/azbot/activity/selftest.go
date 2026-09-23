@@ -6,7 +6,6 @@ import (
 
 	"github.com/hectorgimenez/d2go/pkg/data"
 	"github.com/hectorgimenez/koolo/internal/azbot/percept"
-	"github.com/hectorgimenez/koolo/internal/azbot/verbs"
 	"github.com/hectorgimenez/koolo/internal/game"
 )
 
@@ -103,17 +102,8 @@ func SelfTest(ctx *Ctx, refresh func() *percept.Snapshot) []SelfTestResult {
 	r := NewRestock()
 	deadline := time.Now().Add(75 * time.Second)
 	open := false
-	lastTrace := ""
 	for time.Now().Before(deadline) {
-		ss := snap()
-		// PHASE TRACE: the errand's state machine, visible (the 3-second 6-try
-		// burst on 2026-09-23 was undiagnosable without it).
-		tr := fmt.Sprintf("phase=%d menuTry=%d tries=%d menuOpen=%v tradeSelected=%v pos=(%d,%d)",
-			r.e.phase, r.e.menuTry, r.e.tries, ss.MenuOpen, r.e.tradeSelected, ss.Me.Pos.X, ss.Me.Pos.Y)
-		if tr != lastTrace {
-			ctx.Led.Append(verbs.Outcome{Verb: "errand-trace", Holder: "selftest", Result: verbs.ResDone, Evidence: tr})
-			lastTrace = tr
-		}
+		snap()
 		o, dead := r.e.step(ctx, "selftest")
 		if dead {
 			break

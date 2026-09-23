@@ -22,6 +22,9 @@ type Pickup struct {
 	// before we send a click; a recycled UnitID or stale frame fails closed.
 	TargetQuality int
 	Window        time.Duration // default 1.2s
+	// AllowBelow lifts the uniques-only guard for belt bottles (2026-09-23: potion
+	// looting). Loot sets it ONLY for items the belt classifier calls a potion.
+	AllowBelow bool
 }
 
 func (pk Pickup) Do(m *motor.Motor, gr *game.MemoryReader, p *percept.Perceptor, led *Ledger, holder string) Outcome {
@@ -62,7 +65,7 @@ func (pk Pickup) Do(m *motor.Motor, gr *game.MemoryReader, p *percept.Perceptor,
 		led.Append(o)
 		return o
 	}
-	if liveTarget.Quality < item.QualityUnique || (pk.TargetQuality > 0 && int(liveTarget.Quality) != pk.TargetQuality) {
+	if (liveTarget.Quality < item.QualityUnique && !pk.AllowBelow) || (pk.TargetQuality > 0 && int(liveTarget.Quality) != pk.TargetQuality) {
 		o.Result = ResRefused
 		o.Evidence = fmt.Sprintf("target quality changed before click: %d", int(liveTarget.Quality))
 		led.Append(o)
@@ -93,6 +96,13 @@ func (pk Pickup) Do(m *motor.Motor, gr *game.MemoryReader, p *percept.Perceptor,
 		n := 0
 		for _, it := range dd.Inventory.ByLocation(item.LocationInventory) {
 			if it.ID == want.id && it.Quality == want.quality && it.UniqueSetID == want.unique {
+				n++
+			}
+		}
+		// Bottles auto-place into the BELT (2026-09-23: potion looting) — a belt
+		// landing is a successful pickup, not a misclick.
+		for _, it := range dd.Inventory.Belt.Items {
+			if it.ID == want.id {
 				n++
 			}
 		}

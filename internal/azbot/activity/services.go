@@ -35,6 +35,7 @@ const (
 
 // errand is the shared NPC-service state machine. One bounded slice per Step.
 type errand struct {
+	lastTrace string
 	// tradeSelected: vendor stock LINGERS in memory after the trade window closes
 	// (2026-09-23: buys fired into Drognan's Talk/Trade menu because stock still
 	// read). Stock is trusted as "shop open" ONLY after Trade was selected on THIS
@@ -112,6 +113,12 @@ func (e *errand) walkTo(ctx *Ctx, goal data.Position, who string) (exhausted boo
 // OPEN (vendor stock readable — the honest oracle) and the caller may act.
 func (e *errand) step(ctx *Ctx, who string) (shopOpen bool, dead bool) {
 	s := ctx.Snap
+	// PHASE TRACE (2026-09-23: restock passed the town self-test yet failed in
+	// the live run; the state machine must be visible wherever it runs).
+	if tr := fmt.Sprintf("phase=%d menuTry=%d tries=%d menuOpen=%v tradeSelected=%v", e.phase, e.menuTry, e.tries, s.MenuOpen, e.tradeSelected); tr != e.lastTrace {
+		e.lastTrace = tr
+		ctx.Led.Append(verbs.Outcome{Verb: "errand-trace", Holder: who, Result: verbs.ResRefused, Evidence: tr})
+	}
 	d := ctx.GR.GetData()
 	if e.startedAt.IsZero() {
 		e.startedAt = time.Now()
@@ -286,32 +293,8 @@ func (e *errand) step(ctx *Ctx, who string) (shopOpen bool, dead bool) {
 		me := d.PlayerUnit.Position
 		bx := int(float32((target.Position.X-me.X)-(target.Position.Y-me.Y))*19.8) + ctx.GR.GameAreaSizeX/2
 		by := int(float32((target.Position.X-me.X)+(target.Position.Y-me.Y))*9.9) + ctx.GR.GameAreaSizeY/2 + game.UnitAimDY() // NPC body, not feet
-		confirmed, px, py := false, bx, by
-	sweep:
-		// Search DOWN through the body too, not only up to the label (04:47:
-		// at dist 4 he clipped into Akara and the upward-only sweep never found
-		// her — a very close NPC fills the vertical band around the base).
-		for dy := 16; dy >= -72; dy -= 8 {
-			for _, dx := range []int{0, -8, 8, -16, 16, -24, 24} {
-				cx, cy := bx+dx, by+dy
-				if cx < 20 || cy < 20 || cx > ctx.GR.GameAreaSizeX-20 || cy > ctx.GR.GameAreaSizeY-20 {
-					continue
-				}
-				ctx.M.AimPhysical(cx, cy)
-				time.Sleep(40 * time.Millisecond)
-				hd := ctx.GR.GetData().HoverData
-				if !hd.IsHovered || hd.UnitID != target.UnitID {
-					continue
-				}
-				ctx.M.AimPhysical(cx, cy)
-				time.Sleep(60 * time.Millisecond)
-				hd = ctx.GR.GetData().HoverData
-				if hd.IsHovered && hd.UnitID == target.UnitID {
-					confirmed, px, py = true, cx, cy
-					break sweep
-				}
-			}
-		}
+		// Tracked, short, most-likely-first (hoverUnitTracked): ~1s, not 3-8s.
+		px, py, confirmed := hoverUnitTracked(ctx, target.UnitID)
 		e.tries++
 		if e.tries == 3 {
 			snapPNG(ctx, "logs/talk_fail.png") // P-6.2: the third deaf talk photographs itself
@@ -333,10 +316,8 @@ func (e *errand) step(ctx *Ctx, who string) (shopOpen bool, dead bool) {
 				e.clickAt = time.Now()
 				return false, false
 			}
-			adx, ady := s.Me.Pos.X-target.Position.X, s.Me.Pos.Y-target.Position.Y
-			arc := data.Position{X: target.Position.X + ady, Y: target.Position.Y - adx}
-			slideStride(ctx, arc, 900*time.Millisecond, 1, who+"/hoverarc")
-			e.phase = 1 // re-approach fresh from a new bearing
+			// A tracked miss retries next tick. The old hover-arc side-step spent 0.9s
+			// for gain=0 and re-approached from scratch (2026-09-23 gap analysis).
 			return false, false
 		}
 		e.hoverFails = 0

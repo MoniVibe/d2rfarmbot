@@ -1991,6 +1991,8 @@ func (f *Fight) assess(o verbs.Outcome) {
 // ---------------------------------------------------------------- Loot (ClassLoot)
 
 type Loot struct {
+	bestD    int       // closest approach to the current target
+	bestAt   time.Time // when bestD last improved
 	target   data.UnitID
 	failures map[data.UnitID]int
 	ban      map[data.UnitID]time.Time
@@ -2015,6 +2017,20 @@ func (l *Loot) wanted(s *percept.Snapshot, it percept.ItemRef) float64 {
 	// and gold cases all retired; the corpse reclaim owns gear recovery.
 	if it.Quality >= 7 && s.Me.InvFree >= 2 {
 		return 0.85
+	}
+	// POTIONS FILL THE BELT (2026-09-23, Dry Hills: 97 drops on the floor, several
+	// red and blue bottles within 4 tiles, belt at 3/8, and uniques-only walked
+	// past every one). A bottle rides the belt, never the bag — wanted only while
+	// the belt has a free slot. Scored under uniques so a unique still wins.
+	if s.Me.BeltUsed < s.Me.BeltSlots {
+		switch it.Potion {
+		case "health":
+			return 0.8
+		case "mana":
+			if s.Me.BeltMana < 2 {
+				return 0.75
+			}
+		}
 	}
 	return 0
 }
@@ -2104,8 +2120,23 @@ func (l *Loot) Step(ctx *Ctx) Verdict {
 		l.j, l.target = nil, 0
 		return Done
 	}
+	if it.ID != l.target {
+		l.bestD, l.bestAt = 1<<30, time.Now()
+	}
 	l.target = it.ID
 	d := chebyshev(s.Me.Pos, it.Pos)
+	// PROGRESS OR LET GO (2026-09-23, Dry Hills: 19s "running" in place toward a
+	// drop behind clutter the grid cannot see, three times in two minutes). The
+	// distance must shrink within 4s or the drop is banned for a minute.
+	if d < l.bestD {
+		l.bestD, l.bestAt = d, time.Now()
+	} else if time.Since(l.bestAt) > 4*time.Second {
+		l.ban[it.ID] = time.Now().Add(60 * time.Second)
+		l.j, l.target = nil, 0
+		ctx.Led.Append(verbs.Outcome{Verb: "loot", Holder: l.Name(), Result: verbs.ResBlocked,
+			Evidence: fmt.Sprintf("no progress to item %d in 4s (stuck at d=%d) — banned 60s", it.ID, d)})
+		return Running
+	}
 	if d > 3 {
 		// JOURNEY, not a blind stride: an item inside a house reads as "5 tiles away"
 		// through the wall — she flicker-hovered it and moved on (the owner's report).
@@ -2125,7 +2156,8 @@ func (l *Loot) Step(ctx *Ctx) Verdict {
 		}
 		return Running
 	}
-	o := verbs.Pickup{Target: it.ID, TargetPos: it.Pos, TargetQuality: it.Quality}.Do(ctx.M, ctx.GR, ctx.P, ctx.Led, l.Name())
+	o := verbs.Pickup{Target: it.ID, TargetPos: it.Pos, TargetQuality: it.Quality,
+		AllowBelow: it.Potion == "health" || it.Potion == "mana"}.Do(ctx.M, ctx.GR, ctx.P, ctx.Led, l.Name())
 	if o.Result != verbs.ResDone {
 		l.failures[it.ID]++
 		if l.failures[it.ID] >= 3 {

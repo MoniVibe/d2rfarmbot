@@ -1808,50 +1808,16 @@ func main() {
 	// leaving town (measured 00:33: a field attach right after a shopping trip
 	// saw "readable stock" and fired three blind ESCs — an odd count leaves
 	// the pause menu STANDING and the world frozen). Town-only, always.
-	for i := 0; gr.GetData().PlayerUnit.Area.IsTown() && i < 3; i++ {
-		if len(gr.GetData().Inventory.ByLocation(item.LocationVendor)) == 0 {
-			break
-		}
-		logger.Info("startup: inherited trade panel — closing before calibration")
-		m.KeyLane().Press(0x1B)
-		time.Sleep(600 * time.Millisecond)
+	// STARTUP UI HYGIENE, BY SIGHT (2026-09-23): the blind ESC dance here raised
+	// the pause menu whenever no panel was open, and memory cannot see panels.
+	// Close an inherited shop by its own X, then click away any pause/sub-panel.
+	if x, y, ok := game.ShopOpenX(gr.Screenshot()); ok {
+		logger.Info("startup: inherited trade panel — closing by its X")
+		m.RealMenuClick(x, y)
+		time.Sleep(400 * time.Millisecond)
 	}
-	if d0 := gr.GetData(); d0.PlayerUnit.Area.IsTown() {
-		m.KeyLane().Press(0x1B) // closes any byte-blind panel; raises the menu if none
-		time.Sleep(500 * time.Millisecond)
-		frozen := true
-		for _, dir := range []data.Position{{X: 4, Y: 4}, {X: -5, Y: 1}, {X: 1, Y: -5}} {
-			me := gr.GetData().PlayerUnit.Position
-			o := verbs.Stride{To: data.Position{X: me.X + dir.X, Y: me.Y + dir.Y},
-				Hold: 400 * time.Millisecond, MinGain: 1}.Do(m, gr, p, led, "startup/shadow")
-			if o.Result == verbs.ResDone {
-				frozen = false
-				break
-			}
-		}
-		if frozen {
-			// No panel was open — we raised the menu. The restore is VERIFIED,
-			// never claimed: RealEsc needs foreground and fails silently (00:37:
-			// "restored" lied, the menu stood a full minute, the world froze,
-			// and the fence took the blame). Up to 3 cycles: RealEsc, stride,
-			// believe only movement.
-			restored := false
-			for try := 0; try < 3 && !restored; try++ {
-				m.RealEsc()
-				time.Sleep(400 * time.Millisecond)
-				me := gr.GetData().PlayerUnit.Position
-				o := verbs.Stride{To: data.Position{X: me.X + 4, Y: me.Y + 4},
-					Hold: 400 * time.Millisecond, MinGain: 1}.Do(m, gr, p, led, "startup/shadow")
-				restored = o.Result == verbs.ResDone
-			}
-			if restored {
-				logger.Info("startup: hygiene ESC raised the menu — restored (verified by stride)")
-			} else {
-				logger.Warn("startup: hygiene ESC raised the menu and 3 restores never moved her — the watchdog probe inherits it")
-			}
-		} else {
-			logger.Info("startup: hygiene ESC done — world moves; any inherited panel is shut")
-		}
+	if n := activity.EnsureWorld(gr, m); n > 0 {
+		logger.Info("startup: cleared blocking screens by sight", "layers", n)
 	}
 	// calibrate wraps probing + the owner's declared build: the owner KNOWS the char
 	// (classic-bot law — kolbot/koolo configs declared skills; nobody inferred them).

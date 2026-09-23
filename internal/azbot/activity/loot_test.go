@@ -30,3 +30,23 @@ func TestLootPickIsNearestAndSticky(t *testing.T) {
 		t.Fatalf("target flipped to %d, want sticky %d", it.ID, far.ID)
 	}
 }
+
+// Bottles on the floor are wanted while the belt has room, never over a unique,
+// and not at all once the belt is full.
+func TestLootWantsPotionsForTheBelt(t *testing.T) {
+	l := NewLoot()
+	s := &percept.Snapshot{Valid: true}
+	s.Me.InvFree, s.Me.BeltSlots, s.Me.BeltUsed = 10, 8, 3
+	red := percept.ItemRef{ID: 1, Quality: 2, Potion: "health"}
+	uniq := percept.ItemRef{ID: 2, Quality: 7, Potion: "unknown"}
+	if l.wanted(s, red) <= 0 {
+		t.Fatal("belt 3/8: a red bottle must be wanted")
+	}
+	if l.wanted(s, uniq) <= l.wanted(s, red) {
+		t.Fatal("a unique must outrank a bottle")
+	}
+	s.Me.BeltUsed = 8
+	if l.wanted(s, red) != 0 {
+		t.Fatal("full belt: bottles are not wanted")
+	}
+}

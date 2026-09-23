@@ -139,6 +139,9 @@ type ItemRef struct {
 	Pos     data.Position
 	Name    string
 	Quality int
+	// Potion: "health"/"mana"/"unknown" by the belt classifier (a ground 603 is the
+	// mod's red potion — vendors and drops share the scrambled "SmallCharm" row).
+	Potion string
 }
 
 // PortalRef is a live portal object: identity AND position. Entering a portal means
@@ -400,7 +403,8 @@ func (p *Perceptor) Capture() *Snapshot {
 		s.Enemies = append(s.Enemies, EnemyRef{ID: m.UnitID, Pos: m.Position, Mode: uint32(m.Mode), NPC: m.Name})
 	}
 	for _, it := range d.Inventory.ByLocation(item.LocationGround) {
-		s.Items = append(s.Items, ItemRef{ID: it.UnitID, Pos: it.Position, Name: string(it.Name), Quality: int(it.Quality)})
+		s.Items = append(s.Items, ItemRef{ID: it.UnitID, Pos: it.Position, Name: string(it.Name), Quality: int(it.Quality),
+				Potion: PotionKind(it, true)})
 	}
 	// P-5R roadside rites: a cheap nearby-rite flag for the Imbibe demand —
 	// the Step re-verifies against the live object list before a single step.

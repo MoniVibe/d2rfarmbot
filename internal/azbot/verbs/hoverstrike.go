@@ -107,6 +107,19 @@ func (h HoverStrike) Do(m *motor.Motor, gr *game.MemoryReader, p *percept.Percep
 	// (wrong target / projection) vs nothing (aim off the sprite entirely).
 	var seen []string
 	for _, pr := range probes {
+		// TRACK THE TARGET (2026-09-23: the talk sweep proved it — units move while
+		// we probe, and a projection frozen at call time aims at where they WERE).
+		// Re-project from fresh positions before every probe.
+		if fd := gr.GetData(); true {
+			for _, mon := range fd.Monsters {
+				if mon.UnitID == h.Target {
+					fme := fd.PlayerUnit.Position
+					bx = int(float32((mon.Position.X-fme.X)-(mon.Position.Y-fme.Y))*19.8) + gr.GameAreaSizeX/2
+					by = int(float32((mon.Position.X-fme.X)+(mon.Position.Y-fme.Y))*9.9) + gr.GameAreaSizeY/2 + game.UnitAimDY()
+					break
+				}
+			}
+		}
 		cx, cy := bx+pr[0], by+pr[1]
 		if cx < 20 || cy < 20 || cx > gr.GameAreaSizeX-20 || cy > gr.GameAreaSizeY-20 {
 			continue
