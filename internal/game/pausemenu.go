@@ -130,3 +130,14 @@ func ShopOpenX(img image.Image) (int, int, bool) {
 	x, y := int(657*k), int(120*k)
 	return x, y, redX(img, x, y)
 }
+
+// ShopVisible: the vendor panel is on screen — its red close X (stock-independent)
+// OR the dark empty-grid signature. A fully stocked tab (a blacksmith's armor
+// wall) fills the sampled cells, so the grid test alone read "closed" on open
+// shops (2026-09-23: fence and repair burned 45s each on a shop that WAS open).
+func ShopVisible(img image.Image) bool {
+	if _, _, ok := ShopOpenX(img); ok {
+		return true
+	}
+	return TradePanelVisible(img)
+}

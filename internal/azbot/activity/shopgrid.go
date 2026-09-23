@@ -105,7 +105,7 @@ func buyVerified(ctx *Ctx, holder string, what string, want func(data.Item) bool
 	}
 	// The panel must be ON SCREEN — lingering stock is not an open shop, and a
 	// right-click into the town casts a skill ("Impossible.").
-	if !game.TradePanelVisible(ctx.GR.Screenshot()) {
+	if !game.ShopVisible(ctx.GR.Screenshot()) {
 		ctx.Led.Append(verbs.Outcome{Verb: "buy", Holder: holder, Result: verbs.ResRefused,
 			Evidence: what + ": trade panel not on screen — no click"})
 		return buyNoConfirm

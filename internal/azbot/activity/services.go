@@ -155,7 +155,7 @@ func (e *errand) step(ctx *Ctx, who string) (shopOpen bool, dead bool) {
 	// oracle the Lexicon already trusts: if it reads, we are trading. Jump
 	// straight to act, and NEVER re-click an open shop closed. Trade errands
 	// only — Heal wants the heal-dialog, not the merchant's shelves.
-	if e.trade && e.tradeSelected && len(d.Inventory.ByLocation(item.LocationVendor)) > 0 && game.TradePanelVisible(ctx.GR.Screenshot()) {
+	if e.trade && e.tradeSelected && len(d.Inventory.ByLocation(item.LocationVendor)) > 0 && game.ShopVisible(ctx.GR.Screenshot()) {
 		e.phase = 4
 		return true, false
 	}
@@ -348,7 +348,7 @@ func (e *errand) step(ctx *Ctx, who string) (shopOpen bool, dead bool) {
 		// opening shop and burned all six menu tries in three seconds).
 		for i := 0; i < 20; i++ {
 			// stock LINGERS; the screen decides (game.TradePanelVisible)
-			if len(ctx.GR.GetData().Inventory.ByLocation(item.LocationVendor)) > 0 && game.TradePanelVisible(ctx.GR.Screenshot()) {
+			if len(ctx.GR.GetData().Inventory.ByLocation(item.LocationVendor)) > 0 && game.ShopVisible(ctx.GR.Screenshot()) {
 				return true, false
 			}
 			time.Sleep(100 * time.Millisecond)
