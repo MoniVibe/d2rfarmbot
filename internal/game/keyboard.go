@@ -65,6 +65,25 @@ func (hid *HID) GameFocused() bool {
 	return win.GetForegroundWindow() == hid.gr.HWND
 }
 
+// SpoofActivate posts the activation messages D2R's window procedure uses to decide
+// it is the active app (WM_ACTIVATEAPP, WM_ACTIVATE/WA_ACTIVE, WM_SETFOCUS) WITHOUT
+// taking the foreground. Measured 2026-09-23 on the MSI: with the Claude app in
+// front, hover went from dark to reporting units within one probe after these
+// three posts, and the real cursor stayed unclipped (ClipCursor = whole desktop).
+// The owner's windows are untouched; keyboard input still only reaches the true
+// foreground, so this cannot leak keystrokes.
+func (hid *HID) SpoofActivate() {
+	const (
+		wmActivateApp = 0x001C
+		wmActivate    = 0x0006
+		wmSetFocus    = 0x0007
+		waActive      = 1
+	)
+	win.PostMessage(hid.gr.HWND, wmActivateApp, 1, 0)
+	win.PostMessage(hid.gr.HWND, wmActivate, waActive, 0)
+	win.PostMessage(hid.gr.HWND, wmSetFocus, 0, 0)
+}
+
 // FocusGame brings D2R to the foreground — required before OS-level real input
 // (menus read hardware-level input only).
 func (hid *HID) FocusGame() {

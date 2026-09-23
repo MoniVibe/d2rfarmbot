@@ -347,6 +347,32 @@ func (m *Motor) RealKey(vk uint16) bool {
 // GameFocused reports whether D2R owns the foreground (Sentinel's focus watch).
 func (m *Motor) GameFocused() bool { return m.hid.GameFocused() }
 
+// FakeFocus enables HoverReady's background activation spoof (flag -fakefocus).
+var FakeFocus = true
+
+var lastSpoof atomic.Int64
+
+// HoverReady reports whether the game's hover oracle can be trusted right now.
+// Focused: yes. Unfocused with FakeFocus: re-post the activation messages (at most
+// every 1.5s — the owner alt-tabbing deactivates D2R again) and trust hover; the
+// verbs' own confirm-or-whiff logic still judges every probe. Otherwise: no — the
+// caller takes its blind positional path.
+func (m *Motor) HoverReady() bool {
+	if m.hid.GameFocused() {
+		return true
+	}
+	if !FakeFocus {
+		return false
+	}
+	now := time.Now().UnixMilli()
+	if now-lastSpoof.Load() > 1500 {
+		lastSpoof.Store(now)
+		m.hid.SpoofActivate()
+		time.Sleep(40 * time.Millisecond) // let the window proc drain the posts
+	}
+	return true
+}
+
 // ReserveCursor grants the exclusive cursor lease or refuses.
 func (m *Motor) ReserveCursor(role CursorRole, holder string, d time.Duration) (*CursorLease, bool) {
 	if !m.Engage.Engaged() {

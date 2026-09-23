@@ -124,7 +124,7 @@ func (pk Pickup) Do(m *motor.Motor, gr *game.MemoryReader, p *percept.Perceptor,
 	// instead of spending the whole sweep proving an impossible hover. The typed
 	// ground-gone postcondition decides whether the click worked; a miss returns
 	// to Loot's bounded failure/ban path rather than re-bidding forever.
-	if !m.GameFocused() {
+	if !m.HoverReady() {
 		m.ClickLeft(bx, by)
 		deadline := time.Now().Add(win)
 		for time.Now().Before(deadline) {

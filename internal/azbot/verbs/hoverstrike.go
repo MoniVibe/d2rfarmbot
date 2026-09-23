@@ -63,7 +63,7 @@ func (h HoverStrike) Do(m *motor.Motor, gr *game.MemoryReader, p *percept.Percep
 	// the hover oracle goes dark — every sweep is a guaranteed whiff. Refuse
 	// instantly; the caller's positional volley carries the fight (it did all
 	// the killing through every unfocused whiff storm tonight anyway).
-	if !m.GameFocused() {
+	if !m.HoverReady() {
 		o.Result = ResWhiff
 		o.Evidence = "game unfocused — hover oracle dark, volley carries"
 		led.Append(o)

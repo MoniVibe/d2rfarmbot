@@ -180,6 +180,7 @@ func vkOf(name string) int {
 func main() {
 	seconds := flag.Int("seconds", 3600, "run duration in seconds")
 	dpiScale := flag.Float64("dpiscale", 1.25, "display scale (this laptop: 1.25)")
+	fakeFocus := flag.Bool("fakefocus", true, "background play: post WM_ACTIVATE-family messages so D2R keeps its hover oracle alive while another window has the foreground (never takes focus, never clips the cursor)")
 	worldScaleF := flag.Float64("worldscale", 0, "world-aim scale (logical client px -> world cursor px). 0 = AUTO: physical client height / 720 — the 19.8/9.9 tile constants are koolo's 1280x720 numbers. dpiscale only matched by luck on the old 900p laptop.")
 	moveKey := flag.String("move", "e", "Force Move key (D2R Options>Controls binding)")
 	swapKey := flag.String("swap", "w", "weapon-swap key (the bowzon dance: bow at range, javelin at contact)")
@@ -247,6 +248,7 @@ func main() {
 		logger.Error("game reader failed", "err", err)
 		return
 	}
+	motor.FakeFocus = *fakeFocus
 	ws := *worldScaleF
 	if ws <= 0 {
 		ws = float64(gr.GameAreaSizeY) * (*dpiScale) / 720

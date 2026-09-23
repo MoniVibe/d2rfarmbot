@@ -1752,7 +1752,7 @@ func (f *Fight) Step(ctx *Ctx) Verdict {
 		// impossible hover, then blacklist a real target on the resulting whiffs;
 		// fire the walk-proof positional volley immediately and let the snapshot
 		// stream provide hit/death evidence.
-		if !ctx.M.GameFocused() {
+		if !ctx.M.HoverReady() {
 			f.hoverWhiffRun = 0
 			f.noEvid = 0
 			f.strike(ctx, f.target, f.targetPos, mk)
