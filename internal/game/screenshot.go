@@ -73,6 +73,9 @@ func (gd *MemoryReader) Screenshot() image.Image {
 	// Cleanup
 	_, _, _ = winproc.DeleteObject.Call(hbmMem)
 	_, _, _ = winproc.DeleteDC.Call(hdcMem)
+	// GetWindowDC's DC must go back: unreleased, every capture leaked one, and the
+	// screen oracle captures several times a second.
+	_, _, _ = winproc.ReleaseDC.Call(uintptr(gd.HWND), hdcWindow)
 
 	return img
 }
