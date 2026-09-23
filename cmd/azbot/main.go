@@ -184,7 +184,7 @@ func main() {
 	swapKey := flag.String("swap", "w", "weapon-swap key (the bowzon dance: bow at range, javelin at contact)")
 	killKey := flag.String("killswitch", "f10", "hotkey to toggle bot control (f9|f10|f11|pause|scrolllock — NOT f12, Windows reserves it for debuggers). Disengage heals all input patches — the human owns Diablo instantly.")
 	belt := flag.String("belt", "1,2,3,4", "belt column keys")
-	drinkAt := flag.Int("drinkat", 55, "sentinel drinks at or below this HP%")
+	drinkAt := flag.Int("drinkat", 60, "sentinel drinks at or below this HP%")
 	memDir := flag.String("memdir", "logs/azmem", "memory store directory (WAL)")
 	goal := flag.String("goal", "farm", "the Director's current goal: farm (routes+explore+loot) | campaign/rampage (Act 1 march) | gamble (Gheed errand when bankrolled). Goals shape WHICH activities bid; the arbiter still owns every moment.")
 	meleeKeyF := flag.String("meleekey", "", "OWNER-DECLARED melee skill key (e.g. f1 for Jab) — config beats inference on a scrambled mod; overrides calibration")
@@ -219,7 +219,8 @@ func main() {
 	if *replayF != "" {
 		legs := activity.FarmItinerary()
 		if *goal == "campaign" || *goal == "rampage" {
-			legs = activity.Act1Itinerary()
+			// Replay has no live area snapshot; keep the historical Act 1 route.
+			legs = activity.CampaignItinerary(0)
 		}
 		runReplay(logger, *replayF, legs)
 		return
@@ -1125,7 +1126,7 @@ func main() {
 		// into the BELT. Cells measured optically from akara_shop.png and verified by
 		// the 30g Herb (id 602 = the mod's HP potion) landing in belt (0,0). ----
 		if *buyPots {
-			const hpID = 602 // "Herb" — the mod's HP potion, proven by purchase
+			const hpID = 602             // "Herb" — the mod's HP potion, proven by purchase
 			hpCell := [2]int{612, 478}   // red bottle, Misc tab
 			manaCell := [2]int{612, 525} // blue bottle, Misc tab
 			uiClick := func(cx, cy int) {
@@ -1646,7 +1647,9 @@ func main() {
 				continue
 			}
 			var key byte
-			if cap.Contact != nil {
+			if cap.Combat != nil {
+				key = cap.Combat.Key
+			} else if cap.Contact != nil {
 				key = cap.Contact.Key
 			}
 			o := verbs.HoverStrike{Target: best.ID, TargetPos: best.Pos, SelectKey: key}.Do(m, gr, p, led, "fighttest")
@@ -1810,7 +1813,11 @@ func main() {
 		}
 		if *meleeKeyF != "" {
 			k := hid.GetASCIICode(*meleeKeyF)
-			c.Contact = &combat.Binding{Key: k, Skill: provenSkill(k)}
+			declared := &combat.Binding{Key: k, Skill: provenSkill(k)}
+			c.Contact = declared
+			c.Combat = declared // an explicit owner declaration outranks auto-preference
+			c.LeapAttack = nil
+			c.DoubleSwing = nil // do not let the automatic fallback override the declaration
 			logger.Info("capability: owner-declared melee key", "key", *meleeKeyF, "skill", int(c.Contact.Skill))
 		}
 		if *rangedKeyF != "" {
@@ -1848,12 +1855,15 @@ func main() {
 		mem.PutJSON(activity.BorderKey(466817790, area.RogueEncampment, area.BloodMoor), memory.ScopeSeed,
 			memory.Provenance{Source: "hand-piloted", Evidence: "road end, seed 466817790"}, road[len(road)-1])
 	}
-	// The goal shapes the itinerary: farm grinds the proven circuit's summit; campaign /
-	// rampage marches the full act to Andariel's chamber. The arbiter owns every moment
-	// either way — Fight and Loot preempt the march by class, which IS the rampage.
+	// The goal shapes the itinerary: farm grinds the proven circuit's summit;
+	// campaign/rampage selects the full route for the act the character is
+	// actually standing in. This keeps a saved Act 1 frontier from making an
+	// Act 2 character walk back toward Blood Moor.
 	legs := activity.FarmItinerary()
 	if *goal == "campaign" || *goal == "rampage" {
-		legs = activity.Act1Itinerary()
+		startArea := area.ID(gr.GetData().PlayerUnit.Area)
+		legs = activity.CampaignItinerary(startArea)
+		logger.Info("campaign itinerary selected", "act", startArea.Act(), "startArea", int(startArea), "legs", len(legs))
 	}
 	adv := activity.NewAdvance(legs)
 	fight := activity.NewFight()
@@ -2131,7 +2141,7 @@ func main() {
 			}
 		}
 		recordCrossing(s)
-		padWitness(s) // any brush with a pad lights it, whatever the holder
+		padWitness(s)            // any brush with a pad lights it, whatever the holder
 		activity.ObserveBlood(s) // P-2.0: one blood truth for every Demand this cycle
 		// Grid follows the area (the re-align, owned in one place) — and REGROWS on a
 		// clock in the field: rooms stream in as she walks, and a grid built at the
@@ -2238,12 +2248,24 @@ func main() {
 				demands = append(demands, *d)
 			}
 		}
-		// A BENCH WITH AN EMPTY FIELD UN-BENCHES: cooling the sole bidder is
-		// self-inflicted idleness (the Flavie hang, 00:23 — advance benched,
-		// explore frontier-gated, and she stood in the moor doing nothing).
-		// The cooldown stays meaningful only while alternatives exist.
+		// A cooldown must be real.  The old empty-field fallback immediately
+		// re-granted the activity the watchdog had just convicted (observed:
+		// "cooling advance for 15s" followed by an advance grant 38ms later),
+		// turning recovery into the same failed plan repeated forever.  Re-seat
+		// a sole bidder only in the final two seconds of its short recovery
+		// window; until then the watchdog's novel stride owns the reset.
 		if len(demands) == 0 && len(benched) > 0 {
-			demands = benched
+			soonest := time.Duration(1<<63 - 1)
+			for _, d := range benched {
+				if until, ok := cooldowns[d.Who]; ok {
+					if left := time.Until(until); left < soonest {
+						soonest = left
+					}
+				}
+			}
+			if soonest <= 2*time.Second {
+				demands = benched
+			}
 		}
 		grant, changed := arb.Decide(demands)
 
@@ -2382,7 +2404,10 @@ func main() {
 						if !safeGround && stuckRunN >= 6 {
 							safeGround = true
 						}
-						if safeGround {
+						// The shadow probe is optional diagnostics, not a reason to
+						// steal the desktop. RealEsc focuses D2R before sending the
+						// key; only probe when D2R already owns the foreground.
+						if safeGround && m.GameFocused() {
 							m.RealEsc()
 							time.Sleep(500 * time.Millisecond)
 							o2 := verbs.Stride{To: esc, Hold: 700 * time.Millisecond, MinGain: 1}.Do(m, gr, p, led, "watchdog/shadow")

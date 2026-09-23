@@ -69,26 +69,26 @@ func LosClear(g *game.Grid, a, b data.Position) bool { return losClear(g, a, b) 
 // knowledge by npc ID — stable under the mod's name scrambling, and not class
 // knowledge, so it lives here rather than priors.go. Extend as acts open up.
 var raisers = map[npc.ID]bool{
-	npc.FallenShaman:      true,
-	npc.CarverShaman:      true,
-	npc.CarverShaman2:     true,
-	npc.DevilkinShaman:    true,
-	npc.DevilkinShaman2:   true,
-	npc.DarkShaman:        true,
-	npc.DarkShaman2:       true,
-	npc.WarpedShaman:      true,
-	npc.HollowOne:         true, // the mummy lords raise their dead too
-	npc.Guardian:          true,
-	npc.Unraveler:         true,
-	npc.Unraveler2:        true,
-	npc.HoradrimAncient:   true,
-	npc.RatManShaman:      true,
-	npc.FetishShaman:      true,
-	npc.FlayerShaman:      true,
-	npc.FlayerShaman2:     true,
-	npc.SoulKillerShaman:  true,
-	npc.SoulKillerShaman2: true,
-	npc.StygianDollShaman: true,
+	npc.FallenShaman:       true,
+	npc.CarverShaman:       true,
+	npc.CarverShaman2:      true,
+	npc.DevilkinShaman:     true,
+	npc.DevilkinShaman2:    true,
+	npc.DarkShaman:         true,
+	npc.DarkShaman2:        true,
+	npc.WarpedShaman:       true,
+	npc.HollowOne:          true, // the mummy lords raise their dead too
+	npc.Guardian:           true,
+	npc.Unraveler:          true,
+	npc.Unraveler2:         true,
+	npc.HoradrimAncient:    true,
+	npc.RatManShaman:       true,
+	npc.FetishShaman:       true,
+	npc.FlayerShaman:       true,
+	npc.FlayerShaman2:      true,
+	npc.SoulKillerShaman:   true,
+	npc.SoulKillerShaman2:  true,
+	npc.StygianDollShaman:  true,
 	npc.StygianDollShaman2: true,
 }
 
@@ -108,6 +108,49 @@ func losClear(g *game.Grid, a, b data.Position) bool {
 		}
 	}
 	return true
+}
+
+// meleeAttackKey chooses the damage skill, keeping LeapAttack out of the travel
+// gait and out of point-blank range where Double Swing is the steadier fallback.
+// The live skill binding is selected by calibration; this helper only decides
+// which already-proven key is safe to issue this tick.
+func meleeAttackKey(ctx *Ctx, s *percept.Snapshot, allowLeap bool) byte {
+	if ctx == nil || ctx.Cap == nil || s == nil {
+		return 0
+	}
+	if allowLeap && ctx.Cap.LeapAttack != nil && leapAttackReady(s) {
+		return ctx.Cap.LeapAttack.Key
+	}
+	if ctx.Cap.DoubleSwing != nil && s.Me.MPPct > 10 {
+		return ctx.Cap.DoubleSwing.Key
+	}
+	if ctx.Cap.Combat != nil {
+		// Do not re-issue Leap Attack when the mana/range gate rejected it.
+		if ctx.Cap.LeapAttack != nil && ctx.Cap.Combat.Skill == ctx.Cap.LeapAttack.Skill &&
+			(!allowLeap || !leapAttackReady(s)) {
+			return 0
+		}
+		return ctx.Cap.Combat.Key
+	}
+	if ctx.Cap.Contact != nil {
+		return ctx.Cap.Contact.Key
+	}
+	return 0
+}
+
+func leapAttackReady(s *percept.Snapshot) bool {
+	if s == nil || s.Me.MaxMana <= 0 {
+		return false
+	}
+	// Leap Attack's base cost is about ten mana on this build. Require that
+	// amount plus a small buffer, expressed as a percentage because perception
+	// exposes the live pool as MPPct rather than raw current mana.
+	needPct := 25
+	byPool := (10*100+s.Me.MaxMana-1)/s.Me.MaxMana + 5
+	if byPool > needPct {
+		needPct = byPool
+	}
+	return s.Me.MPPct >= needPct
 }
 
 // clickStride is THE FISH CURE for travel movement: click the carrot, let the
@@ -455,8 +498,8 @@ func (st *Stand) Step(ctx *Ctx) Verdict {
 	switch {
 	case s.Me.WeaponKind == "bow" && ctx.Cap != nil && ctx.Cap.Reach != nil && s.Me.MPPct > 10:
 		key = ctx.Cap.Reach.Key
-	case ctx.Cap != nil && ctx.Cap.Contact != nil:
-		key = ctx.Cap.Contact.Key
+	default:
+		key = meleeAttackKey(ctx, s, bd > 3)
 	}
 	if time.Since(st.lastStrikeAt) >= 350*time.Millisecond {
 		volleyAt(ctx, best, key, false)
@@ -684,8 +727,8 @@ func (f *Flee) Step(ctx *Ctx) Verdict {
 		time.Since(f.lastStrikeAt) >= 350*time.Millisecond {
 		var key byte
 		switch {
-		case s.Me.WeaponKind == "melee" && ctx.Cap != nil && ctx.Cap.Contact != nil:
-			key = ctx.Cap.Contact.Key
+		case s.Me.WeaponKind == "melee":
+			key = meleeAttackKey(ctx, s, closest > 3)
 		case s.Me.WeaponKind == "bow" && ctx.Cap != nil && ctx.Cap.Reach != nil:
 			key = ctx.Cap.Reach.Key
 		}
@@ -758,17 +801,17 @@ func (f *Flee) Step(ctx *Ctx) Verdict {
 
 // Breakout is the owner's "fight for a way out, or TP away — or both": when surrounded
 // or wounded, read the encirclement as a ring of 8 sectors, and choose intelligently:
-//   1. A GAP exists (a sector with ≤1 enemy): fight for it — strike the blocker in the
-//      gap, stride through, done when clear. Purposeful violence, not panic.
-//   2. NO gap, or potions gone: PREPARE THE EXIT — cast the town portal immediately
-//      (it persists), then keep fighting the thinnest sector from throw range.
-//   3. HP hits the hard floor: step into the portal. Escape is a fallback she is
-//      standing next to, never a hope.
+//  1. A GAP exists (a sector with ≤1 enemy): fight for it — strike the blocker in the
+//     gap, stride through, done when clear. Purposeful violence, not panic.
+//  2. NO gap, or potions gone: PREPARE THE EXIT — cast the town portal immediately
+//     (it persists), then keep fighting the thinnest sector from throw range.
+//  3. HP hits the hard floor: step into the portal. Escape is a fallback she is
+//     standing next to, never a hope.
 type Breakout struct {
 	castAt       time.Time
 	lastStrikeAt time.Time
 	vaultAt      time.Time // P-2.11: leap cooldown — a deaf leap falls through to the old doctrine
-	castTries    int // casts that never produced a portal (empty tome — the poverty spiral)
+	castTries    int       // casts that never produced a portal (empty tome — the poverty spiral)
 	// engaged: Breakout has committed to a portal (cast it or fought its doormen).
 	// Rule zero evicted it mid-rescue when one potion tick dropped 'surrounded' below
 	// threshold — she fought at the mouth and then marched AWAY from her own portal
@@ -923,7 +966,18 @@ var sectorDir = [8]data.Position{{X: 0, Y: -1}, {X: 1, Y: -1}, {X: 1, Y: 0}, {X:
 	{X: 0, Y: 1}, {X: -1, Y: 1}, {X: -1, Y: 0}, {X: -1, Y: -1}}
 
 func (b *Breakout) Demand(s *percept.Snapshot) *arbiter.Demand {
-	if !s.Valid || s.Me.InTown || s.Me.HPPct <= 0 {
+	if !s.Valid || s.Me.HPPct <= 0 {
+		return nil
+	}
+	// Demand is not called in town once the arbiter has a service/travel
+	// winner, so the old reset in Step could be skipped entirely. Clear the
+	// escape commitment at the observation boundary; otherwise a portal ride
+	// leaves Breakout "engaged" and it immediately re-enters the same portal
+	// when the character reaches the field again.
+	if s.Me.InTown {
+		b.engaged = false
+		b.castTries = 0
+		b.pinAt = time.Time{}
 		return nil
 	}
 	near := 0
@@ -972,7 +1026,7 @@ func (b *Breakout) Step(ctx *Ctx) Verdict {
 	if s.Me.InTown {
 		b.engaged = false
 		b.castTries = 0 // the poverty spiral ends where the shopping starts
-		return Done // through the portal — safe; town services take the wheel
+		return Done     // through the portal — safe; town services take the wheel
 	}
 	near := 0
 	for _, en := range s.Enemies {
@@ -1040,8 +1094,8 @@ func (b *Breakout) Step(ctx *Ctx) Verdict {
 					var key byte
 					if ctx.Cap != nil && ctx.Cap.Throw != nil {
 						key = ctx.Cap.Throw.Key
-					} else if ctx.Cap != nil && ctx.Cap.Contact != nil {
-						key = ctx.Cap.Contact.Key
+					} else {
+						key = meleeAttackKey(ctx, s, gd > 3)
 					}
 					volleyAt(ctx, doorman.Pos, key, false) // walk-proof, sweep-free
 					b.lastStrikeAt = time.Now()
@@ -1181,9 +1235,7 @@ func (b *Breakout) Step(ctx *Ctx) Verdict {
 		}
 		if bd <= 4 && time.Since(b.lastStrikeAt) >= 350*time.Millisecond {
 			var key byte
-			if ctx.Cap != nil && ctx.Cap.Contact != nil {
-				key = ctx.Cap.Contact.Key
-			}
+			key = meleeAttackKey(ctx, s, bd > 3)
 			volleyAt(ctx, best, key, false)
 			b.lastStrikeAt = time.Now()
 		} else if bd > 4 {
@@ -1200,8 +1252,8 @@ func (b *Breakout) Step(ctx *Ctx) Verdict {
 			var key byte
 			if ctx.Cap != nil && ctx.Cap.Throw != nil {
 				key = ctx.Cap.Throw.Key
-			} else if ctx.Cap != nil && ctx.Cap.Contact != nil {
-				key = ctx.Cap.Contact.Key
+			} else {
+				key = meleeAttackKey(ctx, s, true)
 			}
 			volleyAt(ctx, blocker.Pos, key, false)
 			b.lastStrikeAt = time.Now()
@@ -1248,9 +1300,9 @@ type Fight struct {
 	// benches the hover pump entirely and the fight runs on march-swings.
 	hoverWhiffRun   int
 	hoverBlindUntil time.Time
-	rangedShots  int
-	rangedFlinch int
-	rangedDead   bool
+	rangedShots     int
+	rangedFlinch    int
+	rangedDead      bool
 	// Mutual-veto watchdog (P-2.10): when the lock changed and when we last
 	// ISSUED an attack input. An in-reach lock that produces no input starves
 	// Travel while feeding nothing — the advisor's "tiny bureaucratic collapse".
@@ -1579,26 +1631,12 @@ func (f *Fight) Step(ctx *Ctx) Verdict {
 		// (the owner, 04:16: "double swing is f3, use it like magic arrows
 		// but melee"): the skill on every swing while mana holds above 10%,
 		// plain attack as the reserve below, no exceptions above 75%.
-		var mk byte
-		if ctx.Cap != nil && ctx.Cap.Contact != nil {
-			// TINY-POOL DOCTRINE (11:20: three vault whiffs, all mana-dry —
-			// Double Swing was drinking the 4-point pool and FIZZLING below
-			// its cost, silent do-nothing right-clicks): on a tiny pool the
-			// skill fires only at a full tank; the pool belongs to the LEAP.
-			// Plain attack is the bread — it costs nothing and always swings.
-			// Cutoff 8, not 20 (11:41: the honest read is 19 base — a REAL
-			// pool that missed the old gate by one; the doctrine was written
-			// for the truly-4 case, and mana-per-hit sustains everything above it).
-			if s.Me.MaxMana >= 8 {
-				if s.Me.MPPct > 10 {
-					mk = ctx.Cap.Contact.Key
-				}
-			} else if s.Me.MPPct >= 95 && (ctx.Cap == nil || ctx.Cap.Vault == nil) {
-				mk = ctx.Cap.Contact.Key // no leap to save for: full tank may swing
-			}
-			if time.Now().Before(vaultHungerUntil) {
-				mk = 0 // the pool is spoken for: the leap eats first (13:39)
-			}
+		// Leap Attack is the declared damage skill when it has enough mana; a
+		// proven Double Swing key takes over for low-mana or point-blank swings.
+		// The old Leap movement skill remains Vault and is never selected here.
+		mk := meleeAttackKey(ctx, s, d > 3 && contact > 3)
+		if time.Now().Before(vaultHungerUntil) {
+			mk = 0 // the pool is spoken for: the movement leap eats first
 		}
 		// A dry bow set is no bow at all: while Arrows==0 the javelins ARE the build —
 		// chase and stab instead of kiting toward a weapon that whiffs at air.
@@ -1709,6 +1747,17 @@ func (f *Fight) Step(ctx *Ctx) Verdict {
 			f.strike(ctx, f.target, f.targetPos, mk)
 			return Running
 		}
+		// BACKGROUND COMBAT: D2R's hover oracle is focus-gated, but the posted
+		// positional attack path is not. Do not spend a cycle proving the same
+		// impossible hover, then blacklist a real target on the resulting whiffs;
+		// fire the walk-proof positional volley immediately and let the snapshot
+		// stream provide hit/death evidence.
+		if !ctx.M.GameFocused() {
+			f.hoverWhiffRun = 0
+			f.noEvid = 0
+			f.strike(ctx, f.target, f.targetPos, mk)
+			return Running
+		}
 		o := verbs.HoverStrike{Target: f.target, TargetPos: f.targetPos, SelectKey: mk, Volley: true}.
 			Do(ctx.M, ctx.GR, ctx.P, ctx.Led, f.Name())
 		if o.Result == verbs.ResWhiff {
@@ -1762,8 +1811,8 @@ func (f *Fight) Step(ctx *Ctx) Verdict {
 	var key byte
 	if canThrow {
 		key = ctx.Cap.Throw.Key
-	} else if ctx.Cap != nil && ctx.Cap.Contact != nil {
-		key = ctx.Cap.Contact.Key
+	} else {
+		key = meleeAttackKey(ctx, s, d > 3)
 	}
 	f.strike(ctx, f.target, f.targetPos, key)
 	return Running
@@ -1909,17 +1958,18 @@ func (l *Loot) wanted(s *percept.Snapshot, it percept.ItemRef) float64 {
 	return 0
 }
 
-func contains(s, sub string) bool {
-	return len(s) >= len(sub) && (s == sub || indexOf(s, sub) >= 0)
-}
-
-func indexOf(s, sub string) int {
-	for i := 0; i+len(sub) <= len(s); i++ {
-		if s[i:i+len(sub)] == sub {
-			return i
+// lootBlockedByHostile is the single safety gate shared by Demand and Step. A
+// reachable hostile in the progress corridor owns the tick; Loot must not walk
+// toward a drop while a monster is still close enough to engage. Walled enemies
+// belong to the door planner, not the current combat space.
+func lootBlockedByHostile(s *percept.Snapshot) bool {
+	const radius = 10 // the same corridor radius used by Fight while marching
+	for _, e := range s.Enemies {
+		if !e.Walled && chebyshev(s.Me.Pos, e.Pos) <= radius {
+			return true
 		}
 	}
-	return -1
+	return false
 }
 
 func (l *Loot) pick(s *percept.Snapshot) (percept.ItemRef, float64, bool) {
@@ -1937,7 +1987,7 @@ func (l *Loot) pick(s *percept.Snapshot) (percept.ItemRef, float64, bool) {
 		// not just around her. A bauble with a welcoming committee is not loot.
 		guards := 0
 		for _, e := range s.Enemies {
-			if chebyshev(it.Pos, e.Pos) <= 15 {
+			if !e.Walled && chebyshev(it.Pos, e.Pos) <= 15 {
 				guards++
 			}
 		}
@@ -1955,37 +2005,14 @@ func (l *Loot) Demand(s *percept.Snapshot) *arbiter.Demand {
 	if !s.Valid || s.Me.HPPct < 40 {
 		return nil
 	}
-	// No looting with contact pressure — that is how pickups become deaths. The bid
-	// bar (8) sits OUTSIDE Step's yield bar (6): run 26 logged ~40 grant/done flips
-	// in one second from an enemy standing at 7 — bid thresholds must enclose yield
-	// thresholds or the arbiter churns. EXCEPT TREASURE (04:14, the brawler:
-	// "he's skipping uniques" — his kills drop where the next enemies stand,
-	// so an all-loot pressure veto means a brawler never loots): set+ finds
-	// bid through pressure; Step's yield bar still guards the actual grab.
-	pressed := false
-	for _, e := range s.Enemies {
-		if !e.Walled && chebyshev(s.Me.Pos, e.Pos) <= 8 {
-			pressed = true
-			break
-		}
+	// Loot is a post-combat phase. Keep the ten-tile corridor owned by Fight so a
+	// unique cannot make us walk toward a drop while a reachable monster remains.
+	if lootBlockedByHostile(s) {
+		return nil
 	}
-	if it, score, ok := l.pick(s); ok {
-		if pressed && it.Quality < 7 { // uniques-only doctrine (13:08)
-			return nil // ordinary goods can wait out the pressure
-		}
-		// THE TREASURE GRAB: ClassFight starves ClassLoot whenever anything hostile
-		// is within 45 — in the moor that is ALWAYS, so a rare short bow lay ignored
-		// while she volleyed trash (the owner: "she didn't care at all"). Rare+ finds
-		// and ammo-for-a-dry-quiver bid IN the fight class: urgency does the risk
-		// arithmetic — a fight with teeth close still outbids (Fight at contact 5 is
-		// ~0.9), a fight against distant stragglers loses to treasure.
-		treasure := it.Quality >= 7 || // uniques-only doctrine (13:08)
-			(s.Me.Arrows == 0 && (contains(it.Name, "Arrow") || contains(it.Name, "Quiver")))
-		if treasure {
-			return &arbiter.Demand{Who: l.Name(), Class: arbiter.ClassFight,
-				Urgency: 0.85,
-				Commit:  arbiter.Commitment{MinHold: 2 * time.Second, SwitchMargin: 0.3}}
-		}
+	if _, score, ok := l.pick(s); ok {
+		// Strict-unique filtering happens in wanted; every accepted drop stays in
+		// ClassLoot so Fight remains the only owner of combat time.
 		return &arbiter.Demand{Who: l.Name(), Class: arbiter.ClassLoot, Urgency: score,
 			Commit: arbiter.Commitment{MinHold: 2 * time.Second, SwitchMargin: 0.3}}
 	}
@@ -1994,13 +2021,12 @@ func (l *Loot) Demand(s *percept.Snapshot) *arbiter.Demand {
 
 func (l *Loot) Step(ctx *Ctx) Verdict {
 	s := ctx.Snap
-	// Yield under pressure mid-approach: enemies closing in flip the priority back to
-	// Fight/Flee naturally — pressing on toward a bauble is how pickups become deaths.
-	// Yield bar (6) sits INSIDE the bid bar (8): hysteresis, not churn.
-	for _, e := range s.Enemies {
-		if chebyshev(s.Me.Pos, e.Pos) <= 6 {
-			return Done
-		}
+	// Demand and Step use the same ten-tile reachable-hostile gate. This prevents
+	// grant/done churn and never walks toward a drop while a monster is still in the
+	// progress corridor.
+	if lootBlockedByHostile(s) {
+		l.j = nil
+		return Done
 	}
 	it, _, ok := l.pick(s)
 	if !ok {
@@ -2027,7 +2053,7 @@ func (l *Loot) Step(ctx *Ctx) Verdict {
 		}
 		return Running
 	}
-	o := verbs.Pickup{Target: it.ID, TargetPos: it.Pos}.Do(ctx.M, ctx.GR, ctx.P, ctx.Led, l.Name())
+	o := verbs.Pickup{Target: it.ID, TargetPos: it.Pos, TargetQuality: it.Quality}.Do(ctx.M, ctx.GR, ctx.P, ctx.Led, l.Name())
 	if o.Result != verbs.ResDone {
 		l.failures[it.ID]++
 		if l.failures[it.ID] >= 3 {
@@ -2048,6 +2074,8 @@ func (l *Loot) Step(ctx *Ctx) Verdict {
 type Explore struct {
 	heading int  // index into the 8 bearings
 	set     bool // heading initialized from the road's outward direction
+	blockedN int // consecutive blocked room-center attempts; skip a bad center quickly
+	j       *journey.Journey // planner-owned route to the current room interior
 	// Frontier is Advance's hint (P-5F): the itinerary leg the march owns for
 	// this level. Exploration exists only there — behind it, ground is
 	// corridor and the march owns every idle moment. Nil-safe: no itinerary,
@@ -2102,6 +2130,7 @@ func (x *Explore) Step(ctx *Ctx) Verdict {
 	if ad, ok := ctx.GR.GetData().Areas[s.Me.Area]; ok && len(ad.Rooms) > 0 {
 		if x.tourArea != s.Me.Area {
 			x.tourArea, x.visited, x.tourIdx = s.Me.Area, map[int]bool{}, -1
+			x.j = nil
 		}
 		for i, r := range ad.Rooms {
 			if !x.visited[i] &&
@@ -2128,16 +2157,68 @@ func (x *Explore) Step(ctx *Ctx) Verdict {
 			if best < 0 {
 				return Done // the area is toured — the march decides what's next
 			}
-			x.tourIdx, x.goalAt = best, time.Now()
+			x.tourIdx, x.goalAt, x.blockedN, x.j = best, time.Now(), 0, nil
 		}
 		r := ad.Rooms[x.tourIdx]
-		c := data.Position{X: r.Position.X + r.Width/2, Y: r.Position.Y + r.Height/2}
+		// Aim at the room's interior, not its edge. The map rectangles include
+		// collision-border tiles; a raw center can still land on a seam in small
+		// rooms, so keep a modest inset whenever the room is wide enough.
+		marginX, marginY := r.Width/6, r.Height/6
+		if marginX < 2 {
+			marginX = 2
+		}
+		if marginY < 2 {
+			marginY = 2
+		}
+		left, right := r.Position.X+marginX, r.Position.X+r.Width-marginX
+		top, bottom := r.Position.Y+marginY, r.Position.Y+r.Height-marginY
+		if right < left {
+			left, right = r.Position.X, r.Position.X+r.Width
+		}
+		if bottom < top {
+			top, bottom = r.Position.Y, r.Position.Y+r.Height
+		}
+		c := data.Position{X: (left + right) / 2, Y: (top + bottom) / 2}
 		if chebyshev(s.Me.Pos, c) <= 6 {
 			x.visited[x.tourIdx] = true
-			x.tourIdx = -1
+			x.tourIdx, x.j, x.blockedN = -1, nil, 0
 			return Running
 		}
-		slideStride(ctx, c, 1500*time.Millisecond, 1, x.Name())
+		if ctx.Grid != nil {
+			// Exploration is center-seeking; use the collision-aware planner so a
+			// blocked room center produces a route around the room instead of a
+			// wall-slide that parks the character in a corner. Advance keeps its
+			// own door/entrance routing and is unaffected by this preference.
+			if x.j == nil || chebyshev(x.j.Goal, c) > 4 {
+				x.j = journey.New(ctx.GR, ctx.Grid, c, x.Name())
+				x.j.Arrive = 6
+			}
+			st := x.j.Step(ctx.M, ctx.P, ctx.Led)
+			if st.State == journey.Arrived {
+				x.visited[x.tourIdx] = true
+				x.tourIdx, x.j, x.blockedN = -1, nil, 0
+			} else if st.State == journey.Stalled || st.State == journey.NoPath {
+				// A room center can be behind a wall or a stale streamed tile. Do
+				// not besiege it; the next room is a better exploration target.
+				x.visited[x.tourIdx] = true
+				x.tourIdx, x.j, x.blockedN = -1, nil, 0
+			}
+			return Running
+		}
+		o := slideStride(ctx, c, 1500*time.Millisecond, 1, x.Name())
+		if o.Result == verbs.ResBlocked {
+			x.blockedN++
+			// Plan-less fallback: still avoid spending the whole 45s goal lease
+			// rubbing the same corner.
+			if x.blockedN >= 3 {
+				x.visited[x.tourIdx] = true
+				x.tourIdx, x.j = -1, nil
+				x.goalAt = time.Time{}
+				x.blockedN = 0
+			}
+		} else if o.Result == verbs.ResDone {
+			x.blockedN = 0
+		}
 		return Running
 	}
 

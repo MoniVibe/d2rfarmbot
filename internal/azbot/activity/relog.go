@@ -90,6 +90,17 @@ func (rl *Relog) worldFrozen(ctx *Ctx) bool {
 }
 
 func (rl *Relog) Step(ctx *Ctx) Verdict {
+	// Relog is the one recovery ritual that uses hardware input. Never let it
+	// steal the desktop just because the character is naked in town: if D2R is
+	// not already foregrounded, defer the ritual and send no ESC at all. The
+	// old path called RealEsc six times; each call attempted a focus steal and
+	// produced the visible ESC/focus loop when the owner was using another app.
+	if !ctx.M.GameFocused() {
+		rl.nextAt = time.Now().Add(2 * time.Minute)
+		ctx.Led.Append(verbs.Outcome{Verb: "relog", Holder: rl.Name(), Result: verbs.ResRefused,
+			Evidence: "game unfocused — relog deferred without ESC or focus steal"})
+		return Abandoned
+	}
 	// Phase 1: pause menu → Save and Exit. TWO tries per grant (run 24: one missed
 	// click abandoned the whole recovery, the 4-minute rate limit left her naked in
 	// town, and Return nearly portaled her back into the swarm bare-fisted).
@@ -103,11 +114,14 @@ func (rl *Relog) Step(ctx *Ctx) Verdict {
 		MenuSanctionUntil = time.Now().Add(30 * time.Second) // the sentry stands down for the ritual
 		menuUp := false
 		focusRefused := false
-		// Six tries, not three (13:52: foreground VERIFIED, three ESCs
-		// delivered, byte never rose — with the owner in-game, panels may be
-		// standing, and state-dependent ESC closes those first; three tries
-		// can all be spent on panel-closes before the quit menu ever rises).
-		for e := 0; e < 6 && !menuUp; e++ {
+		// Keep the ritual bounded: three focused ESCs is enough to close one
+		// stale panel and raise the quit menu, while a deaf game must not become
+		// a visible ESC loop. A failed bounded probe backs off for minutes.
+		for e := 0; e < 3 && !menuUp; e++ {
+			if !ctx.M.GameFocused() {
+				focusRefused = true
+				break
+			}
 			if !ctx.M.RealEsc() {
 				// FOREGROUND REFUSED (13:49): the OWNER owns the desktop —
 				// Windows blocks the steal while they actively use another
@@ -134,7 +148,7 @@ func (rl *Relog) Step(ctx *Ctx) Verdict {
 		}
 		if !menuUp {
 			ctx.Led.Append(verbs.Outcome{Verb: "relog", Holder: rl.Name(), Result: verbs.ResDeaf,
-				Evidence: "six delivered ESCs and the quit-menu byte never rose (owner mid-game?) — backing off 3m"})
+				Evidence: "three focused ESCs and the quit-menu byte never rose — backing off 3m"})
 			rl.nextAt = time.Now().Add(3 * time.Minute)
 			return Abandoned
 		}

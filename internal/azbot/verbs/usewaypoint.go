@@ -25,7 +25,8 @@ import (
 // activation (a dark pad lights on its first open) — ESC closes it and the
 // network has grown. With Want, the first LIT destination rides.
 type UseWaypoint struct {
-	Want []area.ID // preference order, deepest first; empty = touch/activate only
+	Want     []area.ID // preference order, deepest first; empty = touch/activate only
+	KeepOpen bool      // diagnostic/open-only mode: leave the verified panel standing
 }
 
 // LastPanelOpenAt: when a waypoint panel last VERIFIABLY stood (10:16: the
@@ -48,6 +49,20 @@ func wpCheb(a, b data.Position) int {
 	return dy
 }
 
+// portalNearPad answers the safety question for a blind pad click.  The click
+// can only enter a portal when the portal overlaps the pad's interaction
+// neighborhood; a portal beside the player but on the other side of the town
+// square is irrelevant.  Keeping this geometry separate also makes the guard
+// deterministic and testable.
+func portalNearPad(portals []data.Position, pad data.Position, radius int) bool {
+	for _, pos := range portals {
+		if wpCheb(pos, pad) <= radius {
+			return true
+		}
+	}
+	return false
+}
+
 func (uw UseWaypoint) Do(m *motor.Motor, gr *game.MemoryReader, p *percept.Perceptor, led *Ledger, holder string) Outcome {
 	o := Outcome{Verb: "waypoint", Holder: holder}
 	if !m.Engage.Engaged() {
@@ -66,18 +81,6 @@ func (uw UseWaypoint) Do(m *motor.Motor, gr *game.MemoryReader, p *percept.Perce
 	// mis-click into an attack) and with NO live portal hugging the pad (a
 	// stray click on a cast town portal would ride to the field). Focused,
 	// the hover sweep still leads; blind is the fallback the sweep hands off to.
-	blindOK := start.IsTown()
-	if blindOK {
-		for i := range d.Objects {
-			if d.Objects[i].IsPortal() || d.Objects[i].IsRedPortal() {
-				if wpCheb(d.Objects[i].Position, d.PlayerUnit.Position) <= 12 {
-					blindOK = false // a portal shares the pad's neighborhood: no blind clicks
-					break
-				}
-			}
-		}
-	}
-
 	var wp data.Object
 	best := 1 << 30
 	for _, ob := range d.Objects {
@@ -92,6 +95,16 @@ func (uw UseWaypoint) Do(m *motor.Motor, gr *game.MemoryReader, p *percept.Perce
 		o.Evidence = fmt.Sprintf("no waypoint pad within 30 (nearest %d)", best)
 		led.Append(o)
 		return o
+	}
+	blindOK := start.IsTown()
+	if blindOK {
+		var portals []data.Position
+		for i := range d.Objects {
+			if d.Objects[i].IsPortal() || d.Objects[i].IsRedPortal() {
+				portals = append(portals, d.Objects[i].Position)
+			}
+		}
+		blindOK = !portalNearPad(portals, wp.Position, 12)
 	}
 
 	m.MoveStop()
@@ -249,7 +262,9 @@ func (uw UseWaypoint) Do(m *motor.Motor, gr *game.MemoryReader, p *percept.Perce
 
 	// TOUCH mode: the open was the point — the pad is lit now and forever.
 	if len(uw.Want) == 0 {
-		groundClose()
+		if !uw.KeepOpen {
+			groundClose()
+		}
 		o.Result = ResDone
 		o.Evidence = "pad touched — the network grows"
 		led.Append(o)
@@ -364,7 +379,10 @@ func (uw UseWaypoint) Do(m *motor.Motor, gr *game.MemoryReader, p *percept.Perce
 			// interaction on this mod — repair, skill tree, Akara's shop —
 			// needs the uiClick recipe; a deaf row walked all candidates and
 			// reported ResDeaf while the ride was one honest click away).
-			m.UIClick(rx, ry)
+			// Row geometry is measured in the logical client space, while the
+			// panel's cursor hit-test is in the physical render space.  Keep the
+			// lParam logical and scale only the injected cursor offset.
+			m.UIClickScaled(rx, ry, m.PanelScale())
 			dl := time.Now().Add(4 * time.Second)
 			extended := false
 			for time.Now().Before(dl) {

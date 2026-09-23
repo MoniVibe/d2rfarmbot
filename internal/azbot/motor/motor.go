@@ -56,7 +56,7 @@ type Motor struct {
 	hid *game.HID
 	gi  *game.MemoryInjector
 
-	Engage Engagement
+	Engage     Engagement
 	panelScale float64
 
 	mu       sync.Mutex
@@ -64,6 +64,12 @@ type Motor struct {
 	moveKey  byte
 	moveHeld bool
 	deadman  *time.Timer
+	// Input healing can take seconds while the injector scans/restores D2R. Keep
+	// that work off Sentinel's hotkey poller, and remember an even/odd sequence
+	// of presses that arrives while the current toggle is still completing.
+	toggleMu      sync.Mutex
+	toggleBusy    bool
+	togglePending bool
 }
 
 func New(log *slog.Logger, hid *game.HID, gi *game.MemoryInjector, moveKey byte) *Motor {
@@ -79,6 +85,10 @@ func (m *Motor) Disengage() {
 	if !m.Engage.engaged.CompareAndSwap(true, false) {
 		return
 	}
+	// Engagement flips before the potentially slow injector heal, so the
+	// executive and every verb stop immediately. This early line tells the
+	// owner that F10 was received even while the restore scan is still running.
+	m.log.Warn("MOTOR DISENGAGING — control released; healing input")
 	m.mu.Lock()
 	if m.lease != nil {
 		m.lease.released.Store(true)
@@ -109,9 +119,49 @@ func (m *Motor) Reengage() {
 	m.log.Warn("MOTOR ENGAGED — azbot has the controls")
 }
 
+// ToggleAsync hands a kill-switch transition to a worker so a slow injector
+// unload/load cannot block the global-key poll.  Additional presses while the
+// worker is busy are folded by parity: two presses cancel, one press is applied
+// after the current transition completes.
+func (m *Motor) ToggleAsync() {
+	m.toggleMu.Lock()
+	if m.toggleBusy {
+		m.togglePending = !m.togglePending
+		m.toggleMu.Unlock()
+		m.log.Info("motor toggle queued", "pending", m.togglePending)
+		return
+	}
+	m.toggleBusy = true
+	m.toggleMu.Unlock()
+	go func() {
+		for {
+			if m.Engage.Engaged() {
+				m.Disengage()
+			} else {
+				m.Reengage()
+			}
+			m.toggleMu.Lock()
+			if !m.togglePending {
+				m.toggleBusy = false
+				m.toggleMu.Unlock()
+				return
+			}
+			m.togglePending = false
+			m.toggleMu.Unlock()
+		}
+	}()
+}
+
 // PanelScale must be set once at startup (the display's DPI scale) before UIClick is
 // used — panel clicks compute physical pixels from it.
 func (m *Motor) SetPanelScale(s float64) { m.panelScale = s }
+
+func (m *Motor) PanelScale() float64 {
+	if m.panelScale > 0 {
+		return m.panelScale
+	}
+	return 1
+}
 
 // BareClick is the NPC-talk click: a plain message click with NO key-state override.
 // The override reads as a HELD button when the game polls mid-window, and a held click
@@ -147,13 +197,20 @@ func (m *Motor) MenuKey(vk byte) {
 // (patched cursor exports + LBUTTON override + client-lParam click). On vendor stock
 // cells this IS an instant purchase (measured 2026-07-19).
 func (m *Motor) UIClick(sx, sy int) {
+	m.UIClickScaled(sx, sy, 1)
+}
+
+// UIClickScaled is the panel-click primitive with an explicit cursor scale.
+// The message lParam remains logical client pixels; only the injected absolute
+// cursor gets cursorScale.  Waypoint rows are rendered in the physical client
+// space, so they use the display scale while legacy vendor cells retain the
+// original scale-1 path until independently recalibrated.
+func (m *Motor) UIClickScaled(sx, sy int, cursorScale float64) {
 	if !m.Engage.Engaged() {
 		return
 	}
 	m.MoveStop()
-	px := int(float64(m.hid.WindowLeftX())*m.panelScale) + sx
-	py := int(float64(m.hid.WindowTopY())*m.panelScale) + sy
-	_ = m.gi.OverridePhysicalCursorPos(px, py)
+	m.hid.AimPanelScaled(sx, sy, cursorScale)
 	m.hid.MouseMoveClient(sx, sy)
 	time.Sleep(150 * time.Millisecond)
 	_ = m.gi.OverrideGetKeyState(0x01)

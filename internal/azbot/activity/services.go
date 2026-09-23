@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/hectorgimenez/d2go/pkg/data"
+	"github.com/hectorgimenez/d2go/pkg/data/area"
 	"github.com/hectorgimenez/d2go/pkg/data/item"
 	"github.com/hectorgimenez/d2go/pkg/data/npc"
 	"github.com/hectorgimenez/d2go/pkg/data/stat"
@@ -24,16 +25,18 @@ import (
 
 // Mod item-ID ledger + measured panel coordinates (1920x1050 client).
 const (
-	modHPPotionID   = 602 // "Herb", 30g — proven by purchase delta
-	modManaPotionID = 607 // the old INVALID607 mystery, 60g — proven by purchase delta
-	hpCellX, hpCellY     = 612, 478 // Akara Misc tab, red potion cell
-	manaCellX, manaCellY = 612, 525 // Akara Misc tab, blue potion cell
+	modHPPotionID          = 602      // "Herb", 30g — proven by purchase delta
+	modManaPotionID        = 607      // the old INVALID607 mystery, 60g — proven by purchase delta
+	hpCellX, hpCellY       = 612, 478 // Akara Misc tab, red potion cell
+	manaCellX, manaCellY   = 612, 525 // Akara Misc tab, blue potion cell
 	repairBtnX, repairBtnY = 570, 747 // Charsi trade panel, repair-all (2g fixed Buckler 3/12->12/12)
 )
 
 // errand is the shared NPC-service state machine. One bounded slice per Step.
 type errand struct {
 	npcID   npc.ID
+	act1NPC npc.ID          // captured from the constructor on first use
+	act2NPC npc.ID          // service counterpart in Lut Gholein; zero means no alternate
 	ring    []data.Position // search waypoints until the NPC loads
 	ringIdx int
 	phase   int // 0 seek, 1 approach, 2 talk, 3 menu-nav, 4 act (owner's), 5 done
@@ -47,16 +50,35 @@ type errand struct {
 	// vendor-stock oracle judges. What works is what's true.
 	trade      bool // this errand ends in a TRADE window; readable stock proves it open
 	menuTry    int
-	blocked    int // consecutive blocked approach strides — the fire-pit-wall detector
-	hoverFails int // consecutive hover-sweep misses — the torch-owns-this-bearing detector
-	j       *journey.Journey // the PLANNER for far movement — town walls live in the
+	blocked    int              // consecutive blocked approach strides — the fire-pit-wall detector
+	hoverFails int              // consecutive hover-sweep misses — the torch-owns-this-bearing detector
+	startedAt  time.Time        // hard budget: a missing/deaf NPC must not own the bot forever
+	j          *journey.Journey // the PLANNER for far movement — town walls live in the
 	// static grid, and local slides can never round a real wall (run 38: fence paced
 	// the north wall at y=4897 while every ring waypoint sat past y=4930)
 }
 
 func (e *errand) reset() {
 	e.phase, e.ringIdx, e.tries, e.menuTry, e.blocked, e.hoverFails = 0, 0, 0, 0, 0, 0
+	e.startedAt = time.Time{}
 	e.j = nil
+}
+
+// useNPCForArea keeps the service state machine from carrying Act 1 town
+// assumptions into Lut Gholein. The first live/static NPC observation is also
+// used to replace the old hand-measured ring with the current map's positions.
+func (e *errand) useNPCForArea(ar area.ID) {
+	if e.act1NPC == 0 {
+		e.act1NPC = e.npcID
+	}
+	want := e.act1NPC
+	if e.act2NPC != 0 && ar.Act() == 2 {
+		want = e.act2NPC
+	}
+	if e.npcID != want {
+		e.npcID = want
+		e.reset()
+	}
 }
 
 // walkTo drives one planner step toward goal; falls back to a slide when the
@@ -84,12 +106,31 @@ func (e *errand) walkTo(ctx *Ctx, goal data.Position, who string) (exhausted boo
 func (e *errand) step(ctx *Ctx, who string) (shopOpen bool, dead bool) {
 	s := ctx.Snap
 	d := ctx.GR.GetData()
+	if e.startedAt.IsZero() {
+		e.startedAt = time.Now()
+	} else if time.Since(e.startedAt) > 45*time.Second {
+		ctx.Led.Append(verbs.Outcome{Verb: "errand", Holder: who, Result: verbs.ResTimeout,
+			Evidence: fmt.Sprintf("npc=%d service attempt exceeded 45s in area %d", int(e.npcID), int(s.Me.Area))})
+		return false, true
+	}
+	e.useNPCForArea(s.Me.Area)
 	var target data.Monster
 	found := false
 	for _, mo := range d.Monsters {
 		if mo.Name == e.npcID {
 			target, found = mo, true
 			break
+		}
+	}
+	// Map NPC positions are available before a live unit streams into the
+	// current room. They are a safe approach ring; the live Monster read above
+	// remains the only authority for the eventual hover/click.
+	if !found {
+		if np, ok := d.AreaData.NPCs.FindOne(e.npcID); ok && len(np.Positions) > 0 {
+			e.ring = append(e.ring[:0], np.Positions...)
+			if e.ringIdx >= len(e.ring) {
+				e.ringIdx = 0
+			}
 		}
 	}
 
@@ -542,7 +583,7 @@ func tomeCount(ctx *Ctx, tomeID int) int {
 }
 
 func NewRestock() *Restock {
-	return &Restock{e: errand{npcID: npc.Akara, trade: true,
+	return &Restock{e: errand{npcID: npc.Akara, act2NPC: npc.Drognan, trade: true,
 		ring: []data.Position{{X: 6023, Y: 4933}, {X: 6070, Y: 4960}, {X: 6100, Y: 4990}, {X: 6050, Y: 5010}, {X: 6110, Y: 4930}}}}
 }
 
@@ -627,6 +668,7 @@ func (r *Restock) Step(ctx *Ctx) Verdict {
 	}
 	open, dead := r.e.step(ctx, r.Name())
 	if dead {
+		r.nextAt = time.Now().Add(120 * time.Second)
 		r.e.reset()
 		return Abandoned
 	}
@@ -782,7 +824,7 @@ type Fence struct {
 }
 
 func NewFence() *Fence {
-	return &Fence{tomes0: -1, e: errand{npcID: npc.Akara, trade: true,
+	return &Fence{tomes0: -1, e: errand{npcID: npc.Akara, act2NPC: npc.Drognan, trade: true,
 		ring: []data.Position{{X: 6023, Y: 4933}, {X: 6070, Y: 4960}, {X: 6100, Y: 4990}, {X: 6050, Y: 5010}, {X: 6110, Y: 4930}}}}
 }
 
@@ -923,12 +965,13 @@ func (fc *Fence) Step(ctx *Ctx) Verdict {
 // nothing pended she marched right back into the pack. Talking to Akara IS the
 // restock when the purse is empty.
 type Heal struct {
-	e     errand
-	talks int // menu-opens that produced no HP change — the disproof counter
+	e      errand
+	talks  int // menu-opens that produced no HP change — the disproof counter
+	coolAt time.Time
 }
 
 func NewHeal() *Heal {
-	return &Heal{e: errand{npcID: npc.Akara,
+	return &Heal{e: errand{npcID: npc.Akara, act2NPC: npc.Fara,
 		ring: []data.Position{{X: 6023, Y: 4933}, {X: 6070, Y: 4960}, {X: 6100, Y: 4990}, {X: 6050, Y: 5010}, {X: 6110, Y: 4930}}}}
 }
 
@@ -941,7 +984,7 @@ func (h *Heal) Demand(s *percept.Snapshot) *arbiter.Demand {
 	// P-4.1: in town she tops up below 75 — free is free, and idling at 57
 	// kept Breakout's eject seat armed all morning (11:06). Only below 55
 	// does the wound GATE the march (ServicesPending keeps that line).
-	if !s.Valid || !s.Me.InTown || s.Me.HPPct > 75 || !healerHeals.Load() {
+	if !s.Valid || !s.Me.InTown || s.Me.HPPct > 75 || !healerHeals.Load() || time.Now().Before(h.coolAt) {
 		return nil
 	}
 	return &arbiter.Demand{Who: h.Name(), Class: arbiter.ClassService,
@@ -990,6 +1033,7 @@ func (h *Heal) Step(ctx *Ctx) Verdict {
 	// Drive the errand only through the TALK (phases 0-2); the MenuOpen intercept
 	// above fires before e.step could ever advance into trade navigation.
 	if _, dead := h.e.step(ctx, h.Name()); dead {
+		h.coolAt = time.Now().Add(120 * time.Second)
 		h.e.reset()
 		return Abandoned
 	}
@@ -1132,7 +1176,7 @@ func equippableCands(s *percept.Snapshot) int {
 // a unique bow she could equip but she rolls with her current gear"). Town-only, one
 // shift-click per Step, the equipped-list delta as the postcondition.
 type Equip struct {
-	opened  bool // we pressed the inventory toggle (the panel byte is BLIND to it —
+	opened bool // we pressed the inventory toggle (the panel byte is BLIND to it —
 	// 0xF4 proved out for NPC menus only; run 31 retired the belief over that lie)
 	lastN   int
 	fails   int
@@ -1672,7 +1716,7 @@ type Repair struct {
 }
 
 func NewRepair() *Repair {
-	return &Repair{lastDur: -1, e: errand{npcID: npc.Charsi, trade: true,
+	return &Repair{lastDur: -1, e: errand{npcID: npc.Charsi, act2NPC: npc.Fara, trade: true,
 		ring: []data.Position{{X: 6020, Y: 4952}, {X: 5992, Y: 4941}, {X: 5963, Y: 5001}, {X: 5962, Y: 4956}, {X: 5952, Y: 4944}}}}
 }
 

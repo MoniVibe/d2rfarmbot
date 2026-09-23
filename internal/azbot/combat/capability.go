@@ -24,14 +24,20 @@ type Binding struct {
 // speak the Lexicon (P-7.5): CONTACT and REACH are roles seeded by priors,
 // not weapon names — the wardrobe defines the class, not the reverse.
 type Capability struct {
-	Known    map[skill.ID]int // skills present in the live Skills map (level; 0 = granted)
-	Proven   []Binding        // key presses that demonstrably flipped RightSkill
-	Contact  *Binding         // CONTACT TOOL seed: proven strike selection
-	Throw    *Binding         // proven throw selection (reach with an ammo gauge)
-	Reach    *Binding         // REACH TOOL seed: proven projected shot/cast selection
-	TownTP   *Binding         // proven town portal selection
-	Identify *Binding         // proven identify selection
-	Vault    *Binding         // proven cursor-targeted displacement (Leap-family)
+	Known   map[skill.ID]int // skills present in the live Skills map (level; 0 = granted)
+	Proven  []Binding        // key presses that demonstrably flipped RightSkill
+	Contact *Binding         // CONTACT TOOL seed: proven strike selection
+	// LeapAttack is the preferred damage skill for the current Barbarian spec.
+	// DoubleSwing is the low-mana fallback; Contact remains the generic/travel
+	// binding so a combat leap is never accidentally used as a movement gait.
+	LeapAttack  *Binding
+	DoubleSwing *Binding
+	Combat      *Binding
+	Throw       *Binding // proven throw selection (reach with an ammo gauge)
+	Reach       *Binding // REACH TOOL seed: proven projected shot/cast selection
+	TownTP      *Binding // proven town portal selection
+	Identify    *Binding // proven identify selection
+	Vault       *Binding // proven cursor-targeted displacement (Leap-family)
 }
 
 // Calibrate presses each candidate key once and reads RightSkill back. Run at session
@@ -52,7 +58,18 @@ func Calibrate(log *slog.Logger, gr *game.MemoryReader, hid *game.HID, mem *memo
 		if after != before {
 			b := Binding{Key: key, Skill: after}
 			cap.Proven = append(cap.Proven, b)
-			log.Info("capability: proven binding", "key", name, "skill", int(after))
+			log.Info("capability: proven binding", "key", name, "skill", int(after), "skill_name", skillName(after))
+			// Match the live table by its name as well as by the enum. The local
+			// d2go build's generated enum and skills table do not share positions
+			// for every class skill, so numeric constants alone are unsafe here.
+			switch canonicalSkillName(skillName(after)) {
+			case "leapattack":
+				v := b
+				cap.LeapAttack = &v
+			case "doubleswing":
+				v := b
+				cap.DoubleSwing = &v
+			}
 			// The SELECTION FLIP is itself behavioral proof she owns the skill (the mod
 			// grants some at level 0 — a points requirement wrongly disarmed Magic
 			// Arrow, measured 03:14). Fight's flinch audit is the guard against a
@@ -87,7 +104,35 @@ func Calibrate(log *slog.Logger, gr *game.MemoryReader, hid *game.HID, mem *memo
 			log.Info("capability: key selected nothing (unbound or unusable)", "key", name)
 		}
 	}
+	// Keep travel on an ordinary contact skill, but give combat the requested
+	// priority: Leap Attack first, Double Swing second, then the generic contact
+	// binding discovered by calibration.
+	if cap.DoubleSwing != nil {
+		cap.Contact = cap.DoubleSwing
+	}
+	switch {
+	case cap.LeapAttack != nil:
+		v := *cap.LeapAttack
+		cap.Combat = &v
+	case cap.DoubleSwing != nil:
+		v := *cap.DoubleSwing
+		cap.Combat = &v
+	case cap.Contact != nil:
+		v := *cap.Contact
+		cap.Combat = &v
+	}
+	if cap.Combat != nil {
+		log.Info("capability: combat binding", "skill", int(cap.Combat.Skill),
+			"skill_name", skillName(cap.Combat.Skill), "key", int(cap.Combat.Key))
+	}
 	mem.PutJSON("capability", memory.ScopeGame,
 		memory.Provenance{Source: "measured", Evidence: "selection readback calibration"}, cap.Proven)
 	return cap
+}
+
+func skillName(id skill.ID) string {
+	if def, ok := skill.Skills[id]; ok {
+		return def.Name
+	}
+	return skill.SkillNames[id]
 }

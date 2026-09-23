@@ -9,7 +9,12 @@
 // as the item economy: 602/607/533, tome skills proven at 218/220).
 package combat
 
-import "github.com/hectorgimenez/d2go/pkg/data/skill"
+import (
+	"strings"
+	"unicode"
+
+	"github.com/hectorgimenez/d2go/pkg/data/skill"
+)
 
 // Role is the seed classification a prior gives a proven selection (P-7.5).
 type Role int
@@ -64,24 +69,24 @@ var rolePriors = map[skill.ID]Role{
 	skill.LightningFury:   RoleThrow,
 
 	// Sorceress
-	skill.FireBolt:      RoleReach,
-	skill.ChargedBolt:   RoleReach,
-	skill.IceBolt:       RoleReach,
-	skill.Inferno:       RoleReach,
-	skill.IceBlast:      RoleReach,
-	skill.FireBall:      RoleReach,
-	skill.Lightning:     RoleReach,
-	skill.Blaze:         RoleReach,
-	skill.FireWall:      RoleReach,
-	skill.GlacialSpike:  RoleReach,
+	skill.FireBolt:       RoleReach,
+	skill.ChargedBolt:    RoleReach,
+	skill.IceBolt:        RoleReach,
+	skill.Inferno:        RoleReach,
+	skill.IceBlast:       RoleReach,
+	skill.FireBall:       RoleReach,
+	skill.Lightning:      RoleReach,
+	skill.Blaze:          RoleReach,
+	skill.FireWall:       RoleReach,
+	skill.GlacialSpike:   RoleReach,
 	skill.ChainLightning: RoleReach,
-	skill.Meteor:        RoleReach,
-	skill.Blizzard:      RoleReach,
-	skill.Hydra:         RoleReach,
-	skill.FrozenOrb:     RoleReach,
-	skill.StaticField:   RoleContact, // radius around her — lands where she stands
-	skill.FrostNova:     RoleContact,
-	skill.Nova:          RoleContact,
+	skill.Meteor:         RoleReach,
+	skill.Blizzard:       RoleReach,
+	skill.Hydra:          RoleReach,
+	skill.FrozenOrb:      RoleReach,
+	skill.StaticField:    RoleContact, // radius around her — lands where she stands
+	skill.FrostNova:      RoleContact,
+	skill.Nova:           RoleContact,
 
 	// Necromancer
 	skill.Teeth:        RoleReach,
@@ -129,29 +134,62 @@ var rolePriors = map[skill.ID]Role{
 	skill.Fury:          RoleContact,
 
 	// Assassin
-	skill.TigerStrike:      RoleContact,
-	skill.DragonTalon:      RoleContact,
-	skill.FistsOfFire:      RoleContact,
-	skill.DragonClaw:       RoleContact,
-	skill.CobraStrike:      RoleContact,
-	skill.ClawsOfThunder:   RoleContact,
-	skill.DragonTail:       RoleContact,
-	skill.BladesOfIce:      RoleContact,
-	skill.DragonFlight:     RoleContact,
-	skill.PhoenixStrike:    RoleContact,
-	skill.PsychicHammer:    RoleReach,
-	skill.ShockWeb:         RoleReach,
+	skill.TigerStrike:       RoleContact,
+	skill.DragonTalon:       RoleContact,
+	skill.FistsOfFire:       RoleContact,
+	skill.DragonClaw:        RoleContact,
+	skill.CobraStrike:       RoleContact,
+	skill.ClawsOfThunder:    RoleContact,
+	skill.DragonTail:        RoleContact,
+	skill.BladesOfIce:       RoleContact,
+	skill.DragonFlight:      RoleContact,
+	skill.PhoenixStrike:     RoleContact,
+	skill.PsychicHammer:     RoleReach,
+	skill.ShockWeb:          RoleReach,
 	skill.ChargedBoltSentry: RoleReach,
-	skill.WakeOfFire:       RoleReach,
-	skill.BladeSentinel:    RoleReach,
-	skill.LightningSentry:  RoleReach,
-	skill.WakeOfInferno:    RoleReach,
-	skill.BladeFury:        RoleReach,
-	skill.FireBlast:        RoleThrow,
+	skill.WakeOfFire:        RoleReach,
+	skill.BladeSentinel:     RoleReach,
+	skill.LightningSentry:   RoleReach,
+	skill.WakeOfInferno:     RoleReach,
+	skill.BladeFury:         RoleReach,
+	skill.FireBlast:         RoleThrow,
 }
+
+// The local d2go build carries the live skills table separately from the enum
+// constants.  A few class skills therefore have different numeric positions in
+// those two tables (for example, the live table calls ID 133 "Double Swing").
+// Resolve the semantic name first so calibration never mistakes one class skill
+// for another merely because the enum was generated from a different table.
+func canonicalSkillName(name string) string {
+	var b strings.Builder
+	for _, r := range name {
+		if unicode.IsLetter(r) || unicode.IsDigit(r) {
+			b.WriteRune(unicode.ToLower(r))
+		}
+	}
+	return b.String()
+}
+
+var rolePriorsByName = func() map[string]Role {
+	m := make(map[string]Role, len(rolePriors))
+	for id, role := range rolePriors {
+		if name, ok := skill.SkillNames[id]; ok {
+			m[canonicalSkillName(name)] = role
+		}
+	}
+	// The live table calls the tome skills "Book ..." rather than "Tome ...".
+	m["bookofidentify"] = RoleIdentify
+	m["bookoftownportal"] = RoleTownTP
+	return m
+}()
 
 // Prior returns the seed role for a selection, RoleNone when the table is
 // silent. Callers treat the answer as a hint, never as proof (P-7.2).
 func Prior(id skill.ID) Role {
+	if def, ok := skill.Skills[id]; ok {
+		if role, found := rolePriorsByName[canonicalSkillName(def.Name)]; found {
+			return role
+		}
+	}
 	return rolePriors[id]
 }

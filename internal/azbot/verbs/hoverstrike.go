@@ -2,6 +2,7 @@ package verbs
 
 import (
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/hectorgimenez/d2go/pkg/data"
@@ -16,11 +17,12 @@ import (
 // the right-skill is PER WEAPON SET on this build, so a stale Identify can sit
 // armed on the set we just swapped to no matter what key we pressed moments ago.
 func tomeSkill(id skill.ID) bool {
-	switch id {
-	case skill.TomeOfIdentify, skill.ScrollOfIdentify, skill.TomeOfTownPortal, skill.ScrollOfTownPortal:
-		return true
-	}
-	return false
+	// The live d2go skills table names the item skills at IDs 217–220 while
+	// the enum constants in this build use a different offset. Match by the
+	// table's semantic name so a book can never be right-clicked at a monster.
+	name := strings.ToLower(strings.ReplaceAll(strings.ReplaceAll(skill.Skills[id].Name, " ", ""), "_", ""))
+	return name == "scrollofidentify" || name == "bookofidentify" ||
+		name == "scrolloftownportal" || name == "bookoftownportal"
 }
 
 // HoverStrike is THE aimed attack: select the skill (readback-verified by the caller's
@@ -187,4 +189,4 @@ func (h HoverStrike) Do(m *motor.Motor, gr *game.MemoryReader, p *percept.Percep
 }
 
 // Thin motor pass-throughs (kept here so the verb layer, not callers, touches input).
-func hidAim(m *motor.Motor, x, y int)          { m.AimPhysical(x, y) }
+func hidAim(m *motor.Motor, x, y int) { m.AimPhysical(x, y) }

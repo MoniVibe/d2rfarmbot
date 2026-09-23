@@ -7,6 +7,7 @@ package percept
 
 import (
 	"fmt"
+	"strings"
 	"sync/atomic"
 	"time"
 
@@ -22,17 +23,17 @@ import (
 
 // PlayerState is the live self-state subset: only channels PROVEN live on 3.2.92777.
 type PlayerState struct {
-	Pos    data.Position
-	Area   area.ID
-	Mode   mode.PlayerMode
-	HPPct  int
-	MPPct  int
+	Pos   data.Position
+	Area  area.ID
+	Mode  mode.PlayerMode
+	HPPct int
+	MPPct int
 	// MaxMana: the pool's true size (fixed-point >>8). A 4-point pool needs no
 	// mana potions and no mana wells (the owner, 04:57: the barbarian).
 	MaxMana int
-	Level  int
-	Gold   int
-	InTown bool
+	Level   int
+	Gold    int
+	InTown  bool
 	// Armed: something occupies a weapon-hand slot. Part of the self-model's
 	// "who am I right now" — a lost weapon flips this the same cycle.
 	Armed bool
@@ -42,9 +43,9 @@ type PlayerState struct {
 	HealPots int
 	// ManaPots: mana potions in the belt (mod id 607) — the bow skill's fuel gauge.
 	ManaPots int
-	// HPCols/ManaCols: WHICH bottom-row belt columns hold each potion type. The belt
-	// keys drink by column — a drink reflex that presses columns blindly gulps mana
-	// while bleeding and never finds the blue when the pool is dry.
+	// HPCols/ManaCols: WHICH belt key columns hold each potion type. The memory
+	// reader can flatten multi-row belts into slots 0..15; perception normalizes
+	// those slots to the four input columns before the drink reflex sees them.
 	HPCols   []int
 	ManaCols []int
 	// Belt self-model totals (whole belt, not just the drinkable bottom row) — what
@@ -57,6 +58,10 @@ type PlayerState struct {
 	// belt full of strangers read as empty and Restock bought forever into the
 	// bag (the owner, 2026-07-20: "spammed health potions from akara").
 	BeltUsed int
+	// BeltItems is the raw identity audit for every occupied belt cell. It is not
+	// used as a blind drink fallback; it exists so an unrecognized bottle or a
+	// stale/mislocated inventory entry is visible in flight/black-box evidence.
+	BeltItems []BeltItemRef
 	// MinDurPct: the worst equipped item's durability percent (100 when nothing
 	// tracks durability) — what the Repair service bids on.
 	MinDurPct int
@@ -162,6 +167,17 @@ type InvItem struct {
 	// IsBow: the candidate equips onto the bow set — Equip must have the bow set
 	// ACTIVE before the shift-click (P-4.4; the click lands on the active hands).
 	IsBow bool
+}
+
+// BeltItemRef is the raw belt identity alongside the derived potion counts.
+// BeltUsed alone only says that a cell is occupied; this record lets the flight
+// recorder prove whether that cell held a health potion, mana potion, or a
+// stranger that the classifier did not understand.
+type BeltItemRef struct {
+	ID   int
+	Name string
+	Pos  data.Position
+	Kind string // "health", "mana", or "unknown"
 }
 
 // Snapshot is one immutable perception frame. Valid=false frames (load screens,
@@ -326,11 +342,11 @@ func (p *Perceptor) Capture() *Snapshot {
 	}
 	s.Valid = true
 	s.Me = PlayerState{
-		Pos:        pos,
-		Area:       d.PlayerUnit.Area,
-		Mode:       d.PlayerUnit.Mode,
-		HPPct:      d.PlayerUnit.HPPercent(),
-		MPPct:      d.PlayerUnit.MPPercent(),
+		Pos:   pos,
+		Area:  d.PlayerUnit.Area,
+		Mode:  d.PlayerUnit.Mode,
+		HPPct: d.PlayerUnit.HPPercent(),
+		MPPct: d.PlayerUnit.MPPercent(),
 		MaxMana: func() int {
 			// THE FIXED-POINT LIE (11:39: maxmana=0 while the orb held 33 —
 			// the owner: "the bot is still not aware as much as we'd like").
@@ -363,9 +379,9 @@ func (p *Perceptor) Capture() *Snapshot {
 			}
 			return 0
 		}(),
-		Level:      lvl,
-		Gold:       gold,
-		InTown:     d.PlayerUnit.Area.IsTown(),
+		Level:       lvl,
+		Gold:        gold,
+		InTown:      d.PlayerUnit.Area.IsTown(),
 		Str:         str,
 		Dex:         dex,
 		StatPoints:  statPts,
@@ -473,30 +489,36 @@ func (p *Perceptor) Capture() *Snapshot {
 	}
 	s.Me.HasBow = bowActive || bowSecondary
 	s.Me.CursorItem = len(d.Inventory.ByLocation(item.LocationCursor)) > 0 // WARNING 9
-	// Belt potions count by NUMERIC ID first — the mod scrambles the name table
-	// (its HP potion reads "Herb" id 602, its mana potion id 607 = the old INVALID607
-	// mystery; both proven by vendor purchase deltas 2026-07-19). Name matching stays
-	// as the vanilla fallback.
+	// Belt potions count by a single classifier. The mod scrambles the name table and
+	// also exposes the belt's flattened slot index in Position.X (0..7/0..15), so
+	// relying on one custom ID or Position.Y made variants such as health potion 2
+	// invisible to the drink reflex.
 	for _, bp := range d.Inventory.Belt.Items {
-		if bp.Position.Y != 0 {
-			continue // only the bottom row is drinkable by the belt keys
-		}
-		n := string(bp.Name)
-		if bp.ID == 602 || contains(n, "Healing") || contains(n, "Rejuvenation") {
+		kind := potionKindForItem(bp)
+		s.Me.BeltItems = append(s.Me.BeltItems, BeltItemRef{
+			ID: bp.ID, Name: string(bp.Name), Pos: bp.Position,
+			Kind: potionKindName(kind),
+		})
+		switch kind {
+		case potionHealth:
 			s.Me.HealPots++
-			s.Me.HPCols = append(s.Me.HPCols, bp.Position.X)
-		} else if bp.ID == 607 || contains(n, "Mana") {
+			if col, ok := beltColumn(bp.Position); ok {
+				s.Me.HPCols = appendBeltColumn(s.Me.HPCols, col)
+			}
+		case potionMana:
 			s.Me.ManaPots++
-			s.Me.ManaCols = append(s.Me.ManaCols, bp.Position.X)
+			if col, ok := beltColumn(bp.Position); ok {
+				s.Me.ManaCols = appendBeltColumn(s.Me.ManaCols, col)
+			}
 		}
 	}
 	s.Me.BeltSlots = d.Inventory.Belt.Rows() * 4
 	s.Me.BeltUsed = len(d.Inventory.Belt.Items)
 	for _, bp := range d.Inventory.Belt.Items {
-		n := string(bp.Name)
-		if bp.ID == 602 || contains(n, "Healing") || contains(n, "Rejuvenation") {
+		switch potionKindForItem(bp) {
+		case potionHealth:
 			s.Me.BeltHP++
-		} else if bp.ID == 607 || contains(n, "Mana") {
+		case potionMana:
 			s.Me.BeltMana++
 		}
 	}
@@ -576,7 +598,7 @@ func (p *Perceptor) Capture() *Snapshot {
 		return fitsSlot(it)
 	}
 	occupied := 0
-	potSpares := map[int]int{} // bag potions per kind — the reserve audit (P-4.5)
+	potSpares := map[potionKind]int{} // bag potions per kind — the reserve audit (P-4.5)
 	for _, it := range d.Inventory.ByLocation(item.LocationInventory) {
 		id := int(it.ID)
 		if w, h := it.Desc().InventoryWidth, it.Desc().InventoryHeight; w > 0 && h > 0 {
@@ -608,12 +630,13 @@ func (p *Perceptor) Capture() *Snapshot {
 			// her cube somehow, what the hell"). Type by numeric ID cannot be lied to
 			// by the scrambled name table.
 			continue
-		case id == 602 || id == 607:
+		case potionKindForItem(it) != potionNone:
 			// Potions are fuel, not stock — up to a RESERVE of 4 per kind. The
 			// bag is not a cellar (P-4.5): the junky's surplus is merchandise,
 			// or it strangles the landing room the equip ritual needs.
-			potSpares[id]++
-			if potSpares[id] > 4 {
+			kind := potionKindForItem(it)
+			potSpares[kind]++
+			if potSpares[kind] > 4 {
 				s.Junk = append(s.Junk, InvItem{ID: id, GX: it.Position.X, GY: it.Position.Y, Qual: int(it.Quality)})
 			}
 			continue
@@ -688,6 +711,148 @@ func contains(s, sub string) bool {
 		}
 	}
 	return false
+}
+
+// potionKind is deliberately kept separate from d2go's item.Type. On this mod
+// the display/name table is scrambled and a few vendor/custom IDs do not carry a
+// useful static type, while the normal hp1..hp5/mp1..mp5 rows do.
+type potionKind uint8
+
+const (
+	potionNone potionKind = iota
+	potionHealth
+	potionMana
+)
+
+// potionKindForItem recognizes every vanilla potion tier plus the measured custom
+// potion rows used by Reimagined. Rejuvenation is treated as health for the
+// sentinel: it restores both pools and is always the safer choice when HP is low.
+//
+// ID 607 is a compatibility trap. The static table calls it a red potion, but the
+// live mod's purchase delta proved the old INVALID607 row is the mana bottle. A
+// trustworthy runtime name (when the mod exposes one) wins; an unknown 607 keeps
+// the measured legacy meaning so existing restock behavior does not regress.
+func potionKindForItem(it data.Item) potionKind {
+	id := it.ID
+	name := strings.ToLower(string(it.Name))
+	compactName := strings.NewReplacer(" ", "", "_", "", "-", "").Replace(strings.TrimSpace(name))
+	// Reimagined sometimes exposes the item's code instead of its display name
+	// (for example, the literal "hp2" for a Light Healing Potion). Recognize
+	// those tiered aliases before the compatibility handling below, including
+	// when a scrambled row happens to carry ID 607.
+	if potionTierName(compactName, "hp", "health", "healing") {
+		return potionHealth
+	}
+	if potionTierName(compactName, "mp", "mana") {
+		return potionMana
+	}
+	// Reimagined's early-game red consumable is exposed as "Herb" on some
+	// character/area combinations instead of hpN. Treat it as health just as the
+	// proven farmbot path does; leaving it unknown makes a physically full belt
+	// look empty to both Restock and the Sentinel.
+	if strings.Contains(name, "herb") {
+		return potionHealth
+	}
+
+	if id == 607 {
+		switch {
+		case potionNameHas(name, "healing", "health", "redpotion", "red potion"):
+			return potionHealth
+		case potionNameHas(name, "mana", "bluepotion", "blue potion"):
+			return potionMana
+		default:
+			return potionMana // measured INVALID607 compatibility row
+		}
+	}
+
+	switch id {
+	case 509, 511, 587, 588, 589, 590, 591, 602, 606:
+		return potionHealth
+	case 510, 512, 592, 593, 594, 595, 596, 608, 609:
+		return potionMana
+	case 515, 516:
+		return potionHealth // rejuv/full rejuv
+	}
+
+	// Names are a useful fallback for custom rows not in the ledger. Keep the
+	// generic check after numeric IDs so a scrambled name cannot override a known
+	// custom potion's measured meaning.
+	switch {
+	case potionNameHas(name, "rejuvenation", "rejuv", "healing", "health", "redpotion", "red potion"):
+		return potionHealth
+	case potionNameHas(name, "mana", "bluepotion", "blue potion"):
+		return potionMana
+	}
+
+	// Finally use the static description for ordinary/unknown rows. Desc() returns
+	// an empty description for an unknown ID, which is safe here.
+	switch it.Desc().Type {
+	case item.TypeHealingPotion, item.TypeRejuvPotion:
+		return potionHealth
+	case item.TypeManaPotion:
+		return potionMana
+	default:
+		return potionNone
+	}
+}
+
+func potionKindName(kind potionKind) string {
+	switch kind {
+	case potionHealth:
+		return "health"
+	case potionMana:
+		return "mana"
+	default:
+		return "unknown"
+	}
+}
+
+func potionNameHas(name string, words ...string) bool {
+	for _, word := range words {
+		if strings.Contains(name, word) {
+			return true
+		}
+	}
+	return false
+}
+
+// potionTierName matches compact mod codes (hp2/mp2) as well as common
+// serialized forms (healthpotion2/healingpotion2). The suffix is deliberately
+// limited to the five vanilla tiers so an unrelated name containing "hp" or
+// "mp" cannot become a potion by accident.
+func potionTierName(name string, prefixes ...string) bool {
+	for _, prefix := range prefixes {
+		for _, stem := range []string{prefix, prefix + "potion"} {
+			if len(name) != len(stem)+1 || !strings.HasPrefix(name, stem) {
+				continue
+			}
+			tier := name[len(stem)]
+			if tier >= '1' && tier <= '5' {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+// beltColumn converts the memory reader's belt slot coordinate to the key lane.
+// Reimagined exposes a flattened X (0..7 for a sash, 0..11 for a belt, etc.) and
+// leaves Y at zero; vanilla readers may expose a row/column X in the same range.
+// Modulo four is therefore the stable input column for both representations.
+func beltColumn(pos data.Position) (int, bool) {
+	if pos.X < 0 || pos.X >= 16 { // the largest normal belt is four rows
+		return 0, false
+	}
+	return pos.X % 4, true
+}
+
+func appendBeltColumn(cols []int, col int) []int {
+	for _, existing := range cols {
+		if existing == col {
+			return cols
+		}
+	}
+	return append(cols, col)
 }
 
 func maxInt(a, b int) int {

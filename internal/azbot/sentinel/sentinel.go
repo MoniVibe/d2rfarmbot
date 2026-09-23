@@ -51,6 +51,14 @@ type Sentinel struct {
 	Dead chan struct{} // pulsed on death detection (level-triggered consumers re-read)
 }
 
+type drinkAttempt struct {
+	at         time.Time
+	what       string
+	col        int
+	hpBefore   int
+	healBefore int
+}
+
 func New(log *slog.Logger, p *percept.Perceptor, m *motor.Motor, mem *memory.Store, cfg Config) *Sentinel {
 	if cfg.KillVK == 0 {
 		cfg.KillVK = 0x13 // VK_PAUSE
@@ -67,11 +75,19 @@ func New(log *slog.Logger, p *percept.Perceptor, m *motor.Motor, mem *memory.Sto
 // Run is the 100ms survival loop. It must never call anything that can block beyond
 // a bounded memory read + a key press.
 func (s *Sentinel) Run(stop <-chan struct{}) {
-	t := time.NewTicker(100 * time.Millisecond)
+	// The kill switch is sampled more often than the survival read.  A normal
+	// function-key tap can be shorter than the old 100ms sentinel cadence, and
+	// the low-bit edge reported by GetAsyncKeyState is not reliable when another
+	// process is polling it too.  Keep the safety read at its original cadence,
+	// but give the human-control path a 25ms window.
+	t := time.NewTicker(25 * time.Millisecond)
 	defer t.Stop()
 	var lastDrink time.Time
+	var pendingDrink *drinkAttempt
+	var lastNoHealthLane time.Time
 	var killHeld bool
 	var killAt time.Time
+	var lastSurvival time.Time
 	var wasDead bool
 	var lastShift bool
 	lastFocus := true
@@ -96,15 +112,17 @@ func (s *Sentinel) Run(stop <-chan struct{}) {
 			if !killHeld && time.Since(killAt) > time.Second {
 				killHeld = true
 				killAt = time.Now()
-				if s.m.Engage.Engaged() {
-					s.m.Disengage()
-				} else {
-					s.m.Reengage()
-				}
+				s.m.ToggleAsync()
 			}
 		} else {
 			killHeld = false
 		}
+		// Keep memory/perception and potion work at the established 100ms cadence;
+		// only the kill-switch needs the tighter polling window above.
+		if !lastSurvival.IsZero() && time.Since(lastSurvival) < 100*time.Millisecond {
+			continue
+		}
+		lastSurvival = time.Now()
 
 		// Shift forensics: the OS-truth shift state, every tick, into the WAL. When the
 		// owner's stuck-shift recurs, this trace says whether the OS ever saw a phantom
@@ -153,6 +171,42 @@ func (s *Sentinel) Run(stop <-chan struct{}) {
 		// exactly the right one. Gated on the self-model KNOWING it has potions —
 		// pressing keys into an empty belt was the 25s-bleed death's accomplice.
 		last := s.p.Last()
+		if dead {
+			pendingDrink = nil
+		}
+		if !dead && last != nil && pendingDrink != nil {
+			// A queued key is not proof that D2R consumed anything. The next full
+			// snapshot must show either a life increase or one fewer recognized red
+			// bottle. Keep the attempt visible so a background/deaf key path cannot
+			// masquerade as a successful drink.
+			if last.Me.HPPct > pendingDrink.hpBefore+2 ||
+				(pendingDrink.healBefore > 0 && last.Me.HealPots < pendingDrink.healBefore) {
+				s.log.Info("sentinel: drink verified", "what", pendingDrink.what,
+					"col", pendingDrink.col, "hp", last.Me.HPPct,
+					"healPots", last.Me.HealPots)
+				pendingDrink = nil
+			} else if time.Since(pendingDrink.at) >= 750*time.Millisecond {
+				s.log.Warn("sentinel: drink unverified", "what", pendingDrink.what,
+					"col", pendingDrink.col, "hpBefore", pendingDrink.hpBefore,
+					"hp", last.Me.HPPct, "healPots", last.Me.HealPots)
+				pendingDrink = nil
+			}
+		}
+		if !dead && hp > 0 && last != nil && hp <= s.cfg.DrinkAtHP &&
+			len(last.Me.HPCols) == 0 && s.m.Engage.Engaged() {
+			// Do not rotate blindly through an occupied belt: a full belt can
+			// contain charms/unknown rows, and a guessed key can drink mana or
+			// simply do nothing. Surface the missing red lane and let the higher
+			// level escape policy take over.
+			if lastNoHealthLane.IsZero() || time.Since(lastNoHealthLane) >= 2*time.Second {
+				s.log.Warn("sentinel: no health lane", "hp", hp,
+					"beltUsed", last.Me.BeltUsed, "beltSlots", last.Me.BeltSlots,
+					"beltHP", last.Me.BeltHP, "beltItems", len(last.Me.BeltItems))
+				lastNoHealthLane = time.Now()
+			}
+		} else {
+			lastNoHealthLane = time.Time{}
+		}
 		if !dead && hp > 0 && last != nil && time.Since(lastDrink) > s.cfg.DrinkCD &&
 			len(s.cfg.BeltKeys) > 0 && s.m.Engage.Engaged() {
 			var cols []int
@@ -166,8 +220,12 @@ func (s *Sentinel) Run(stop <-chan struct{}) {
 			if len(cols) > 0 {
 				col := cols[beltIdx%len(cols)]
 				beltIdx++
-				if col < len(s.cfg.BeltKeys) && s.m.KeyLane().Press(s.cfg.BeltKeys[col]) {
+				if col >= 0 && col < len(s.cfg.BeltKeys) && s.m.KeyLane().Press(s.cfg.BeltKeys[col]) {
 					lastDrink = time.Now()
+					if label == "hp" {
+						pendingDrink = &drinkAttempt{at: lastDrink, what: label, col: col,
+							hpBefore: hp, healBefore: last.Me.HealPots}
+					}
 					s.log.Info("sentinel: drink", "what", label, "hp", hp, "mp", mp, "col", col)
 				}
 			}

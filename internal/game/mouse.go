@@ -176,6 +176,27 @@ func (hid *HID) AimPhysical(x, y int) {
 	iMoveScreen(hid.gr.WindowLeftX+x, hid.gr.WindowTopY+y) // no-op unless -hwmove rel/abs
 }
 
+// AimPanelScaled parks the injected cursor at a panel coordinate while keeping
+// the mouse-message coordinates in the logical client space.  D2R's rendered
+// panel is physical-pixel based on this DPI-aware window, but WM_MOUSEMOVE and
+// WM_LBUTTON* still carry logical client coordinates.  A single coordinate pair
+// cannot serve both spaces: callers pass logical sx/sy and the cursor scale is
+// applied only to the injected absolute cursor value.
+func (hid *HID) AimPanelScaled(sx, sy int, cursorScale float64) {
+	hid.gr.updateWindowPositionData()
+	if cursorScale <= 0 {
+		cursorScale = 1
+	}
+	px := int(float64(hid.gr.WindowLeftX)*physicalScale + float64(sx)*cursorScale)
+	py := int(float64(hid.gr.WindowTopY)*physicalScale + float64(sy)*cursorScale)
+	hid.gi.OverridePhysicalCursorPos(px, py)
+	lpScreen := calculateLparam(hid.gr.WindowLeftX+sx, hid.gr.WindowTopY+sy)
+	lpClient := calculateLparam(sx, sy)
+	sendTimed(hid.gr.HWND, win.WM_NCHITTEST, 0, lpScreen)
+	sendTimed(hid.gr.HWND, win.WM_SETCURSOR, uintptr(hid.gr.HWND), setCursorLparam)
+	win.PostMessage(hid.gr.HWND, win.WM_MOUSEMOVE, 0, lpClient)
+}
+
 // clientToPhysical converts a client point to the physical cursor value the GAME will read back as
 // that same client point. MEASURED 2026-07-17, not derived: D2R recovers its client point as
 // (physicalCursor - physicalWindowOrigin), so the client offset is added UNSCALED to the SCALED

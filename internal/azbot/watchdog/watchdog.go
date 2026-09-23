@@ -134,7 +134,7 @@ func (w *Watchdog) Check(holder string, stationaryOK bool) Verdict {
 				return Verdict{Pathology: Stuck,
 					Detail:    fmt.Sprintf("holder=%s pinned in %dx%d box for %ds", holder, maxX-minX, maxY-minY, int(now.Sub(recent[0].at).Seconds())),
 					CoolWho:   holder,
-					CoolUntil: now.Add(15 * time.Second)}
+					CoolUntil: now.Add(6 * time.Second)}
 			}
 			// ORBIT: real movement (path length) with no net displacement — the circle.
 			path := 0
@@ -146,7 +146,7 @@ func (w *Watchdog) Check(holder string, stationaryOK bool) Verdict {
 				return Verdict{Pathology: Orbit,
 					Detail:    fmt.Sprintf("holder=%s path=%d net=%d over %ds", holder, path, net, int(now.Sub(recent[0].at).Seconds())),
 					CoolWho:   holder,
-					CoolUntil: now.Add(15 * time.Second)}
+					CoolUntil: now.Add(6 * time.Second)}
 			}
 		}
 	}
@@ -169,7 +169,7 @@ func (w *Watchdog) Check(holder string, stationaryOK bool) Verdict {
 				return Verdict{Pathology: Thrash,
 					Detail:    fmt.Sprintf("%d handovers/30s among %d holders", len(recent), len(distinct)),
 					CoolWho:   recent[len(recent)-1].who,
-					CoolUntil: now.Add(20 * time.Second)}
+					CoolUntil: now.Add(8 * time.Second)}
 			}
 		}
 	}
