@@ -2399,6 +2399,14 @@ func (t *Travel) Demand(s *percept.Snapshot) *arbiter.Demand {
 	if !s.Valid || !s.Me.InTown || s.Me.HPPct < 30 || len(t.Road) < 2 {
 		return nil // Step indexes Road[len-2]: a one-point road would panic (reviewer 8)
 	}
+	// THE SEAM HYSTERESIS (item 2): while the deliberate marcher holds a
+	// committed beyond-town intent and a crossing just fired, the legacy road
+	// walker must not grab the wheel and shove her back across the gate — that
+	// re-crossing IS the Lut Gholein<->Rocky Waste bounce. Advance owns the
+	// seam for the hysteresis window; the road resumes after it.
+	if committedSeamHold() {
+		return nil
+	}
 	if s.Me.WeaponKind == "none" && s.Me.CorpseFound {
 		return nil // naked with a body out there: recovery owns her, not the road
 	}

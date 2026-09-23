@@ -1830,6 +1830,13 @@ func (r *Return) Demand(s *percept.Snapshot) *arbiter.Demand {
 	if !s.Valid || !s.Me.InTown || s.Me.HPPct < 70 {
 		return nil
 	}
+	// THE SEAM HYSTERESIS (item 2): a committed beyond-town march plus a fresh
+	// crossing means the deliberate marcher owns the seam right now — Return's
+	// portal ride back to the field must not undo a crossing inside the window
+	// (the town<->gate bounce). It resumes the moment the window lapses.
+	if committedSeamHold() {
+		return nil
+	}
 	// P-2.4: a dead door is ABSENT — never bid on a portal that provably
 	// does not open, or Return spins in town clicking a refusal forever.
 	live := false

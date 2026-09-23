@@ -1948,6 +1948,10 @@ func main() {
 				return // still proving itself; the old side keeps the stamp
 			}
 			crossPend = 0
+			// THE SHARED CROSSING TIMESTAMP (item 2): a confirmed transition
+			// arms the seam hysteresis so the legacy road walkers do not shove
+			// her straight back across a gate the deliberate marcher just crossed.
+			activity.NoteSeamCross()
 			// THE TOWN-HOP WITNESS (night 2: three field→town teleports with NO
 			// verb logged — portal ambush, stale walk order, or something still
 			// unnamed; the log could not say). Every arrival in town from the
