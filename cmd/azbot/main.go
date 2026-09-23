@@ -28,11 +28,14 @@ import (
 	"github.com/hectorgimenez/koolo/internal/azbot/activity"
 	"github.com/hectorgimenez/koolo/internal/azbot/arbiter"
 	"github.com/hectorgimenez/koolo/internal/azbot/combat"
+	"github.com/hectorgimenez/koolo/internal/azbot/exec"
 	"github.com/hectorgimenez/koolo/internal/azbot/journey"
 	"github.com/hectorgimenez/koolo/internal/azbot/memory"
 	"github.com/hectorgimenez/koolo/internal/azbot/motor"
 	"github.com/hectorgimenez/koolo/internal/azbot/percept"
+	"github.com/hectorgimenez/koolo/internal/azbot/phase"
 	"github.com/hectorgimenez/koolo/internal/azbot/sentinel"
+	"github.com/hectorgimenez/koolo/internal/azbot/trace"
 	"github.com/hectorgimenez/koolo/internal/azbot/verbs"
 	"github.com/hectorgimenez/koolo/internal/azbot/watchdog"
 	"github.com/hectorgimenez/koolo/internal/config"
@@ -103,28 +106,28 @@ func runReplay(logger *slog.Logger, path string, legs []activity.Leg) {
 		return
 	}
 	defer f.Close()
-	radv := activity.NewAdvance(legs)
-	acts := []activity.Activity{&activity.Breakout{}, &activity.Flee{}, activity.NewDodge(),
-		&activity.Respawn{}, activity.NewRelog(), activity.NewReclaim(), activity.NewFight(),
-		activity.NewLoot(), activity.NewImbibe(), activity.NewFence(), activity.NewRestock(), activity.NewRepair(),
-		activity.NewHeal(), activity.NewIdentify(), activity.NewEquip(), radv,
-		&activity.Return{}, &activity.Explore{Frontier: radv.FrontierFor}}
+	// The live executive's own roster: replay bids exactly what the loop bids.
+	roster := activity.Registry(legs, nil)
 	arb := &arbiter.Arbiter{}
 	sc := bufio.NewScanner(f)
 	sc.Buffer(make([]byte, 1024*1024), 1024*1024)
-	frame, last := 0, ""
+	frame, last, live := 0, "", "-"
 	for sc.Scan() {
+		// Decision frames ride beside the snapshots (newer files): they name the
+		// live holder for comparison and are not frames to decide on.
+		if df, ok := trace.IsFrame(sc.Bytes()); ok {
+			live = df.Holder
+			if live == "" {
+				live = "-"
+			}
+			continue
+		}
 		frame++
 		var s percept.Snapshot
 		if err := json.Unmarshal(sc.Bytes(), &s); err != nil {
 			continue
 		}
-		var demands []arbiter.Demand
-		for _, a := range acts {
-			if d := a.Demand(&s); d != nil {
-				demands = append(demands, *d)
-			}
-		}
+		demands := roster.Demands(&s)
 		grant, ch := arb.Decide(demands)
 		if ch.Changed() || (grant == nil && last != "-") {
 			holder, urg := "-", 0.0
@@ -141,7 +144,7 @@ func runReplay(logger *slog.Logger, path string, legs []activity.Leg) {
 				logger.Info("replay", "frame", frame, "t", s.At.Format("15:04:05"),
 					"grant", holder, "urgency", fmt.Sprintf("%.2f", urg),
 					"hp", s.Me.HPPct, "area", int(s.Me.Area), "near", near,
-					"weapon", s.Me.WeaponKind, "bids", len(demands))
+					"weapon", s.Me.WeaponKind, "bids", len(demands), "why", ch.Why(), "live", live)
 				last = holder
 			}
 		}
@@ -1795,13 +1798,21 @@ func main() {
 
 	// ---- THE EXECUTIVE: one arbiter, one activity per cycle, honest grants ----
 	led := verbs.NewLedger(2048)
+	sh := newShadow(logger)
 	led.Sink = func(o verbs.Outcome) {
 		// done outcomes are the quiet normal; exceptions speak — except the route
 		// owner's decisions, which are the story of WHERE she is going and why.
 		if o.Result != verbs.ResDone || o.Verb == "intent" || o.Verb == "escalate" {
 			logger.Info("outcome", "verb", o.Verb, "holder", o.Holder, "tgt", o.Target, "result", o.Result.String(), "ev", o.Evidence)
 		}
+		// Nav follower transitions are ResDone too — the trace names every one.
+		if o.Verb == "nav" {
+			if ln, ok := trace.Nav(o.Holder, o.Evidence, curTick.Load()); ok {
+				emit(ln)
+			}
+		}
 	}
+	activity.PhaseSink = func(ln string) { emit(trace.Phase(ln, curTick.Load())) }
 	// WARNING 6 (the 12:00 and 12:12 lessons): a swap can inherit ANY panel —
 	// the vendor window (readable) or the plain bag (byte-blind, photographed
 	// eating six straight talks). The successor heals itself blind: in town,
@@ -1864,7 +1875,6 @@ func main() {
 	cap := calibrate()
 	activity.SetBrawler(cap.Reach == nil && cap.Throw == nil) // P-2.-2: no ranged game = the Brawler's Creed
 	arb := &arbiter.Arbiter{}
-	acts := map[string]activity.Activity{}
 	road := []data.Position{{X: 6020, Y: 4952}, {X: 5992, Y: 4941}, {X: 5963, Y: 5001}, {X: 5962, Y: 4956}, {X: 5952, Y: 4944}}
 	// The hand-piloted road belongs to ONE world — its own provenance says
 	// "seed 466817790". On Fableboi's fresh seed it marched him into the
@@ -1891,12 +1901,12 @@ func main() {
 		legs = activity.CampaignItinerary(startArea)
 		logger.Info("campaign itinerary selected", "act", startArea.Act(), "startArea", int(startArea), "legs", len(legs))
 	}
-	adv := activity.NewAdvance(legs)
-	fight := activity.NewFight()
-	fight.March = adv.MarchGoal // P-5.8: the door mouth is shot open
-	for _, a := range []activity.Activity{&activity.Breakout{}, &activity.Stand{}, &activity.Flee{March: adv.MarchGoal}, activity.NewDodge(), &activity.Respawn{}, activity.NewRelog(), activity.NewReclaim(), fight, activity.NewLoot(), activity.NewImbibe(), activity.NewFence(), activity.NewRestock(), activity.NewRepair(), activity.NewHeal(), activity.NewIdentify(), activity.NewEquip(), activity.NewSpend(), adv, activity.NewWithdraw(), &activity.Return{}, &activity.Travel{Road: road}, &activity.Explore{Frontier: adv.FrontierFor}} {
-		acts[a.Name()] = a
-	}
+	// One registry for live and -replay; its order breaks exact bid ties.
+	roster := activity.Registry(legs, road)
+	adv, fight := roster.Advance, roster.Fight
+	// The lifecycle rides the arbiter's Changes: Suspend on preempt/outbid,
+	// Begin on every seat, End on every verdict or monitor release.
+	core := &exec.Core[*activity.Ctx]{Arb: arb, Find: roster.Lifecycle, Trace: emit}
 
 	var grid *game.Grid
 	// Stride's look-ahead reads the CURRENT live grid (the closure follows every
@@ -2065,6 +2075,7 @@ func main() {
 		logger.Info("flight recorder live", "path", flightPath)
 	}
 	var flightAt time.Time
+	lastBids := 0 // demands in the last Decide, for the decision frame
 	var ring []*percept.Snapshot
 	wasArmed := false
 	wasDead := false
@@ -2115,6 +2126,8 @@ func main() {
 			time.Sleep(40*time.Millisecond - dt)
 		}
 		lastTick = time.Now()
+		tick := curTick.Add(1)
+		core.Tick = tick
 		// WARNING 7 (revised twice; the owner 2026-07-19 night: "we didn't need to
 		// focus diablo before"): the bot NEVER steals focus AND never stops playing
 		// for lack of it. In-game input is posted window messages + the injector's
@@ -2134,6 +2147,14 @@ func main() {
 			wasFocused = focused
 		}
 		s := p.Capture()
+		ses := "InGame"
+		switch {
+		case !m.Engage.Engaged():
+			ses = "Disengaged"
+		case holderWho(arb) == "relog":
+			ses = "Relogging"
+		}
+		sh.stateLine(tick, s, ses, arb, roster)
 		if !s.Valid || !m.Engage.Engaged() {
 			// THE WATCHER NEVER SLEEPS (01:12, the owner: "i even entered dark
 			// wood" — and the cartographer was DEAF because this gate skipped
@@ -2231,6 +2252,12 @@ func main() {
 				flightW.WriteByte('\n')
 				flightW.Flush()
 			}
+			// The decision frame follows its snapshot (replay skips it by "k").
+			if b, err := json.Marshal(sh.frame(tick, s, arb, core, roster, lastBids)); err == nil {
+				flightW.Write(b)
+				flightW.WriteByte('\n')
+				flightW.Flush()
+			}
 			flightAt = time.Now()
 		}
 		// Self-model events: armed flip OR back-from-death → recalibrate capability.
@@ -2283,17 +2310,15 @@ func main() {
 
 		var demands []arbiter.Demand
 		var benched []arbiter.Demand
-		for _, a := range acts {
-			if d := a.Demand(s); d != nil {
-				// The watchdog's prescriptions: a cooled activity may not win again
-				// until its moment passes — survival and recovery are never cooled.
-				if until, cooled := cooldowns[d.Who]; cooled && time.Now().Before(until) &&
-					d.Class > arbiter.ClassRecover {
-					benched = append(benched, *d)
-					continue
-				}
-				demands = append(demands, *d)
+		for _, d := range roster.Demands(s) { // registry order, Order stamped
+			// The watchdog's prescriptions: a cooled activity may not win again
+			// until its moment passes — survival and recovery are never cooled.
+			if until, cooled := cooldowns[d.Who]; cooled && time.Now().Before(until) &&
+				d.Class > arbiter.ClassRecover {
+				benched = append(benched, d)
+				continue
 			}
+			demands = append(demands, d)
 		}
 		// A cooldown must be real.  The old empty-field fallback immediately
 		// re-granted the activity the watchdog had just convicted (observed:
@@ -2314,7 +2339,11 @@ func main() {
 				demands = benched
 			}
 		}
-		grant, gch := arb.Decide(demands)
+		// One context per tick: the lifecycle calls inside Decide and the Step
+		// below see the same world.
+		actx := &activity.Ctx{M: m, GR: gr, P: p, Led: led, Grid: grid, Cap: &cap, Snap: s, SwapKey: hid.GetASCIICode(*swapKey), InvKey: hid.GetASCIICode(*invKeyF), Regrid: regrid, Mem: mem}
+		grant, gch := core.Decide(actx, demands)
+		lastBids = len(demands)
 
 		// SELF-OBSERVATION (the owner's ask: "tell what the bot is up to, moments where
 		// it's stuck, looping, thrashing — and unstuck itself"): the bot consumes its own
@@ -2361,7 +2390,11 @@ func main() {
 						adv.NoteWatchdog(v.Pathology.String(), led)
 					}
 				}
-				arb.Release()
+				detail := "watchdog " + v.Pathology.String()
+				if v.CoolWho != "" {
+					detail += fmt.Sprintf("; cool %s %s", v.CoolWho, time.Until(v.CoolUntil).Round(time.Second))
+				}
+				core.End(actx, holderName, phase.Abandoned, phase.Judged, detail) // was arb.Release()
 				// One decisive displacement in a fresh bearing breaks the physical
 				// loop — a ROTATING bearing (the advisor's ladder: novel headings),
 				// never the old fixed NW that pendulumed her off every door mouth.
@@ -2506,11 +2539,10 @@ func main() {
 			logger.Info("grant", "from", gch.From, "to", grant.Demand.Who, "class", grant.Demand.Class.String(),
 				"urgency", fmt.Sprintf("%.2f", grant.Demand.Urgency), "why", gch.Why())
 		}
-		act := acts[grant.Demand.Who]
-		v := act.Step(&activity.Ctx{M: m, GR: gr, P: p, Led: led, Grid: grid, Cap: &cap, Snap: s, SwapKey: hid.GetASCIICode(*swapKey), InvKey: hid.GetASCIICode(*invKeyF), Regrid: regrid, Mem: mem})
-		if v != activity.Running {
-			logger.Info("verdict", "activity", grant.Demand.Who, "verdict", map[activity.Verdict]string{activity.Done: "done", activity.Abandoned: "abandoned"}[v])
-			arb.Release()
+		st := roster.Get(grant.Demand.Who).Step(actx)
+		if st.V.Terminal() {
+			logger.Info("verdict", "activity", grant.Demand.Who, "verdict", st.V.String())
+			core.End(actx, grant.Demand.Who, st.V, st.Why, st.Evidence) // was arb.Release()
 		}
 		// THE STALL ALARM (the owner, session 2: "bouts of idleness while
 		// surrounded by monsters"; 13:03 anatomy: six Survive grants, 26s,
@@ -2548,7 +2580,10 @@ func main() {
 				if silent > 2*bar && grant.Demand.Class != arbiter.ClassSurvive {
 					cooldowns[grant.Demand.Who] = time.Now().Add(5 * time.Second)
 					logger.Warn("STALL — mute grant released", "holder", grant.Demand.Who, "cool", "5s")
-					arb.Release()
+					if holderWho(arb) == grant.Demand.Who { // was arb.Release(): a no-op once a verdict ended it
+						core.End(actx, grant.Demand.Who, phase.Abandoned, phase.Mute,
+							fmt.Sprintf("stall: silent %s; cool 5s", silent.Round(100*time.Millisecond)))
+					}
 				}
 			}
 		}
