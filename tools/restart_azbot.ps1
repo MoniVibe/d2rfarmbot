@@ -1,6 +1,6 @@
 # Restart azbot on a freshly built binary: stop, heal D2R input, swap, relaunch.
 # Usage: pwsh tools\restart_azbot.ps1 -Tag f [-Seconds 7200] [-Goal campaign]
-param([Parameter(Mandatory)][string]$Tag, [int]$Seconds = 7200, [string]$Goal = "campaign", [switch]$Force)
+param([Parameter(Mandatory)][string]$Tag, [int]$Seconds = 7200, [string]$Goal = "campaign", [switch]$Force, [switch]$Classic)
 Set-Location (Split-Path $PSScriptRoot -Parent)
 # NEVER stop the bot outside town (2026-09-23: a restart mid-fight left Fableboi
 # standing undriven in a pack; he died). Allowed: in town, or NO living monster within
@@ -16,6 +16,9 @@ Get-Process azbot -ErrorAction SilentlyContinue | Stop-Process -Force
 Start-Sleep -Milliseconds 500
 .\farmbot.exe -fixinput 2>&1 | Select-String 'fixinput: done' | ForEach-Object { 'input healed' }
 if (Test-Path build\azbot.exe.new) { Move-Item -Force build\azbot.exe.new build\azbot.exe }
+# Deliberate navigation (route intent + seam hysteresis + escalation ladder) is ON
+# unless -Classic. The child process inherits this.
+if ($Classic) { Remove-Item Env:AZBOT_DELIBERATE -ErrorAction SilentlyContinue } else { $env:AZBOT_DELIBERATE = "1" }
 $log = "logs\run_$(Get-Date -Format yyyy-MM-dd)$Tag.out"
 Start-Process -FilePath .\build\azbot.exe -ArgumentList "-goal $Goal -seconds $Seconds" `
   -RedirectStandardOutput $log -RedirectStandardError "$log.err" -WindowStyle Hidden
