@@ -33,6 +33,51 @@ func isoCarrot(gr *game.MemoryReader, me data.Position, tx, ty int) (int, int) {
 	return cx + int(300*math.Cos(ang)), cy + int(140*math.Sin(ang))
 }
 
+// Walkable is the live grid's verdict for one world tile (true for unknown/unloaded
+// ground). The executive installs it; nil disables the look-ahead.
+var Walkable func(data.Position) bool
+
+// clearRay: the first n tiles from me along (fx,fy) are walkable.
+func clearRay(me data.Position, fx, fy float64, n int) bool {
+	for i := 1; i <= n; i++ {
+		p := data.Position{X: me.X + int(math.Round(fx*float64(i))), Y: me.Y + int(math.Round(fy*float64(i)))}
+		if !Walkable(p) {
+			return false
+		}
+	}
+	return true
+}
+
+// steerAround turns a walled heading into the nearest open one (±22.5° steps up
+// to ±112.5°), returning a stand-in target along it. ok=false: boxed in.
+// THE WALL-HUG (2026-09-23, the owner: "it seems like it's trying to run into some
+// walls"): direction-only force-moves were emitted into collision and held 1.6s
+// for gain=0, over and over — the look-ahead ends that at the source.
+func steerAround(me, to data.Position) (data.Position, int, bool) {
+	dx, dy := float64(to.X-me.X), float64(to.Y-me.Y)
+	l := math.Hypot(dx, dy)
+	if l < 1 || Walkable == nil {
+		return to, 0, true
+	}
+	base := math.Atan2(dy, dx)
+	for k := 0; k <= 5; k++ {
+		for _, sgn := range []float64{1, -1} {
+			if k == 0 && sgn < 0 {
+				continue
+			}
+			a := base + sgn*float64(k)*math.Pi/8
+			fx, fy := math.Cos(a), math.Sin(a)
+			if clearRay(me, fx, fy, 4) {
+				if k == 0 {
+					return to, 0, true
+				}
+				return data.Position{X: me.X + int(fx*12), Y: me.Y + int(fy*12)}, int(sgn) * k, true
+			}
+		}
+	}
+	return to, 0, false
+}
+
 // Do executes the stride synchronously (M2 form; the polled state-machine form arrives
 // with the arbiter). The caller holds a RoleSteer lease.
 func (s Stride) Do(m *motor.Motor, gr *game.MemoryReader, p *percept.Perceptor, led *Ledger, holder string) Outcome {
@@ -50,7 +95,19 @@ func (s Stride) Do(m *motor.Motor, gr *game.MemoryReader, p *percept.Perceptor, 
 		led.Append(o)
 		return o
 	}
-	ax, ay := isoCarrot(gr, start.Me.Pos, s.To.X, s.To.Y)
+	to, turned, open := steerAround(start.Me.Pos, s.To)
+	if !open {
+		o := Outcome{Verb: "stride", Holder: holder, Target: fmt.Sprintf("(%d,%d)", s.To.X, s.To.Y), Result: ResBlocked,
+			Evidence: fmt.Sprintf("boxed in at (%d,%d): no open heading within ±112° — no push emitted", start.Me.Pos.X, start.Me.Pos.Y)}
+		time.Sleep(150 * time.Millisecond) // a refusal must never be free
+		led.Append(o)
+		return o
+	}
+	detour := ""
+	if turned != 0 {
+		detour = fmt.Sprintf(" detour=%+d°", turned*45/2)
+	}
+	ax, ay := isoCarrot(gr, start.Me.Pos, to.X, to.Y)
 	if !m.StrideEdge(ax, ay) {
 		o := Outcome{Verb: "stride", Holder: holder, Result: ResRefused, Evidence: "motor disengaged"}
 		led.Append(o)
@@ -117,7 +174,7 @@ func (s Stride) Do(m *motor.Motor, gr *game.MemoryReader, p *percept.Perceptor, 
 		Verb: "stride", Holder: holder,
 		Target:   fmt.Sprintf("(%d,%d)", s.To.X, s.To.Y),
 		HeldMS:   held,
-		Evidence: fmt.Sprintf("from=(%d,%d) to=(%d,%d) gain=%d%s", start.Me.Pos.X, start.Me.Pos.Y, end.Me.Pos.X, end.Me.Pos.Y, gain, abort),
+		Evidence: fmt.Sprintf("from=(%d,%d) to=(%d,%d) gain=%d%s%s", start.Me.Pos.X, start.Me.Pos.Y, end.Me.Pos.X, end.Me.Pos.Y, gain, abort, detour),
 	}
 	switch {
 	case !end.Valid:

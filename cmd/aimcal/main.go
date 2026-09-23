@@ -63,7 +63,10 @@ func findHWND(pid uint32) win.HWND {
 	return hwnd
 }
 
-type sample struct{ px, py, u, v float64 }
+type sample struct {
+	px, py, u, v float64
+	unit         bool // a unit (monster/NPC) hover box, vs a ground item at its tile
+}
 
 // fit returns slope and intercept of y = k*x + c by least squares.
 func fit(xs, ys []float64) (k, c, rms float64) {
@@ -104,6 +107,7 @@ func main() {
 	step := flag.Int("step", 20, "sweep step in logical px")
 	dpi := flag.Float64("dpiscale", 1.25, "display scale")
 	out := flag.String("out", "logs/aimcal.json", "where to save the calibration azbot loads")
+	keepFit := flag.Bool("keepfit", false, "keep the saved ground fit; only measure the unit (monster/NPC) hover height")
 	flag.Parse()
 
 	quiet := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelError}))
@@ -163,17 +167,17 @@ func main() {
 				for _, it := range d.Inventory.ByLocation(item.LocationGround) {
 					if it.UnitID == hd.UnitID {
 						dx, dy := float64(it.Position.X-me.X), float64(it.Position.Y-me.Y)
-						ss = append(ss, sample{float64(x), float64(y), dx - dy, dx + dy})
+						ss = append(ss, sample{float64(x), float64(y), dx - dy, dx + dy, false})
 						hits[hd.UnitID]++
 						break
 					}
 				}
 				continue
 			}
-			for _, m := range d.Monsters.Enemies() {
+			for _, m := range d.Monsters { // NPCs included: same unit hover box as monsters
 				if m.UnitID == hd.UnitID {
 					dx, dy := float64(m.Position.X-me.X), float64(m.Position.Y-me.Y)
-					ss = append(ss, sample{float64(x), float64(y), dx - dy, dx + dy})
+					ss = append(ss, sample{float64(x), float64(y), dx - dy, dx + dy, true})
 					hits[m.UnitID]++
 					break
 				}
@@ -182,6 +186,29 @@ func main() {
 		hid.SpoofActivate()
 	}
 	fmt.Printf("sweep %.0fs: %d hover samples on %d distinct enemies\n", time.Since(t0).Seconds(), len(ss), len(hits))
+	if prev, err := os.ReadFile(*out); err == nil && *keepFit {
+		// keep the proven ground fit, only (re)measure the unit height
+		var old game.AimCal
+		if json.Unmarshal(prev, &old) == nil && old.KX > 0 {
+			fmt.Printf("keepfit: reusing ground fit from %s\n", *out)
+			var ru, nu float64
+			for _, s := range ss {
+				if s.unit {
+					py := (s.v*9.9)*old.KY + float64(cy0) + old.OY
+					ru, nu = ru+(s.py-py), nu+1
+				}
+			}
+			if nu == 0 {
+				fmt.Println("no unit samples — nothing to update")
+				return
+			}
+			old.UnitDY = ru / nu
+			buf, _ := json.MarshalIndent(old, "", "  ")
+			os.WriteFile(*out, buf, 0o644)
+			fmt.Printf("unit hover box: %+.1f logical px vs ground (%0.f unit samples) — saved %s\n", old.UnitDY, nu, *out)
+			return
+		}
+	}
 	if len(ss) < 8 {
 		fmt.Println("too few samples — stand near several monsters and re-run")
 		return
@@ -196,8 +223,26 @@ func main() {
 	fmt.Printf("fit Y: py = %.2f*(dx+dy) + %.1f   rms %.1f   (code assumes 9.9 and %d)\n", b, cy, ry, cy0)
 	fmt.Printf("=> worldscale for the 19.8/9.9 constants: X %.3f  Y %.3f  (dpi %.2f)\n", a/19.8**dpi, b/9.9**dpi, *dpi)
 	fmt.Printf("=> origin offset (logical px): dX %+.1f  dY %+.1f\n", cx-float64(cx0), cy-float64(cy0))
+	// UNIT HEIGHT: mean Y residual of unit samples vs item samples under the shared
+	// fit — how far ABOVE its tile a monster's hover box sits.
+	var ru, ri, nu, ni float64
+	for _, s := range ss {
+		r := s.py - (b*s.v + cy)
+		if s.unit {
+			ru, nu = ru+r, nu+1
+		} else {
+			ri, ni = ri+r, ni+1
+		}
+	}
+	unitDY := 0.0
+	if nu > 0 && ni > 0 {
+		unitDY = ru/nu - ri/ni
+	} else if nu > 0 {
+		unitDY = ru / nu
+	}
+	fmt.Printf("=> samples: %.0f unit, %.0f item; unit hover box sits %+.1f logical px vs item tiles\n", nu, ni, unitDY)
 	cal := game.AimCal{Client: fmt.Sprintf("%dx%d", gr.GameAreaSizeX, gr.GameAreaSizeY),
-		KX: a / 19.8, KY: b / 9.9, OX: cx - float64(cx0), OY: cy - float64(cy0)}
+		KX: a / 19.8, KY: b / 9.9, OX: cx - float64(cx0), OY: cy - float64(cy0), UnitDY: unitDY}
 	buf, _ := json.MarshalIndent(cal, "", "  ")
 	if err := os.WriteFile(*out, buf, 0o644); err != nil {
 		fmt.Println("write failed:", err)

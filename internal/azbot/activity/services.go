@@ -21,6 +21,7 @@ import (
 	"github.com/hectorgimenez/koolo/internal/azbot/memory"
 	"github.com/hectorgimenez/koolo/internal/azbot/percept"
 	"github.com/hectorgimenez/koolo/internal/azbot/verbs"
+	"github.com/hectorgimenez/koolo/internal/game"
 )
 
 // Mod item-ID ledger + measured panel coordinates (1920x1050 client).
@@ -264,7 +265,7 @@ func (e *errand) step(ctx *Ctx, who string) (shopOpen bool, dead bool) {
 		}
 		me := d.PlayerUnit.Position
 		bx := int(float32((target.Position.X-me.X)-(target.Position.Y-me.Y))*19.8) + ctx.GR.GameAreaSizeX/2
-		by := int(float32((target.Position.X-me.X)+(target.Position.Y-me.Y))*9.9) + ctx.GR.GameAreaSizeY/2
+		by := int(float32((target.Position.X-me.X)+(target.Position.Y-me.Y))*9.9) + ctx.GR.GameAreaSizeY/2 + game.UnitAimDY() // NPC body, not feet
 		confirmed, px, py := false, bx, by
 	sweep:
 		// Search DOWN through the body too, not only up to the label (04:47:
@@ -466,6 +467,8 @@ type Restock struct {
 	probeMN  int // the level-5 cells died at level 9, measured 12:15)
 	frozenHP int
 	frozenMN int
+	potFails int  // consecutive verified-buy failures this trip
+	noMana   bool // the open vendor stocks no mana potion
 }
 
 // potCount: total bottles of one kind she owns, belt AND bag — the only honest
@@ -703,21 +706,44 @@ func (r *Restock) Step(ctx *Ctx) Verdict {
 			r.resetCounters()
 			return Abandoned
 		}
-		// Potion buys carry the scroll machinery's discipline (12:15): probed,
-		// learned, judged by the OWNED-count delta — the shop layout shifts
-		// with level and the belt-only check misread bag-landings as ghosts.
-		id, memKey, pi, fz := modManaPotionID, "shop.akara.cell.manapotion", &r.probeMN, &r.frozenMN
-		if buyMana == 0 {
-			id, memKey, pi, fz = modHPPotionID, "shop.akara.cell.hppotion", &r.probeHP, &r.frozenHP
-		}
-		if !r.buyPotion(ctx, id, memKey, pi, fz) {
-			closeShop(ctx)
-			r.e.reset()
-			r.resetCounters()
-			r.nextAt = time.Now().Add(4 * time.Minute) // a dead window stays dead (12:07's churn)
-			return Abandoned
-		}
-		r.potBought++
+			// VERIFIED BUYS (2026-09-23) supersede the probing: the stock is READ
+			// from memory, the cell hover-confirmed before the click, the result
+			// judged by gold AND owned count. Probe-by-purchase paid for its
+			// mistakes (9k gold of Act 2 junk on Act 1 cell guesses).
+			kind := "mana"
+			if buyMana == 0 || r.noMana {
+				kind = "health"
+			}
+			want := func(it data.Item) bool { return percept.PotionKind(it, true) == kind }
+			if kind == "health" && len(vendorStock(ctx, func(it data.Item) bool { return int(it.ID) == 603 })) > 0 {
+				want = func(it data.Item) bool { return int(it.ID) == 603 } // the proven belt bottle
+			}
+			switch buyVerified(ctx, r.Name(), kind+" potion", want) {
+			case buyOK:
+				r.potFails = 0
+			case buyNotStock:
+				if kind == "mana" {
+					r.noMana = true // this vendor sells no mana: fill the belt with health
+					return Running
+				}
+				r.potFails = 99
+			case buyWrong:
+				potionCoolUntil = time.Now().Add(30 * time.Minute)
+				r.potFails = 99
+			default:
+				r.potFails++
+			}
+			if r.potFails >= 3 {
+				if time.Now().After(potionCoolUntil) {
+					potionCoolUntil = time.Now().Add(5 * time.Minute)
+				}
+				closeShop(ctx)
+				r.e.reset()
+				r.resetCounters()
+				r.nextAt = time.Now().Add(4 * time.Minute)
+				return Abandoned
+			}
+			r.potBought++
 		if r.potBought > s.Me.BeltSlots+2+8 { // runaway guard, probe headroom included
 			// The runaway abandon must COOL or it re-grants in seconds and buys
 			// another armful — the 10:56 spam re-granted 25s after abandoning.
@@ -748,7 +774,7 @@ func (r *Restock) Step(ctx *Ctx) Verdict {
 }
 
 func (r *Restock) resetCounters() {
-	r.potBought, r.beltFrozen, r.scrBought = 0, 0, 0
+	r.potBought, r.beltFrozen, r.scrBought, r.potFails, r.noMana = 0, 0, 0, 0, false
 	r.lastBeltHP, r.lastBeltMN = 0, 0
 	r.frozenTP, r.frozenID = 0, 0
 	r.probeHP, r.probeMN, r.frozenHP, r.frozenMN = 0, 0, 0, 0

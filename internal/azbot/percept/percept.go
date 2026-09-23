@@ -810,6 +810,16 @@ func potionKindForBeltItem(it data.Item) potionKind {
 	return potionKindForItem(it)
 }
 
+// PotionKind classifies an item as "health", "mana" or "unknown". inBelt applies
+// the belt-only meanings (ID 603 = the mod's red potion). Vendors do not sell
+// charms, so the shop treats stock the same way.
+func PotionKind(it data.Item, inBelt bool) string {
+	if inBelt {
+		return potionKindName(potionKindForBeltItem(it))
+	}
+	return potionKindName(potionKindForItem(it))
+}
+
 func potionKindName(kind potionKind) string {
 	switch kind {
 	case potionHealth:

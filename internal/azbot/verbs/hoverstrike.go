@@ -80,7 +80,9 @@ func (h HoverStrike) Do(m *motor.Motor, gr *game.MemoryReader, p *percept.Percep
 	d := gr.GetData()
 	me := d.PlayerUnit.Position
 	bx := int(float32((h.TargetPos.X-me.X)-(h.TargetPos.Y-me.Y))*19.8) + gr.GameAreaSizeX/2
-	by := int(float32((h.TargetPos.X-me.X)+(h.TargetPos.Y-me.Y))*9.9) + gr.GameAreaSizeY/2
+	// + the measured unit hover-box height: the ground fit puts the aim at the
+	// monster's FEET, where corpses and drops own the hover (live 2026-09-23).
+	by := int(float32((h.TargetPos.X-me.X)+(h.TargetPos.Y-me.Y))*9.9) + gr.GameAreaSizeY/2 + game.UnitAimDY()
 
 	// Incremental hover sweep: confirm identity or refuse to click. The hint offset
 	// probes FIRST — on a tracked target it usually confirms immediately, collapsing

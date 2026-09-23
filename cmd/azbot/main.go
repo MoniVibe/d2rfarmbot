@@ -1894,6 +1894,19 @@ func main() {
 	}
 
 	var grid *game.Grid
+	// Stride's look-ahead reads the CURRENT live grid (the closure follows every
+	// regrid). Unknown/unloaded ground stays walkable — only real walls refuse.
+	verbs.Walkable = func(p data.Position) bool {
+		g := grid
+		if g == nil {
+			return true
+		}
+		rp := g.RelativePosition(p)
+		if rp.X < 0 || rp.Y < 0 || rp.X >= g.Width || rp.Y >= g.Height {
+			return true
+		}
+		return g.IsWalkable(p)
+	}
 	gridArea := -1
 	var gridAt time.Time
 	// THE CARTOGRAPHER: every area crossing she ever makes — by march, by wander, by
@@ -2505,6 +2518,17 @@ func main() {
 					"holder", grant.Demand.Who, "silent", silent.Round(100*time.Millisecond),
 					"hp", s.Me.HPPct, "pos", fmt.Sprintf("(%d,%d)", s.Me.Pos.X, s.Me.Pos.Y))
 				stallWarnAt = time.Now()
+				// NO MUTE GRANT (2026-09-23, the owner: "the occasional idling"):
+				// naming the mute holder never freed the wheel — hysteresis kept
+				// granting it while it did nothing. Twice the bar of silence now
+				// RELEASES the grant and cools that holder briefly, so the next
+				// bidder acts. Survive is exempt: its silence is a bug to fix, but
+				// yanking it mid-crowd is worse than the silence.
+				if silent > 2*bar && grant.Demand.Class != arbiter.ClassSurvive {
+					cooldowns[grant.Demand.Who] = time.Now().Add(5 * time.Second)
+					logger.Warn("STALL — mute grant released", "holder", grant.Demand.Who, "cool", "5s")
+					arb.Release()
+				}
 			}
 		}
 		// THE DEADMAN BOX (21:29: ten minutes pinned in a UP pocket across two

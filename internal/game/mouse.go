@@ -144,6 +144,19 @@ type AimCal struct {
 	KY     float64 `json:"ky"`
 	OX     float64 `json:"ox"`
 	OY     float64 `json:"oy"`
+	// UnitDY: how far a unit's (monster/NPC) hover box sits from its ground tile,
+	// logical px (negative = above). Aimed unit interactions add it; ground
+	// clicks (walk, items) must not.
+	UnitDY float64 `json:"unit_dy"`
+}
+
+// UnitAimDY is the measured hover-box height for units, in the SAME logical
+// space the verbs compute bx/by in (pre-KY): add it to a unit aim's by.
+func UnitAimDY() int {
+	if aimCal.KY <= 0 {
+		return 0
+	}
+	return int(aimCal.UnitDY / aimCal.KY)
 }
 
 var aimCal = AimCal{KX: 1, KY: 1}

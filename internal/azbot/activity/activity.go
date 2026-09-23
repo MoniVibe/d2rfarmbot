@@ -439,6 +439,26 @@ type Stand struct {
 
 func (st *Stand) Name() string { return "stand" }
 
+// contactRange: an enemy this close is in the fight, walled stamp or not.
+const contactRange = 3
+
+// sighted: a legitimate target — clear line, or close enough that the wall
+// stamp cannot be trusted over the teeth.
+func sighted(s *percept.Snapshot, e percept.EnemyRef) bool {
+	return !e.Walled || chebyshev(s.Me.Pos, e.Pos) <= contactRange
+}
+
+// contactDist: the nearest enemy, walled stamp ignored (1<<30 when none).
+func contactDist(s *percept.Snapshot) int {
+	best := 1 << 30
+	for _, e := range s.Enemies {
+		if d := chebyshev(s.Me.Pos, e.Pos); d < best {
+			best = d
+		}
+	}
+	return best
+}
+
 func (st *Stand) Demand(s *percept.Snapshot) *arbiter.Demand {
 	if !s.Valid || s.Me.InTown || s.Me.HPPct <= 0 {
 		st.ring = nil
@@ -1360,6 +1380,15 @@ func (f *Fight) Demand(s *percept.Snapshot) *arbiter.Demand {
 	if s.Me.WeaponKind == "none" && s.Me.CorpseFound {
 		return nil
 	}
+	// THE CONTACT LAW (2026-09-23, the owner: "it hugs walls sometimes with higher
+	// priority than attacking enemies"): whatever the exp oracle, the corridor,
+	// or the wall stamp say, an enemy within contactRange is fought NOW. The
+	// grid's wall stamp misreads ridges and ragged terrain, and a monster biting
+	// him is not behind a wall.
+	if c := contactDist(s); c <= contactRange {
+		return &arbiter.Demand{Who: f.Name(), Class: arbiter.ClassFight,
+			Urgency: 0.98, Commit: arbiter.Commitment{MinHold: 2 * time.Second, SwitchMargin: 0.2}}
+	}
 	// THE EXP ORACLE shrinks the hunt: on outleveled ground (mlvl 5+ below her),
 	// killing pays nothing — P-5.7 FORCED MARCH, refined 11:15 (the owner:
 	// "shoot more than moving if enemies are nearby"): anything within 10 is
@@ -1438,7 +1467,7 @@ func (f *Fight) Step(ctx *Ctx) Verdict {
 	engaged := false
 	if melee {
 		for _, e := range s.Enemies {
-			if !e.Walled && chebyshev(s.Me.Pos, e.Pos) <= 3 {
+			if chebyshev(s.Me.Pos, e.Pos) <= contactRange {
 				engaged = true
 				break
 			}
@@ -1484,7 +1513,7 @@ func (f *Fight) Step(ctx *Ctx) Verdict {
 		cScore := 1 << 30
 		haveClear := false
 		for _, e := range s.Enemies {
-			if e.Walled {
+			if !sighted(s, e) {
 				continue
 			}
 			if until, bl := f.blacklist[e.ID]; bl && time.Now().Before(until) {
@@ -1514,7 +1543,7 @@ func (f *Fight) Step(ctx *Ctx) Verdict {
 				// the bonus dwarfs every d+pack sum a 45-tile world can make.
 				sc -= 1000
 			}
-			if sc < cScore && losClear(ctx.Grid, s.Me.Pos, e.Pos) {
+			if sc < cScore && (d <= contactRange || losClear(ctx.Grid, s.Me.Pos, e.Pos)) {
 				bestClear, cScore, haveClear = e, sc, true
 			}
 		}
@@ -1536,7 +1565,7 @@ func (f *Fight) Step(ctx *Ctx) Verdict {
 	contact := 1 << 30
 	var contactPos data.Position
 	for _, e := range s.Enemies {
-		if e.Walled { // WARNING 10: a cabin dweller is not in contact — the
+		if !sighted(s, e) { // WARNING 10: a cabin dweller is not in contact — the
 			continue // point-blank volley into the logs was this line's absence
 		}
 		if dd := chebyshev(s.Me.Pos, e.Pos); dd < contact {
@@ -1860,7 +1889,7 @@ func volleyAt(ctx *Ctx, pos data.Position, key byte, skipSelect bool) {
 	d := ctx.GR.GetData()
 	me := d.PlayerUnit.Position
 	bx := int(float32((pos.X-me.X)-(pos.Y-me.Y))*19.8) + ctx.GR.GameAreaSizeX/2
-	by := int(float32((pos.X-me.X)+(pos.Y-me.Y))*9.9) + ctx.GR.GameAreaSizeY/2
+	by := int(float32((pos.X-me.X)+(pos.Y-me.Y))*9.9) + ctx.GR.GameAreaSizeY/2 + game.UnitAimDY() // at the body, not the feet
 	// Clamp INSIDE the window preserving direction — the arrow flies the line anyway.
 	if bx < 20 {
 		bx = 20

@@ -193,6 +193,29 @@ func (m *Motor) MenuKey(vk byte) {
 	time.Sleep(200 * time.Millisecond)
 }
 
+// HoverPanel points the cursor at panel pixels (the SAME space UIClick clicks in)
+// without clicking — the shop locator asks the game what is under it.
+func (m *Motor) HoverPanel(sx, sy int) {
+	if !m.Engage.Engaged() {
+		return
+	}
+	// The trade panel is drawn in PHYSICAL client pixels (like the waypoint rows):
+	// scale 1 swept a shrunken corner and hovered nothing (2026-09-23: 0 hits in
+	// a 58s sweep with 91 stock items open and the game focused).
+	m.hid.AimPanelScaled(sx, sy, m.PanelScale())
+	m.hid.MouseMoveClient(sx, sy)
+}
+
+// UIClickPanel clicks in the same space HoverPanel hovers.
+func (m *Motor) UIClickPanel(sx, sy int) { m.UIClickScaled(sx, sy, m.PanelScale()) }
+
+// ReleasePanelCursor hands the cursor exports back after a hover sweep.
+func (m *Motor) ReleasePanelCursor() {
+	_ = m.gi.RestorePhysicalCursorPos()
+	_ = m.gi.RestoreGetCursorInfo()
+	_ = m.gi.RestoreGetCursorPosAddr()
+}
+
 // UIClick clicks a panel button/cell at client pixels — farmbot's proven recipe
 // (patched cursor exports + LBUTTON override + client-lParam click). On vendor stock
 // cells this IS an instant purchase (measured 2026-07-19).
