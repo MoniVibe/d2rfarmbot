@@ -115,7 +115,7 @@ func SelfTest(ctx *Ctx, refresh func() *percept.Snapshot) []SelfTestResult {
 		time.Sleep(150 * time.Millisecond)
 	}
 	if !open {
-		add("trade-open", false, "errand never reached an open trade window in 75s (phase=%d menuTry=%d)", r.e.phase, r.e.menuTry)
+		add("trade-open", false, "errand never reached an open trade window in 75s (phase=%s menuTry=%d)", r.e.ph.Phase(), r.e.menuTry)
 		return out
 	}
 	add("trade-open", true, "vendor npc=%d stock=%d", int(r.e.npcID), len(vendorStock(ctx, func(data.Item) bool { return true })))

@@ -20,6 +20,7 @@ import (
 	"github.com/hectorgimenez/koolo/internal/azbot/journey"
 	"github.com/hectorgimenez/koolo/internal/azbot/memory"
 	"github.com/hectorgimenez/koolo/internal/azbot/percept"
+	"github.com/hectorgimenez/koolo/internal/azbot/phase"
 	"github.com/hectorgimenez/koolo/internal/azbot/verbs"
 	"github.com/hectorgimenez/koolo/internal/game"
 )
@@ -46,7 +47,7 @@ type errand struct {
 	act2NPC npc.ID          // service counterpart in Lut Gholein; zero means no alternate
 	ring    []data.Position // search waypoints until the NPC loads
 	ringIdx int
-	phase   int // 0 seek, 1 approach, 2 talk, 3 menu-nav, 4 act (owner's), 5 done
+	ph      phase.Phaser[errandPhase] // Seek, Approach, Talk, Menu, Act (errandphase.go)
 	clickAt time.Time
 	tries   int
 	// menuTry: which menu-option slot to ENTER on this attempt. The blind law was
@@ -66,7 +67,8 @@ type errand struct {
 }
 
 func (e *errand) reset() {
-	e.phase, e.ringIdx, e.tries, e.menuTry, e.blocked, e.hoverFails = 0, 0, 0, 0, 0, 0
+	e.to(erSeek, "reset")
+	e.ringIdx, e.tries, e.menuTry, e.blocked, e.hoverFails = 0, 0, 0, 0, 0
 	e.tradeSelected = false
 	e.startedAt = time.Time{}
 	e.j = nil
@@ -113,9 +115,10 @@ func (e *errand) walkTo(ctx *Ctx, goal data.Position, who string) (exhausted boo
 // OPEN (vendor stock readable — the honest oracle) and the caller may act.
 func (e *errand) step(ctx *Ctx, who string) (shopOpen bool, dead bool) {
 	s := ctx.Snap
+	e.ph.Act = who
 	// PHASE TRACE (2026-09-23: restock passed the town self-test yet failed in
 	// the live run; the state machine must be visible wherever it runs).
-	if tr := fmt.Sprintf("phase=%d menuTry=%d tries=%d menuOpen=%v tradeSelected=%v", e.phase, e.menuTry, e.tries, s.MenuOpen, e.tradeSelected); tr != e.lastTrace {
+	if tr := fmt.Sprintf("phase=%s menuTry=%d tries=%d menuOpen=%v tradeSelected=%v", e.ph.Phase(), e.menuTry, e.tries, s.MenuOpen, e.tradeSelected); tr != e.lastTrace {
 		e.lastTrace = tr
 		ctx.Led.Append(verbs.Outcome{Verb: "errand-trace", Holder: who, Result: verbs.ResRefused, Evidence: tr})
 	}
@@ -156,14 +159,14 @@ func (e *errand) step(ctx *Ctx, who string) (shopOpen bool, dead bool) {
 	// straight to act, and NEVER re-click an open shop closed. Trade errands
 	// only — Heal wants the heal-dialog, not the merchant's shelves.
 	if e.trade && e.tradeSelected && len(d.Inventory.ByLocation(item.LocationVendor)) > 0 && game.ShopVisible(ctx.GR.Screenshot()) {
-		e.phase = 4
+		e.to(erAct, "shop open: stock readable and trade panel on screen")
 		return true, false
 	}
 
-	switch e.phase {
-	case 0: // seek: walk the ring until the NPC loads
+	switch e.ph.Phase() {
+	case erSeek: // walk the ring until the NPC loads
 		if found {
-			e.phase = 1
+			e.to(erApproach, "npc loaded")
 			return false, false
 		}
 		if e.ringIdx >= len(e.ring) {
@@ -180,15 +183,15 @@ func (e *errand) step(ctx *Ctx, who string) (shopOpen bool, dead bool) {
 		if e.walkTo(ctx, wp, who) {
 			e.ringIdx++ // no route to this waypoint — try the next
 		}
-	case 1: // approach: the band (4..7) — closer breaks hover, farther breaks the click
+	case erApproach: // the band (4..7) — closer breaks hover, farther breaks the click
 		if !found {
-			e.phase = 0
+			e.to(erSeek, "npc unloaded")
 			return false, false
 		}
 		dist := chebyshev(s.Me.Pos, target.Position)
 		if dist >= 4 && dist <= 7 {
 			ctx.M.MoveStop()
-			e.phase = 2
+			e.to(erTalk, fmt.Sprintf("in band, dist %d", dist))
 			return false, false
 		}
 		if dist < 4 {
@@ -246,7 +249,7 @@ func (e *errand) step(ctx *Ctx, who string) (shopOpen bool, dead bool) {
 			arc := data.Position{X: target.Position.X + ady, Y: target.Position.Y - adx}
 			slideStride(ctx, arc, 900*time.Millisecond, 1, who+"/arc")
 		}
-	case 2: // talk: hover-confirm, BARE click, wait for the menu byte
+	case erTalk: // hover-confirm, BARE click, wait for the menu byte
 		// Clicking Akara opens a DIALOG (MenuOpen high) that the phase-3 nav
 		// steers to Trade — REVERTED here after run 72 froze at gold=741 with
 		// this path removed (the 12:44 screenshot showed the END state, an open
@@ -264,11 +267,11 @@ func (e *errand) step(ctx *Ctx, who string) (shopOpen bool, dead bool) {
 					Evidence: "closed a stray NPC menu (not opened by our talk click)"})
 				return false, false
 			}
-			e.phase = 3
+			e.to(erMenu, "menu byte after our talk click")
 			return false, false
 		}
 		if !found {
-			e.phase = 0
+			e.to(erSeek, "npc unloaded")
 			return false, false
 		}
 		// THE DIAG'S VERDICT (12:25: "dist=20 ... hoverConfirmed=true"): a
@@ -277,7 +280,7 @@ func (e *errand) step(ctx *Ctx, who string) (shopOpen bool, dead bool) {
 		// truncates before arrival, forever. The band is re-checked on EVERY
 		// attempt; beyond 8 she re-approaches instead of clicking.
 		if chebyshev(s.Me.Pos, target.Position) > 8 {
-			e.phase = 1
+			e.to(erApproach, "out of the talk band")
 			return false, false
 		}
 		// One bounded click attempt per grant of this phase.
@@ -323,10 +326,10 @@ func (e *errand) step(ctx *Ctx, who string) (shopOpen bool, dead bool) {
 		e.hoverFails = 0
 		ctx.M.BareClick(px, py)
 		e.clickAt = time.Now()
-	case 3: // menu open: HOME normalizes, then ENTER the menuTry'th candidate slot
+	case erMenu: // HOME normalizes, then ENTER the menuTry'th candidate slot
 		if !s.MenuOpen {
 			if time.Since(e.clickAt) > 4*time.Second {
-				e.phase = 2 // menu died — talk again
+				e.to(erTalk, "menu died") // talk again
 			}
 			return false, false
 		}
@@ -341,8 +344,8 @@ func (e *errand) step(ctx *Ctx, who string) (shopOpen bool, dead bool) {
 		}
 		ctx.M.RealKey(0x0D) // ENTER
 		e.tradeSelected = true // a Trade selection was actually made
-		e.phase = 4
-	case 4:
+		e.to(erAct, fmt.Sprintf("trade selected (menu slot try %d)", e.menuTry))
+	case erAct:
 		// The trade window takes a moment to populate after ENTER. Poll, don't
 		// glance (2026-09-23 trace: an instant check read 0 stock, ESC'd the
 		// opening shop and burned all six menu tries in three seconds).
@@ -366,7 +369,7 @@ func (e *errand) step(ctx *Ctx, who string) (shopOpen bool, dead bool) {
 			safeEsc(ctx) // close menu/dialog; re-clears a pause menu the ESC may open
 			time.Sleep(300 * time.Millisecond)
 		}
-		e.phase = 2
+		e.to(erTalk, fmt.Sprintf("trade never opened (menu slot try %d)", e.menuTry))
 		return false, false
 	}
 	return false, false
@@ -679,7 +682,7 @@ func (r *Restock) Step(ctx *Ctx) Verdict {
 	}
 	buyHP, buyMana := plan(s)
 	if buyHP+buyMana+scrollDeficit(s) == 0 {
-		if r.e.phase >= 3 {
+		if r.e.ph.Phase() >= erMenu {
 			closeShop(ctx)
 		}
 		r.e.reset()
@@ -752,7 +755,7 @@ func (r *Restock) Step(ctx *Ctx) Verdict {
 				// stock says. Talk again and select Trade for real.
 				r.potFails++
 				r.e.tradeSelected = false
-				r.e.phase = 2
+				r.e.to(erTalk, "buy click did nothing")
 				return Running
 			}
 			if r.potFails >= 3 {
@@ -929,7 +932,7 @@ func (fc *Fence) Step(ctx *Ctx) Verdict {
 		return Running // WARNING 9: a ctrl-click with a held item is a drop
 	}
 	if len(s.Junk) == 0 {
-		if fc.e.phase >= 3 {
+		if fc.e.ph.Phase() >= erMenu {
 			closeShop(ctx)
 		}
 		fc.e.reset()
@@ -1855,7 +1858,7 @@ func (rp *Repair) Step(ctx *Ctx) Verdict {
 		return Running
 	}
 	if s.Me.MinDurPct > 90 { // repaired — the durability delta happened
-		if rp.e.phase >= 3 {
+		if rp.e.ph.Phase() >= erMenu {
 			closeShop(ctx)
 		}
 		rp.reset()
