@@ -354,6 +354,23 @@ func (m *Motor) RealMenuRightClick(shotX, shotY int) bool {
 	return true
 }
 
+// RealMenuCtrlClick: RealMenuClick with Ctrl held — the vendor quick-sell.
+func (m *Motor) RealMenuCtrlClick(shotX, shotY int) bool {
+	if !m.Engage.Engaged() {
+		return false
+	}
+	m.ReleasePanelCursor() // the game reads the patched cursor (see RealMenuClick)
+	m.hid.FocusGame()
+	if !m.hid.GameFocused() {
+		return false
+	}
+	time.Sleep(250 * time.Millisecond)
+	sx := int(float64(shotX)/m.panelScale) + m.hid.WindowLeftX()
+	sy := int(float64(shotY)/m.panelScale) + m.hid.WindowTopY()
+	game.SendCtrlClickRealScreen(sx, sy)
+	return true
+}
+
 // RealEsc presses ESC at the OS level with the game foregrounded (pause menu open/close).
 // RealEsc returns false when the game could not be foregrounded — Windows
 // refuses foreground-steal while the OWNER actively uses another window, and

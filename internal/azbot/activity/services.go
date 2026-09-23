@@ -907,6 +907,19 @@ func (fc *Fence) Demand(s *percept.Snapshot) *arbiter.Demand {
 // invCell converts an inventory GRID slot to the proven panel pixel formula.
 func invCell(gx, gy int) (int, int) { return 1292 + gx*45 + 22, 395 + gy*45 + 22 }
 
+// invCellPx: an inventory grid cell's center in PHYSICAL client px (the space
+// RealMenuClick takes), measured 2026-09-23 on a 1920x1050 capture with a trade
+// window open: 10x8 grid (this mod), column pitch 47.6, row pitch 47.75, cell
+// (0,0) at (1311,420); verified against the two blue potions memory placed at
+// (8,0),(9,0). The panel is RIGHT-anchored and scales with client height.
+func invCellPx(ctx *Ctx, gx, gy int) (int, int) {
+	k := shopScale(ctx)
+	w := float64(ctx.GR.GameAreaSizeX) * ctx.M.PanelScale()
+	x := w - (1920-1310.8-47.6*float64(gx))*k
+	y := (420 + 47.75*float64(gy)) * k
+	return int(x), int(y)
+}
+
 func (fc *Fence) Step(ctx *Ctx) Verdict {
 	s := ctx.Snap
 	if !s.Valid {
@@ -992,8 +1005,62 @@ func (fc *Fence) Step(ctx *Ctx) Verdict {
 			return Abandoned
 		}
 	}
-	cx, cy := invCell(it.GX, it.GY)
-	ctx.M.SellClick(cx, cy)
+	// REAL SELL, VERIFIED (2026-09-23: the posted SellClick at the old 45-px Act 1
+	// grid never landed — "it has an issue clearing the inventory"). The cell comes
+	// from the MEASURED inventory grid (10x8 on this mod), the click is a real
+	// Ctrl+click, and the result must be EXACTLY this item gone. Any other item
+	// leaving the bag stops fencing on the spot.
+	var targetUnit data.UnitID
+	before := map[data.UnitID]bool{}
+	for _, inv := range ctx.GR.GetData().Inventory.ByLocation(item.LocationInventory) {
+		before[inv.UnitID] = true
+		if inv.Position.X == it.GX && inv.Position.Y == it.GY {
+			targetUnit = inv.UnitID
+		}
+	}
+	if targetUnit == 0 {
+		ctx.Led.Append(verbs.Outcome{Verb: "fence", Holder: fc.Name(), Result: verbs.ResRefused,
+			Evidence: fmt.Sprintf("junk cell (%d,%d) no longer holds an item — resync", it.GX, it.GY)})
+		time.Sleep(300 * time.Millisecond)
+		return Running
+	}
+	gold0 := ctx.GR.GetData().PlayerUnit.TotalPlayerGold()
+	cx, cy := invCellPx(ctx, it.GX, it.GY)
+	ctx.M.RealMenuCtrlClick(cx, cy)
+	var gone []data.UnitID
+	for i := 0; i < 10; i++ {
+		time.Sleep(100 * time.Millisecond)
+		now := map[data.UnitID]bool{}
+		for _, inv := range ctx.GR.GetData().Inventory.ByLocation(item.LocationInventory) {
+			now[inv.UnitID] = true
+		}
+		gone = gone[:0]
+		for u := range before {
+			if !now[u] {
+				gone = append(gone, u)
+			}
+		}
+		if len(gone) > 0 {
+			break
+		}
+	}
+	gold1 := ctx.GR.GetData().PlayerUnit.TotalPlayerGold()
+	switch {
+	case len(gone) == 1 && gone[0] == targetUnit:
+		ctx.Led.Append(verbs.Outcome{Verb: "fence", Holder: fc.Name(), Result: verbs.ResDone,
+			Evidence: fmt.Sprintf("sold cell (%d,%d) px(%d,%d) gold %d→%d", it.GX, it.GY, cx, cy, gold0, gold1)})
+	case len(gone) > 0:
+		ctx.Led.Append(verbs.Outcome{Verb: "fence", Holder: fc.Name(), Result: verbs.ResDeaf,
+			Evidence: fmt.Sprintf("WRONG ITEM LEFT THE BAG (wanted unit %d at (%d,%d), gone=%v) — fencing halted", targetUnit, it.GX, it.GY, gone)})
+		closeShop(ctx)
+		fc.e.reset()
+		fc.sold, fc.tomes0 = 0, -1
+		fc.coolAt = time.Now().Add(30 * time.Minute)
+		return Abandoned
+	default:
+		ctx.Led.Append(verbs.Outcome{Verb: "fence", Holder: fc.Name(), Result: verbs.ResWhiff,
+			Evidence: fmt.Sprintf("sell click did nothing: cell (%d,%d) px(%d,%d) gold %d→%d", it.GX, it.GY, cx, cy, gold0, gold1)})
+	}
 	fc.sold++
 	if fc.sold > 40 { // runaway guard
 		closeShop(ctx)

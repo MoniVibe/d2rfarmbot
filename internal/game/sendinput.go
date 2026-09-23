@@ -185,3 +185,15 @@ func SendClickReal(screenX, screenY, virtualLeft, virtualTop, virtualW, virtualH
 	sendInputs([]hwInput{down})
 	sendInputs([]hwInput{up})
 }
+
+// SendCtrlClickRealScreen: OS-level Ctrl+left-click — the vendor quick-sell
+// gesture (2026-09-23: the posted SellClick never landed on this build; trade
+// panels honor only real input). Ctrl is released even on the way out.
+func SendCtrlClickRealScreen(screenX, screenY int) {
+	const vkControl = 0x11
+	sendInputs([]hwInput{{inputType: inputKeyboard, a: uint32(vkControl), b: 0}})
+	defer sendInputs([]hwInput{{inputType: inputKeyboard, a: uint32(vkControl), b: keyeventfKeyUp}})
+	time.Sleep(60 * time.Millisecond)
+	SendClickRealScreen(screenX, screenY)
+	time.Sleep(60 * time.Millisecond)
+}

@@ -269,6 +269,7 @@ func main() {
 		logger.Warn("no aim calibration — world aims use raw koolo constants; run build/aimcal.exe", "file", *aimCalPath)
 	}
 	logger.Info("world scale", "scale", ws, "client", client, "dpi", *dpiScale)
+	logger.Info("navigation mode", "deliberate", os.Getenv("AZBOT_DELIBERATE") == "1")
 	gi, err := game.InjectorInit(logger, pid)
 	if err != nil {
 		logger.Error("injector init failed", "err", err)
@@ -1795,7 +1796,9 @@ func main() {
 	// ---- THE EXECUTIVE: one arbiter, one activity per cycle, honest grants ----
 	led := verbs.NewLedger(2048)
 	led.Sink = func(o verbs.Outcome) {
-		if o.Result != verbs.ResDone { // done outcomes are the quiet normal; exceptions speak
+		// done outcomes are the quiet normal; exceptions speak — except the route
+		// owner's decisions, which are the story of WHERE she is going and why.
+		if o.Result != verbs.ResDone || o.Verb == "intent" || o.Verb == "escalate" {
 			logger.Info("outcome", "verb", o.Verb, "holder", o.Holder, "tgt", o.Target, "result", o.Result.String(), "ev", o.Evidence)
 		}
 	}
