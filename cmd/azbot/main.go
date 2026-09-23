@@ -180,7 +180,7 @@ func vkOf(name string) int {
 func main() {
 	seconds := flag.Int("seconds", 3600, "run duration in seconds")
 	dpiScale := flag.Float64("dpiscale", 1.25, "display scale (this laptop: 1.25)")
-	fakeFocus := flag.Bool("fakefocus", true, "background play: post WM_ACTIVATE-family messages so D2R keeps its hover oracle alive while another window has the foreground (never takes focus, never clips the cursor)")
+	fakeFocus := flag.Bool("fakefocus", false, "background play: post WM_ACTIVATE-family messages so D2R keeps its hover oracle alive while another window has the foreground (never takes focus, never clips the cursor)")
 	worldScaleF := flag.Float64("worldscale", 0, "world-aim scale override (logical client px -> world cursor px). 0 = the display scale; the per-client projection correction comes from -aimcal instead")
 	aimCalPath := flag.String("aimcal", "logs/aimcal.json", "measured world-projection calibration from build/aimcal.exe (applied when its client size matches)")
 	moveKey := flag.String("move", "e", "Force Move key (D2R Options>Controls binding)")
@@ -199,6 +199,7 @@ func main() {
 	portalTest := flag.Bool("portaltest", false, "manual harness: find the nearest portal in the snapshot, approach if far, click through with the EnterPortal verb, report every state change, exit")
 	charsiTest := flag.Bool("charsitest", false, "manual harness: walk to Charsi, open TRADE (menu byte + Down/Enter), screenshot the shop for repair-button calibration; with -repairxy also click it and report the gold delta, exit")
 	repairXY := flag.String("repairxy", "", "client x,y of the repair button (measured from logs/charsi_shop.png)")
+	selfTest := flag.Bool("selftest", false, "PREFLIGHT (in town, D2R focused, hands off): prove belt reads, NPC aim, and the full trade chain by buying ONE healing potion; prints PASS/FAIL per primitive and exits")
 	akaraTest := flag.Bool("akaratest", false, "manual harness: find Akara, open TRADE, dump belt self-model + her readable stock (LocationVendor), screenshot for slot calibration; with -buy also execute the restock plan (1 row mana, rest HP) and report gold/belt deltas, exit")
 	buyPots := flag.Bool("buy", false, "akaratest: execute the potion purchases (needs gold)")
 	gambleBuy := flag.String("gamblebuy", "", "gamble-buy the item at client pixel 'x,y' and read the rolled result the same frame (gold delta + full affix dump)")
@@ -310,11 +311,12 @@ func main() {
 		// through the patience, one focused ESC: if a standing menu is the
 		// blocker, this clears it; if not, the pause it raises is cleared by
 		// the second press two cycles later.
-		if i == 12 || i == 18 {
-			hid.FocusGame()
-			time.Sleep(150 * time.Millisecond)
-			game.SendKeyReal(0x1B)
-			logger.Info("attach: gate failing — pre-attach medic pressed ESC", "try", i)
+		// RETIRED 2026-09-23: on a DEATH SCREEN the gate also fails, and ESC there
+		// means "continue" — it respawned Fableboi in town and left his corpse in
+		// the field; the second press then opened the pause menu. A blind ESC is
+		// not a medic. The gate now fails loudly and the operator looks (shot.exe).
+		if i == 12 {
+			logger.Warn("attach: gate failing — NOT pressing anything; check the screen (death screen? menu?)", "try", i)
 		}
 		time.Sleep(500 * time.Millisecond)
 	}
@@ -801,6 +803,29 @@ func main() {
 			g = v.Value
 		}
 		logger.Info("invdump: gold", "gold", g, "beltName", string(d.Inventory.Belt.Name), "beltItems", len(d.Inventory.Belt.Items))
+		close(stop)
+		return
+	}
+
+	if *selfTest {
+		led := verbs.NewLedger(64)
+		led.Sink = func(o verbs.Outcome) {
+			logger.Info("outcome", "verb", o.Verb, "holder", o.Holder, "result", o.Result.String(), "ev", o.Evidence)
+		}
+		g, _, _ := gr.BuildLiveGridRooms()
+		ctx := &activity.Ctx{M: m, GR: gr, P: p, Led: led, Grid: g, Mem: mem,
+			InvKey: hid.GetASCIICode(*invKeyF), SwapKey: hid.GetASCIICode(*swapKey)}
+		res := activity.SelfTest(ctx, p.Capture)
+		fails := 0
+		fmt.Println("==== azbot preflight self-test ====")
+		for _, r := range res {
+			fmt.Println(r.String())
+			logger.Info("selftest", "result", r.String())
+			if !r.Pass {
+				fails++
+			}
+		}
+		fmt.Printf("==== %d/%d passed ====\n", len(res)-fails, len(res))
 		close(stop)
 		return
 	}

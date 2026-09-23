@@ -35,6 +35,11 @@ const (
 
 // errand is the shared NPC-service state machine. One bounded slice per Step.
 type errand struct {
+	// tradeSelected: vendor stock LINGERS in memory after the trade window closes
+	// (2026-09-23: buys fired into Drognan's Talk/Trade menu because stock still
+	// read). Stock is trusted as "shop open" ONLY after Trade was selected on THIS
+	// trip; a buy click that does nothing or a reset clears it.
+	tradeSelected bool
 	npcID   npc.ID
 	act1NPC npc.ID          // captured from the constructor on first use
 	act2NPC npc.ID          // service counterpart in Lut Gholein; zero means no alternate
@@ -61,6 +66,7 @@ type errand struct {
 
 func (e *errand) reset() {
 	e.phase, e.ringIdx, e.tries, e.menuTry, e.blocked, e.hoverFails = 0, 0, 0, 0, 0, 0
+	e.tradeSelected = false
 	e.startedAt = time.Time{}
 	e.j = nil
 }
@@ -142,7 +148,7 @@ func (e *errand) step(ctx *Ctx, who string) (shopOpen bool, dead bool) {
 	// oracle the Lexicon already trusts: if it reads, we are trading. Jump
 	// straight to act, and NEVER re-click an open shop closed. Trade errands
 	// only — Heal wants the heal-dialog, not the merchant's shelves.
-	if e.trade && len(d.Inventory.ByLocation(item.LocationVendor)) > 0 {
+	if e.trade && e.tradeSelected && len(d.Inventory.ByLocation(item.LocationVendor)) > 0 {
 		e.phase = 4
 		return true, false
 	}
@@ -330,13 +336,16 @@ func (e *errand) step(ctx *Ctx, who string) (shopOpen bool, dead bool) {
 			return false, false
 		}
 		ctx.M.MoveStop()
-		ctx.M.MenuKey(0x24) // HOME
+		// MENUS DEMAND TRUE FOREGROUND (2026-09-23 photo: Drognan's Talk/Trade/Cancel
+		// menu stood open while posted Home/Down/Enter did nothing). Real scancodes
+		// with the game foregrounded — the same law the shop clicks obey.
+		ctx.M.RealKey(0x24) // HOME
 		downs := []int{1, 2, 0, 3}[e.menuTry%4]
 		for i := 0; i < downs; i++ {
-			ctx.M.MenuKey(0x28) // DOWN
+			ctx.M.RealKey(0x28) // DOWN
 		}
-		ctx.M.KeyLane().Press(0x0D) // ENTER
-		time.Sleep(1200 * time.Millisecond)
+		ctx.M.RealKey(0x0D) // ENTER
+		e.tradeSelected = true // a Trade selection was actually made
 		e.phase = 4
 	case 4:
 		if len(ctx.GR.GetData().Inventory.ByLocation(item.LocationVendor)) > 0 {
@@ -731,7 +740,12 @@ func (r *Restock) Step(ctx *Ctx) Verdict {
 				potionCoolUntil = time.Now().Add(30 * time.Minute)
 				r.potFails = 99
 			default:
+				// The click did nothing: the shop is NOT open, whatever lingering
+				// stock says. Talk again and select Trade for real.
 				r.potFails++
+				r.e.tradeSelected = false
+				r.e.phase = 2
+				return Running
 			}
 			if r.potFails >= 3 {
 				if time.Now().After(potionCoolUntil) {

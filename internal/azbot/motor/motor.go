@@ -330,6 +330,24 @@ func (m *Motor) RealMenuClick(shotX, shotY int) bool {
 	return true
 }
 
+// RealMenuRightClick is RealMenuClick with the right button — vendor stock says
+// "Right Click to Buy" (2026-09-23: the only purchase path proven on the MSI;
+// panels ignore posted clicks and memory never reports panel hovers).
+func (m *Motor) RealMenuRightClick(shotX, shotY int) bool {
+	if !m.Engage.Engaged() {
+		return false
+	}
+	m.hid.FocusGame()
+	if !m.hid.GameFocused() {
+		return false
+	}
+	time.Sleep(250 * time.Millisecond)
+	sx := int(float64(shotX)/m.panelScale) + m.hid.WindowLeftX()
+	sy := int(float64(shotY)/m.panelScale) + m.hid.WindowTopY()
+	game.SendRightClickRealScreen(sx, sy)
+	return true
+}
+
 // RealEsc presses ESC at the OS level with the game foregrounded (pause menu open/close).
 // RealEsc returns false when the game could not be foregrounded — Windows
 // refuses foreground-steal while the OWNER actively uses another window, and

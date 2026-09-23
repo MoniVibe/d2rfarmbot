@@ -62,6 +62,14 @@ func main() {
 		out = os.Args[1]
 	}
 	logger := slog.New(slog.NewTextHandler(os.Stderr, nil))
+	// Capture at the REAL display scale (the package default 1.5 produced 2304-wide
+	// images with black borders on the 125% MSI — pixel coords read off them were
+	// in the wrong space). Override: D2R_DPI env var.
+	dpi := 1.25
+	if v := os.Getenv("D2R_DPI"); v != "" {
+		fmt.Sscanf(v, "%g", &dpi)
+	}
+	game.SetPhysicalScale(dpi)
 	if err := config.Load(); err != nil {
 		fmt.Println("config load failed:", err)
 		os.Exit(1)

@@ -141,6 +141,21 @@ func SendKeyRealScan(vk uint16) {
 // aquarium is a single-screen laptop, so the virtual desktop IS the screen. Takes the
 // same LOGICAL screen coords as SetCursorPos (WindowLeft + client), keeping units
 // consistent with the non-DPI-aware process.
+// SendRightClickRealScreen: SendClickRealScreen with the RIGHT button (vendor buys:
+// "Right Click to Buy" — the left click picks up / instant-buys the wrong thing).
+func SendRightClickRealScreen(screenX, screenY int) {
+	cx, _, _ := procGetSystemMetrics.Call(0)
+	cy, _, _ := procGetSystemMetrics.Call(1)
+	if cx == 0 || cy == 0 {
+		return
+	}
+	nx := uint32(float64(screenX) * 65535.0 / float64(cx))
+	ny := uint32(float64(screenY) * 65535.0 / float64(cy))
+	sendInputs([]hwInput{{inputType: inputMouse, a: nx, b: ny, d: mouseeventfMove | mouseeventfAbsolute | mouseeventfVirtualDesk}})
+	sendInputs([]hwInput{{inputType: inputMouse, a: nx, b: ny, d: 0x0008 | mouseeventfAbsolute | mouseeventfVirtualDesk}})
+	sendInputs([]hwInput{{inputType: inputMouse, a: nx, b: ny, d: 0x0010 | mouseeventfAbsolute | mouseeventfVirtualDesk}})
+}
+
 func SendClickRealScreen(screenX, screenY int) {
 	cx, _, _ := procGetSystemMetrics.Call(0) // SM_CXSCREEN
 	cy, _, _ := procGetSystemMetrics.Call(1) // SM_CYSCREEN

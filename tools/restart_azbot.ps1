@@ -1,7 +1,14 @@
 # Restart azbot on a freshly built binary: stop, heal D2R input, swap, relaunch.
 # Usage: pwsh tools\restart_azbot.ps1 -Tag f [-Seconds 7200] [-Goal campaign]
-param([Parameter(Mandatory)][string]$Tag, [int]$Seconds = 7200, [string]$Goal = "campaign")
+param([Parameter(Mandatory)][string]$Tag, [int]$Seconds = 7200, [string]$Goal = "campaign", [switch]$Force)
 Set-Location (Split-Path $PSScriptRoot -Parent)
+# NEVER stop the bot outside town (2026-09-23: a restart mid-fight left Fableboi
+# standing undriven in a pack; he died). -Force only when the owner says so.
+$where = .\build\look.exe -r 0 -n 0 2>$null | Select-Object -First 1
+if (-not $Force -and (Get-Process azbot -ErrorAction SilentlyContinue) -and ($where -notmatch "town=true")) {
+  "REFUSED: character is not in town ($where). Wait for a town visit or pass -Force."
+  exit 1
+}
 Get-Process azbot -ErrorAction SilentlyContinue | Stop-Process -Force
 Start-Sleep -Milliseconds 500
 .\farmbot.exe -fixinput 2>&1 | Select-String 'fixinput: done' | ForEach-Object { 'input healed' }
