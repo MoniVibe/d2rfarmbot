@@ -1430,6 +1430,23 @@ func (f *Fight) Step(ctx *Ctx) Verdict {
 			break
 		}
 	}
+	// MELEE ENGAGEMENT LAW (live 2026-09-23: the barbarian, a dozen jackals within
+	// 5 tiles, walked toward a straggler while the crowd chewed him — the owner:
+	// "it tries going for further ones with no success while taking hits"). A melee
+	// fighter with teeth in reach fights what is IN reach: a far target is dropped.
+	melee := s.Me.WeaponKind != "bow"
+	engaged := false
+	if melee {
+		for _, e := range s.Enemies {
+			if !e.Walled && chebyshev(s.Me.Pos, e.Pos) <= 3 {
+				engaged = true
+				break
+			}
+		}
+		if engaged && alive && chebyshev(s.Me.Pos, f.targetPos) > 3 {
+			alive = false
+		}
+	}
 	if !alive || f.target == 0 {
 		f.target, f.j, f.noEvid = 0, nil, 0
 		f.volleys, f.aimDX, f.aimDY = 0, 0, 0
@@ -1474,16 +1491,22 @@ func (f *Fight) Step(ctx *Ctx) Verdict {
 				continue
 			}
 			d := chebyshev(s.Me.Pos, e.Pos)
-			if d > radius {
+			if d > radius || (engaged && d > 3) {
 				continue
 			}
-			pack := 0
-			for _, o := range s.Enemies {
-				if chebyshev(e.Pos, o.Pos) <= 8 {
-					pack++
+			// The pack penalty is BOW doctrine (don't charge the center of a
+			// 20-stack from range). In melee the center of the stack is exactly
+			// who is hitting you — nearest first.
+			sc := d
+			if !melee {
+				pack := 0
+				for _, o := range s.Enemies {
+					if chebyshev(e.Pos, o.Pos) <= 8 {
+						pack++
+					}
 				}
+				sc += 3 * pack
 			}
-			sc := d + 3*pack
 			if raisers[e.NPC] {
 				// P-1.15 THE RAISER DIES FIRST (the owner: "we don't want her
 				// killing the same fallen again and again"): a raising family
@@ -1758,7 +1781,16 @@ func (f *Fight) Step(ctx *Ctx) Verdict {
 			f.strike(ctx, f.target, f.targetPos, mk)
 			return Running
 		}
-		o := verbs.HoverStrike{Target: f.target, TargetPos: f.targetPos, SelectKey: mk, Volley: true}.
+		var accept map[data.UnitID]bool
+		if s.Me.WeaponKind != "bow" { // melee: any live, sighted hostile in reach is as good
+			accept = map[data.UnitID]bool{}
+			for _, e := range s.Enemies {
+				if !e.Walled && chebyshev(s.Me.Pos, e.Pos) <= 4 {
+					accept[e.ID] = true
+				}
+			}
+		}
+		o := verbs.HoverStrike{Target: f.target, TargetPos: f.targetPos, SelectKey: mk, Volley: true, Accept: accept}.
 			Do(ctx.M, ctx.GR, ctx.P, ctx.Led, f.Name())
 		if o.Result == verbs.ResWhiff {
 			f.hoverWhiffRun++
@@ -1994,8 +2026,18 @@ func (l *Loot) pick(s *percept.Snapshot) (percept.ItemRef, float64, bool) {
 		if guards >= 3 {
 			continue
 		}
-		if w > bestScore {
-			best, bestScore = it, w
+		// DECISIVENESS (live 2026-09-23, Rocky Waste: 122 drops on the floor, every
+		// unique scored an identical 0.85, the tie fell to snapshot iteration order,
+		// the target flipped each tick and every flip re-planned the journey — the
+		// orbit detector caught 161 tiles walked for 7 net). Ties now break NEAREST
+		// first, and the current target keeps a stickiness bonus so a new equal
+		// candidate never steals it mid-walk.
+		sc := w - float64(chebyshev(s.Me.Pos, it.Pos))*0.001
+		if it.ID == l.target {
+			sc += 0.05
+		}
+		if sc > bestScore {
+			best, bestScore = it, sc
 		}
 	}
 	return best, bestScore, bestScore > 0
@@ -2030,9 +2072,10 @@ func (l *Loot) Step(ctx *Ctx) Verdict {
 	}
 	it, _, ok := l.pick(s)
 	if !ok {
-		l.j = nil
+		l.j, l.target = nil, 0
 		return Done
 	}
+	l.target = it.ID
 	d := chebyshev(s.Me.Pos, it.Pos)
 	if d > 3 {
 		// JOURNEY, not a blind stride: an item inside a house reads as "5 tiles away"

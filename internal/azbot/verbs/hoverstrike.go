@@ -45,6 +45,11 @@ type HoverStrike struct {
 	// SkipSelect: the caller proved this SelectKey is already the live selection
 	// (same key, moments ago) — save the press + 50ms settle.
 	SkipSelect bool
+	// Accept: other hostile unit IDs that are just as good to hit (melee in a
+	// crowd). A probe that hovers ANY of them confirms — live 2026-09-23 the
+	// sweep kept landing on the jackal next to the target and threw the swing
+	// away. Nil = target only (bows, where the aimed unit matters).
+	Accept map[data.UnitID]bool
 }
 
 func (h HoverStrike) Do(m *motor.Motor, gr *game.MemoryReader, p *percept.Perceptor, led *Ledger, holder string) Outcome {
@@ -108,17 +113,35 @@ func (h HoverStrike) Do(m *motor.Motor, gr *game.MemoryReader, p *percept.Percep
 		hidAim(m, cx, cy)
 		time.Sleep(30 * time.Millisecond)
 		hd := gr.GetData().HoverData
-		if !(hd.IsHovered && hd.UnitID == h.Target) {
+		ok := func() bool {
+			return hd.IsHovered && (hd.UnitID == h.Target || (hd.UnitType == 1 && h.Accept[hd.UnitID]))
+		}
+		if !ok() {
 			time.Sleep(25 * time.Millisecond) // one more fresh frame at THIS offset
 			hd = gr.GetData().HoverData
 		}
-		if hd.IsHovered && hd.UnitID == h.Target {
+		if ok() {
+			if hd.UnitID != h.Target {
+				o.Target = fmt.Sprintf("unit=%d (accepted; aimed %d)", hd.UnitID, h.Target)
+			}
 			confirmed, px, py = true, cx, cy
 			o.AimDX, o.AimDY = pr[0], pr[1]
 			break
 		}
 		if hd.IsHovered {
 			seen = append(seen, fmt.Sprintf("%d/t%d", hd.UnitID, hd.UnitType))
+			// AIM CALIBRATION SAMPLE: a probe that hovered ANY monster pairs a
+			// cursor pixel with a known tile offset — the data that fits the
+			// world projection (scale + screen origin) for THIS client.
+			if hd.UnitType == 1 {
+				for _, mon := range d.Monsters {
+					if mon.UnitID == hd.UnitID {
+						led.Append(Outcome{Verb: "aimcal", Holder: holder, Result: ResDone,
+							Evidence: fmt.Sprintf("px=%d py=%d dtx=%d dty=%d", cx, cy, mon.Position.X-me.X, mon.Position.Y-me.Y)})
+						break
+					}
+				}
+			}
 		} else {
 			seen = append(seen, "-")
 		}

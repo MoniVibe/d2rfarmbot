@@ -133,9 +133,34 @@ func SetWorldScale(s float64) {
 // window. Clamping is load-bearing: a far target's carrot can scale past the physical window
 // edge (e.g. logical 1540 * 1.25 = 1925 > 1920), and the game DISCARDS an out-of-window cursor —
 // force-move then does nothing at all (measured: 20s of walkToHold with zero net movement).
+// AimCal corrects every caller's koolo projection (19.8/9.9 px per tile about the
+// client center) to what THIS client measurably draws: tile scale KX/KY and a
+// screen-origin offset OX/OY, all in LOGICAL client px. Measured by cmd/aimcal —
+// on the 1080p MSI the tiles are ~11% larger and the player sits 27.5px ABOVE
+// center, which is why every aim landed on ground below the monster.
+type AimCal struct {
+	Client string  `json:"client"` // "WxH" logical the numbers were measured on
+	KX     float64 `json:"kx"`
+	KY     float64 `json:"ky"`
+	OX     float64 `json:"ox"`
+	OY     float64 `json:"oy"`
+}
+
+var aimCal = AimCal{KX: 1, KY: 1}
+
+// SetAimCalibration installs a measured projection correction.
+func SetAimCalibration(c AimCal) {
+	if c.KX > 0 && c.KY > 0 {
+		aimCal = c
+	}
+}
+
 func worldAimClient(gr *MemoryReader, x, y int) (int, int) {
-	wx := float64(x) * worldScale
-	wy := float64(y) * worldScale
+	cx, cy := float64(gr.GameAreaSizeX)/2, float64(gr.GameAreaSizeY)/2
+	lx := (float64(x)-cx)*aimCal.KX + cx + aimCal.OX
+	ly := (float64(y)-cy)*aimCal.KY + cy + aimCal.OY
+	wx := lx * worldScale
+	wy := ly * worldScale
 	maxX := float64(gr.GameAreaSizeX)*worldScale - 8
 	maxY := float64(gr.GameAreaSizeY)*worldScale - 8
 	wx = math.Min(math.Max(wx, 8), maxX)

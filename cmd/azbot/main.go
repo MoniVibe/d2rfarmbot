@@ -181,7 +181,8 @@ func main() {
 	seconds := flag.Int("seconds", 3600, "run duration in seconds")
 	dpiScale := flag.Float64("dpiscale", 1.25, "display scale (this laptop: 1.25)")
 	fakeFocus := flag.Bool("fakefocus", true, "background play: post WM_ACTIVATE-family messages so D2R keeps its hover oracle alive while another window has the foreground (never takes focus, never clips the cursor)")
-	worldScaleF := flag.Float64("worldscale", 0, "world-aim scale (logical client px -> world cursor px). 0 = AUTO: physical client height / 720 — the 19.8/9.9 tile constants are koolo's 1280x720 numbers. dpiscale only matched by luck on the old 900p laptop.")
+	worldScaleF := flag.Float64("worldscale", 0, "world-aim scale override (logical client px -> world cursor px). 0 = the display scale; the per-client projection correction comes from -aimcal instead")
+	aimCalPath := flag.String("aimcal", "logs/aimcal.json", "measured world-projection calibration from build/aimcal.exe (applied when its client size matches)")
 	moveKey := flag.String("move", "e", "Force Move key (D2R Options>Controls binding)")
 	swapKey := flag.String("swap", "w", "weapon-swap key (the bowzon dance: bow at range, javelin at contact)")
 	killKey := flag.String("killswitch", "f10", "hotkey to toggle bot control (f9|f10|f11|pause|scrolllock — NOT f12, Windows reserves it for debuggers). Disengage heals all input patches — the human owns Diablo instantly.")
@@ -251,10 +252,22 @@ func main() {
 	motor.FakeFocus = *fakeFocus
 	ws := *worldScaleF
 	if ws <= 0 {
-		ws = float64(gr.GameAreaSizeY) * (*dpiScale) / 720
+		ws = *dpiScale
 	}
 	game.SetWorldScale(ws)
-	logger.Info("world scale", "scale", ws, "client", fmt.Sprintf("%dx%d", gr.GameAreaSizeX, gr.GameAreaSizeY), "dpi", *dpiScale)
+	client := fmt.Sprintf("%dx%d", gr.GameAreaSizeX, gr.GameAreaSizeY)
+	if buf, err := os.ReadFile(*aimCalPath); err == nil {
+		var cal game.AimCal
+		if json.Unmarshal(buf, &cal) == nil && cal.Client == client {
+			game.SetAimCalibration(cal)
+			logger.Info("aim calibration loaded", "kx", cal.KX, "ky", cal.KY, "ox", cal.OX, "oy", cal.OY)
+		} else {
+			logger.Warn("aim calibration IGNORED — measured on a different client size; run build/aimcal.exe", "file", *aimCalPath, "client", client, "cal", cal.Client)
+		}
+	} else {
+		logger.Warn("no aim calibration — world aims use raw koolo constants; run build/aimcal.exe", "file", *aimCalPath)
+	}
+	logger.Info("world scale", "scale", ws, "client", client, "dpi", *dpiScale)
 	gi, err := game.InjectorInit(logger, pid)
 	if err != nil {
 		logger.Error("injector init failed", "err", err)
