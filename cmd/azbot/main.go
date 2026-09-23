@@ -180,6 +180,7 @@ func vkOf(name string) int {
 func main() {
 	seconds := flag.Int("seconds", 3600, "run duration in seconds")
 	dpiScale := flag.Float64("dpiscale", 1.25, "display scale (this laptop: 1.25)")
+	worldScaleF := flag.Float64("worldscale", 0, "world-aim scale (logical client px -> world cursor px). 0 = AUTO: physical client height / 720 — the 19.8/9.9 tile constants are koolo's 1280x720 numbers. dpiscale only matched by luck on the old 900p laptop.")
 	moveKey := flag.String("move", "e", "Force Move key (D2R Options>Controls binding)")
 	swapKey := flag.String("swap", "w", "weapon-swap key (the bowzon dance: bow at range, javelin at contact)")
 	killKey := flag.String("killswitch", "f10", "hotkey to toggle bot control (f9|f10|f11|pause|scrolllock — NOT f12, Windows reserves it for debuggers). Disengage heals all input patches — the human owns Diablo instantly.")
@@ -233,7 +234,6 @@ func main() {
 	}
 	cfg := config.Characters["Main"]
 	game.SetPhysicalScale(*dpiScale)
-	game.SetWorldScale(*dpiScale)
 
 	pid := findD2RPID()
 	if pid == 0 {
@@ -247,6 +247,12 @@ func main() {
 		logger.Error("game reader failed", "err", err)
 		return
 	}
+	ws := *worldScaleF
+	if ws <= 0 {
+		ws = float64(gr.GameAreaSizeY) * (*dpiScale) / 720
+	}
+	game.SetWorldScale(ws)
+	logger.Info("world scale", "scale", ws, "client", fmt.Sprintf("%dx%d", gr.GameAreaSizeX, gr.GameAreaSizeY), "dpi", *dpiScale)
 	gi, err := game.InjectorInit(logger, pid)
 	if err != nil {
 		logger.Error("injector init failed", "err", err)
@@ -1739,7 +1745,7 @@ func main() {
 	led := verbs.NewLedger(2048)
 	led.Sink = func(o verbs.Outcome) {
 		if o.Result != verbs.ResDone { // done outcomes are the quiet normal; exceptions speak
-			logger.Info("outcome", "verb", o.Verb, "holder", o.Holder, "result", o.Result.String(), "ev", o.Evidence)
+			logger.Info("outcome", "verb", o.Verb, "holder", o.Holder, "tgt", o.Target, "result", o.Result.String(), "ev", o.Evidence)
 		}
 	}
 	// WARNING 6 (the 12:00 and 12:12 lessons): a swap can inherit ANY panel —

@@ -1237,6 +1237,12 @@ func (a *Advance) search(ctx *Ctx, d game.Data, me data.Position) {
 		Do(ctx.M, ctx.GR, ctx.P, ctx.Led, a.Name())
 	if res.Result != verbs.ResDone {
 		a.heading++ // walled: one 45° turn, then hold the new line
+		// An UNREACHABLE box is never walked, so its visit count stays 0 — the
+		// least-visited chooser then picked the same walled bearing every tick,
+		// undoing the turn (live 2026-09-23, Rocky Waste: 19s pinned against a
+		// ridge, stride to the same target 35 tiles south, gain=0 each time).
+		// Charge the failed probe as visits so the wall stops looking unexplored.
+		av[[2]int{(me.X + o.X) / 20, (me.Y + o.Y) / 20}] += 3
 	}
 }
 

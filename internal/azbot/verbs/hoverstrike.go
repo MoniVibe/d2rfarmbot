@@ -96,6 +96,9 @@ func (h HoverStrike) Do(m *motor.Motor, gr *game.MemoryReader, p *percept.Percep
 		}
 	}
 	inBounds := 0
+	// What the cursor DID hover while hunting — a whiff's diagnosis: another unit
+	// (wrong target / projection) vs nothing (aim off the sprite entirely).
+	var seen []string
 	for _, pr := range probes {
 		cx, cy := bx+pr[0], by+pr[1]
 		if cx < 20 || cy < 20 || cx > gr.GameAreaSizeX-20 || cy > gr.GameAreaSizeY-20 {
@@ -114,6 +117,11 @@ func (h HoverStrike) Do(m *motor.Motor, gr *game.MemoryReader, p *percept.Percep
 			o.AimDX, o.AimDY = pr[0], pr[1]
 			break
 		}
+		if hd.IsHovered {
+			seen = append(seen, fmt.Sprintf("%d/t%d", hd.UnitID, hd.UnitType))
+		} else {
+			seen = append(seen, "-")
+		}
 	}
 	if !confirmed {
 		o.Result = ResWhiff
@@ -125,7 +133,8 @@ func (h HoverStrike) Do(m *motor.Motor, gr *game.MemoryReader, p *percept.Percep
 			// finally says so.
 			o.Evidence = "target projection off-screen — no probe possible"
 		} else {
-			o.Evidence = "no hover confirmation on target"
+			o.Evidence = fmt.Sprintf("no hover confirmation on target (aim=%d,%d dTile=%d,%d seen=%v)",
+				bx, by, h.TargetPos.X-me.X, h.TargetPos.Y-me.Y, seen)
 		}
 		time.Sleep(120 * time.Millisecond) // a whiff must never be free (the 16/s storm)
 		led.Append(o)
