@@ -3,10 +3,13 @@
 param([Parameter(Mandatory)][string]$Tag, [int]$Seconds = 7200, [string]$Goal = "campaign", [switch]$Force)
 Set-Location (Split-Path $PSScriptRoot -Parent)
 # NEVER stop the bot outside town (2026-09-23: a restart mid-fight left Fableboi
-# standing undriven in a pack; he died). -Force only when the owner says so.
-$where = .\build\look.exe -r 0 -n 0 2>$null | Select-Object -First 1
-if (-not $Force -and (Get-Process azbot -ErrorAction SilentlyContinue) -and ($where -notmatch "town=true")) {
-  "REFUSED: character is not in town ($where). Wait for a town visit or pass -Force."
+# standing undriven in a pack; he died). Allowed: in town, or NO living monster within
+# 40 tiles (a restart takes ~15s). -Force only when the owner says so.
+$look = .\build\look.exe -r 0 -n 0 2>$null
+$where = $look | Select-Object -First 1
+$quiet = ($look -join "`n") -match "monsters within 40: 0 alive"
+if (-not $Force -and (Get-Process azbot -ErrorAction SilentlyContinue) -and ($where -notmatch "town=true") -and -not $quiet) {
+  "REFUSED: not in town and monsters are near ($where). Wait for town / a quiet field, or pass -Force."
   exit 1
 }
 Get-Process azbot -ErrorAction SilentlyContinue | Stop-Process -Force

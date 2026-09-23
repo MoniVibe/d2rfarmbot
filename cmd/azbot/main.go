@@ -180,7 +180,7 @@ func vkOf(name string) int {
 func main() {
 	seconds := flag.Int("seconds", 3600, "run duration in seconds")
 	dpiScale := flag.Float64("dpiscale", 1.25, "display scale (this laptop: 1.25)")
-	fakeFocus := flag.Bool("fakefocus", false, "background play: post WM_ACTIVATE-family messages so D2R keeps its hover oracle alive while another window has the foreground (never takes focus, never clips the cursor)")
+	fakeFocus := flag.Bool("fakefocus", true, "background play: post WM_ACTIVATE-family messages so D2R keeps its hover oracle alive while another window has the foreground (never takes focus, never clips the cursor)")
 	worldScaleF := flag.Float64("worldscale", 0, "world-aim scale override (logical client px -> world cursor px). 0 = the display scale; the per-client projection correction comes from -aimcal instead")
 	aimCalPath := flag.String("aimcal", "logs/aimcal.json", "measured world-projection calibration from build/aimcal.exe (applied when its client size matches)")
 	moveKey := flag.String("move", "e", "Force Move key (D2R Options>Controls binding)")

@@ -2008,6 +2008,11 @@ func (l *Loot) Name() string { return "loot" }
 // potions and gold always matter a little. SPACE GATES THE WANT: a full bag turns
 // every gear pickup into a 3-fail ban cycle (the owner watched it) — gold always
 // fits, potions ride the belt, gear needs real cells.
+// LootPotions gates bottle pickup (2026-09-23: OFF — with D2R behind another window
+// item hover is dead (25/25 probes hovered nothing at d=3), every pickup whiffed and
+// looting ate the run. Re-enable when pickup works unfocused.)
+var LootPotions = false
+
 func (l *Loot) wanted(s *percept.Snapshot, it percept.ItemRef) float64 {
 	// STRICTLY UNIQUES, NOTHING ELSE (the owner, 04:0x night 2: "id prefer it
 	// strictly picked uniques, and nothing else" — tightening 13:08's
@@ -2022,7 +2027,7 @@ func (l *Loot) wanted(s *percept.Snapshot, it percept.ItemRef) float64 {
 	// red and blue bottles within 4 tiles, belt at 3/8, and uniques-only walked
 	// past every one). A bottle rides the belt, never the bag — wanted only while
 	// the belt has a free slot. Scored under uniques so a unique still wins.
-	if s.Me.BeltUsed < s.Me.BeltSlots {
+	if LootPotions && s.Me.BeltUsed < s.Me.BeltSlots {
 		switch it.Potion {
 		case "health":
 			return 0.8
@@ -2130,7 +2135,7 @@ func (l *Loot) Step(ctx *Ctx) Verdict {
 	// distance must shrink within 4s or the drop is banned for a minute.
 	if d < l.bestD {
 		l.bestD, l.bestAt = d, time.Now()
-	} else if time.Since(l.bestAt) > 4*time.Second {
+	} else if d > 3 && time.Since(l.bestAt) > 4*time.Second { // walking only; at hand the pickup's own failure count rules
 		l.ban[it.ID] = time.Now().Add(60 * time.Second)
 		l.j, l.target = nil, 0
 		ctx.Led.Append(verbs.Outcome{Verb: "loot", Holder: l.Name(), Result: verbs.ResBlocked,

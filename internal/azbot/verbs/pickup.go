@@ -177,6 +177,7 @@ func (pk Pickup) Do(m *motor.Motor, gr *game.MemoryReader, p *percept.Perceptor,
 		return false
 	}
 	confirmed, px, py := false, bx, by
+	var seen []string // what the cursor DID hover (whiff diagnosis, as in hoverstrike)
 sweep:
 	for _, dy := range []int{0, -8, 8, -16, -24} {
 		for _, dx := range []int{0, -10, 10, -20, 20} {
@@ -187,6 +188,11 @@ sweep:
 			m.AimPhysical(cx, cy)
 			time.Sleep(50 * time.Millisecond)
 			if !itemHovered() {
+				if hd := gr.GetData().HoverData; hd.IsHovered {
+					seen = append(seen, fmt.Sprintf("%d/t%d", hd.UnitID, hd.UnitType))
+				} else {
+					seen = append(seen, "-")
+				}
 				continue
 			}
 			m.AimPhysical(cx, cy)
@@ -199,7 +205,7 @@ sweep:
 	}
 	if !confirmed {
 		o.Result = ResWhiff
-		o.Evidence = "no hover confirmation on item"
+		o.Evidence = fmt.Sprintf("no hover confirmation on item (d=%d aim=%d,%d seen=%v)", chebyshev(me, targetPos), bx, by, seen)
 		led.Append(o)
 		return o
 	}

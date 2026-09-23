@@ -34,6 +34,8 @@ func TestLootPickIsNearestAndSticky(t *testing.T) {
 // Bottles on the floor are wanted while the belt has room, never over a unique,
 // and not at all once the belt is full.
 func TestLootWantsPotionsForTheBelt(t *testing.T) {
+	LootPotions = true
+	defer func() { LootPotions = false }()
 	l := NewLoot()
 	s := &percept.Snapshot{Valid: true}
 	s.Me.InvFree, s.Me.BeltSlots, s.Me.BeltUsed = 10, 8, 3
