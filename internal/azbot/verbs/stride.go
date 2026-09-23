@@ -7,6 +7,7 @@ import (
 
 	"github.com/hectorgimenez/d2go/pkg/data"
 	"github.com/hectorgimenez/koolo/internal/azbot/motor"
+	"github.com/hectorgimenez/koolo/internal/azbot/nav"
 	"github.com/hectorgimenez/koolo/internal/azbot/percept"
 	"github.com/hectorgimenez/koolo/internal/game"
 )
@@ -19,18 +20,20 @@ type Stride struct {
 	To      data.Position
 	Hold    time.Duration // commit window; default 1.6s
 	MinGain int           // required chebyshev displacement; default 4
+	// Planned: To is a planner carrot already checked for line of sight. Skip
+	// steerAround — a second steering authority bending a planned heading up to
+	// ±112° fights the route (and walks off it into the next wall).
+	Planned bool
 }
 
 // isoCarrot projects the TRUE direction to an always-in-window screen point
 // (the off-window-discard law: far targets project off-screen and the game
-// drops the cursor sample — walkCarrot's lesson, in the type).
+// drops the cursor sample — walkCarrot's lesson, in the type). The angle is kept
+// exactly (nav.ScreenCarrot): the old (300cos, 140sin) ellipse bent world-axis
+// headings ~20°, straight into corridor walls.
 func isoCarrot(gr *game.MemoryReader, me data.Position, tx, ty int) (int, int) {
-	dx, dy := tx-me.X, ty-me.Y
-	sx := float64(dx-dy) * 19.8
-	sy := float64(dx+dy) * 9.9
-	cx, cy := gr.GameAreaSizeX/2, gr.GameAreaSizeY/2
-	ang := math.Atan2(sy, sx)
-	return cx + int(300*math.Cos(ang)), cy + int(140*math.Sin(ang))
+	ox, oy := nav.ScreenCarrot(float64(tx-me.X), float64(ty-me.Y), nav.IsoX, nav.IsoY, nav.CarrotX, nav.CarrotY)
+	return gr.GameAreaSizeX/2 + ox, gr.GameAreaSizeY/2 + oy
 }
 
 // Walkable is the live grid's verdict for one world tile (true for unknown/unloaded
@@ -95,7 +98,10 @@ func (s Stride) Do(m *motor.Motor, gr *game.MemoryReader, p *percept.Perceptor, 
 		led.Append(o)
 		return o
 	}
-	to, turned, open := steerAround(start.Me.Pos, s.To)
+	to, turned, open := s.To, 0, true
+	if !s.Planned {
+		to, turned, open = steerAround(start.Me.Pos, s.To)
+	}
 	if !open {
 		o := Outcome{Verb: "stride", Holder: holder, Target: fmt.Sprintf("(%d,%d)", s.To.X, s.To.Y), Result: ResBlocked,
 			Evidence: fmt.Sprintf("boxed in at (%d,%d): no open heading within ±112° — no push emitted", start.Me.Pos.X, start.Me.Pos.Y)}

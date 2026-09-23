@@ -1,7 +1,8 @@
-// Package journey is azbot's SINGLE movement authority (design §5). It adopts the
-// paid-for Navigator wholesale and owns the one escalation ladder with attempt memory:
-// carrot → replan → local escape (recorded) → Stalled. No second authority ever
-// second-guesses it; the callers handle honest verdicts instead.
+// Package journey is azbot's SINGLE movement authority (design §5). The pure nav core
+// plans (A* on raw walkability, soft clearance cost) and follows with an explicit state
+// machine that owns the one escalation ladder with attempt memory:
+// carrot → replan → recorded escapes → Fail. Journey only executes its commands and
+// turns them into honest verdicts; no second authority second-guesses it.
 package journey
 
 import (
@@ -10,6 +11,7 @@ import (
 
 	"github.com/hectorgimenez/d2go/pkg/data"
 	"github.com/hectorgimenez/koolo/internal/azbot/motor"
+	"github.com/hectorgimenez/koolo/internal/azbot/nav"
 	"github.com/hectorgimenez/koolo/internal/azbot/percept"
 	"github.com/hectorgimenez/koolo/internal/azbot/verbs"
 	"github.com/hectorgimenez/koolo/internal/game"
@@ -56,30 +58,97 @@ type Status struct {
 	Note  string
 }
 
+// Object bubbles: the route keeps ~3 tiles off live objects when there is room,
+// but may still squeeze past one standing in a doorway (soft, not a wall).
+const (
+	obstacleRadius  = 3
+	obstaclePenalty = 60
+	// Backstop over the follower's own ladder: no closest approach to the goal in
+	// this long means something outside its model (knockback loops) — give up.
+	approachBackstop = 60 * time.Second
+)
+
 // Journey walks one goal to completion or an honest verdict. One instance per goal.
 type Journey struct {
 	Goal   data.Position
 	Arrive int // arrival radius; default 5
 
-	nav      *Navigator
-	gr       *game.MemoryReader
-	holder   string
+	gr      *game.MemoryReader
+	holder  string
+	grid    *nav.Grid
+	f       *nav.Follower
+	obs     []nav.Obstacle
+	replan  bool // obstacles changed: route again on the next Step
+	snapped bool // the goal was walled; the route ends at the nearest walkable cell
+	led     *verbs.Ledger
+
 	bestDist int
 	bestAt   time.Time
-	tried    []data.Position // escape bearings already attempted from a stall (attempt memory)
-	escapes  int
+	lastStep time.Time
+}
+
+// navGrid adapts the game's collision grid to the nav core (walls = NonWalkable).
+func navGrid(g *game.Grid) *nav.Grid {
+	return nav.NewGrid(g.OffsetX, g.OffsetY, g.Width, g.Height, func(x, y int) bool {
+		row := g.CollisionGrid[y]
+		return x < len(row) && row[x] != game.CollisionTypeNonWalkable
+	})
 }
 
 func New(gr *game.MemoryReader, grid *game.Grid, goal data.Position, holder string) *Journey {
-	return &Journey{
+	j := &Journey{
 		Goal: goal, Arrive: 5,
-		nav: NewNavigator(grid), gr: gr, holder: holder,
+		gr: gr, holder: holder, grid: navGrid(grid),
 		bestDist: 1 << 30, bestAt: time.Now(),
 	}
+	j.f = nav.NewFollower(j.grid, nil)
+	// Every follower state change is a ledger line: "nav: following -> stuck (...)".
+	j.f.OnTransition = func(from, to nav.State, why string) {
+		if j.led == nil {
+			return
+		}
+		res := verbs.ResDone
+		if to == nav.Stuck || to == nav.Failed {
+			res = verbs.ResBlocked
+		}
+		j.led.Append(verbs.Outcome{Verb: "nav", Holder: j.holder, Result: res,
+			Target:   fmt.Sprintf("(%d,%d)", j.Goal.X, j.Goal.Y),
+			Evidence: fmt.Sprintf("nav: %s -> %s (%s)", from, to, why)})
+	}
+	return j
 }
 
-// SetObstacles feeds the versioned obstacle set (wedges + colliding objects).
-func (j *Journey) SetObstacles(obs []data.Position) { j.nav.SetObstacles(obs) }
+// SetObstacles feeds the versioned obstacle set (wedges + colliding objects) as soft
+// cost bubbles; a changed set reroutes on the next Step.
+func (j *Journey) SetObstacles(obs []data.Position) {
+	next := make([]nav.Obstacle, len(obs))
+	for i, o := range obs {
+		next[i] = nav.Obstacle{At: o, Radius: obstacleRadius, Penalty: obstaclePenalty}
+	}
+	same := len(next) == len(j.obs)
+	for i := 0; same && i < len(next); i++ {
+		same = next[i] == j.obs[i]
+	}
+	if same {
+		return
+	}
+	j.obs = next
+	j.f.SetObstacles(next)
+	j.replan = true
+}
+
+// State exposes the follower's mode (debug overlays, logs).
+func (j *Journey) State() nav.State { return j.f.State() }
+
+func (j *Journey) plan(me data.Position, now time.Time) (bool, string) {
+	pl := j.grid.Plan(me, j.Goal, nav.Options{Obstacles: j.obs})
+	if !pl.Found {
+		return false, "planner: " + pl.Reason
+	}
+	j.snapped = pl.Snapped
+	j.f.SetPath(j.grid.Simplify(pl.Path, j.obs), me, now)
+	return true, ""
+}
 
 // Step advances the journey by ONE bounded stride. The caller holds a RoleSteer lease.
 func (j *Journey) Step(m *motor.Motor, p *percept.Perceptor, led *verbs.Ledger) Status {
@@ -87,88 +156,71 @@ func (j *Journey) Step(m *motor.Motor, p *percept.Perceptor, led *verbs.Ledger) 
 	if !s.Valid {
 		return Status{State: Moving, Note: "perception gap"}
 	}
+	j.led = led
 	me := s.Me.Pos
 	d := chebyshev(me, j.Goal)
 	if d <= j.Arrive {
 		return Status{State: Arrived}
 	}
+	now := time.Now()
+	if gap := now.Sub(j.lastStep); !j.lastStep.IsZero() && gap > 2*time.Second {
+		j.bestAt = j.bestAt.Add(gap) // time spent fighting/dodging is not ours to approach in
+	}
+	j.lastStep = now
 	if d < j.bestDist-1 {
-		j.bestDist, j.bestAt = d, time.Now()
-		j.tried = j.tried[:0] // progress resets the attempt memory
-		j.escapes = 0
+		j.bestDist, j.bestAt = d, now
+	} else if now.Sub(j.bestAt) > approachBackstop {
+		return Status{State: Stalled, Note: fmt.Sprintf("no approach in %s at (%d,%d) best=%d", approachBackstop, me.X, me.Y, j.bestDist)}
 	}
-
-	// Plan (once; the navigator replans internally only on divergence).
-	if !j.nav.havePlan && !j.nav.BuildPlan(me, j.Goal, time.Now()) {
-		return Status{State: NoPath, Note: "planner found no route"}
-	}
-	step := j.nav.Step(me, time.Now())
-	target := step.Target
-	if step.Arrived {
-		j.nav.havePlan = false
-		target = j.Goal
-	}
-
-	// THE LADDER: no closest-approach progress for 12s of stepping → recorded escape
-	// bearings (never the same one twice from a stall) → Stalled after 4 escapes.
-	if time.Since(j.bestAt) > 12*time.Second {
-		if j.escapes >= 4 {
-			return Status{State: Stalled, Note: fmt.Sprintf("ladder exhausted at (%d,%d) best=%d", me.X, me.Y, j.bestDist)}
+	j.f.ArriveR = float64(max(j.Arrive, 1))
+	if j.replan && j.f.State() != nav.Failed {
+		j.replan = false
+		if ok, why := j.plan(me, now); !ok {
+			return Status{State: NoPath, Note: why}
 		}
-		esc, ok := j.pickEscape(me)
-		if !ok {
-			return Status{State: Stalled, Note: "no untried escape bearing"}
-		}
-		j.tried = append(j.tried, esc)
-		j.escapes++
-		j.nav.havePlan = false // escape moves us; the plan must rebuild after
-		verbs.Stride{To: esc, Hold: 2 * time.Second, MinGain: 3}.Do(m, j.gr, p, led, j.holder+"/escape")
-		j.bestAt = time.Now() // the escape gets its own progress window
-		return Status{State: Moving, Note: fmt.Sprintf("escape %d to (%d,%d)", j.escapes, esc.X, esc.Y)}
 	}
 
-	// HONOR THE NAVIGATOR'S PULSE: it computes 100-300ms holds by clearance (short taps
-	// in tight rooms, longer in the open). The old default-1.6s stride committed a
-	// straight line far past the carrot — cutting corners into walls, dragging along
-	// fences, replanning — the "walks around when trying to reach places" disease.
-	// MinGain drops to 1: a 150ms pulse covers ~1-2 tiles; demanding 4 branded every
-	// honest tap ResBlocked. The navigator's own along-path stall detection judges
-	// real blockage now.
-	hold := time.Duration(step.HoldMs) * time.Millisecond
+	// A Replan is answered at once and the follower asked again; bounded so a
+	// planner/follower disagreement can never spin inside one Step.
+	for k := 0; k < 3; k++ {
+		cmd := j.f.Step(me, now)
+		switch cmd.Kind {
+		case nav.Replan:
+			if ok, why := j.plan(me, now); !ok {
+				return Status{State: NoPath, Note: why}
+			}
+		case nav.Fail:
+			return Status{State: Stalled, Note: cmd.Reason}
+		case nav.ArrivedCmd:
+			if j.snapped {
+				return Status{State: Arrived, Note: fmt.Sprintf("goal walled; at nearest walkable (%d,%d)", cmd.Target.X, cmd.Target.Y)}
+			}
+			return j.stride(m, p, led, cmd.Target, 300, "final approach")
+		case nav.Move:
+			return j.stride(m, p, led, cmd.Target, cmd.HoldMs, cmd.Reason)
+		}
+	}
+	return Status{State: Moving, Note: "replan did not settle"}
+}
+
+// stride executes one planned pulse. HONOR THE FOLLOWER'S PULSE: 100-300ms holds by
+// clearance (short taps in tight rooms, longer in the open) — the old default-1.6s
+// stride committed a straight line far past the carrot, cutting corners into walls.
+// MinGain 1: a 150ms pulse covers ~1-2 tiles. A blocked stride is information only —
+// the follower's along-path stall clock judges real blockage (the old replan-on-block
+// reset that clock every time, so "stuck" never fired from the same spot).
+func (j *Journey) stride(m *motor.Motor, p *percept.Perceptor, led *verbs.Ledger, to data.Position, holdMs int, why string) Status {
+	if to == (data.Position{}) {
+		return Status{State: Moving, Note: "refused: unset target"} // never walk toward the world origin
+	}
+	hold := time.Duration(holdMs) * time.Millisecond
 	if hold <= 0 {
 		hold = 600 * time.Millisecond
 	}
-	o := verbs.Stride{To: target, Hold: hold, MinGain: 1}.Do(m, j.gr, p, led, j.holder)
-	if o.Result == verbs.ResBlocked {
-		// One blocked stride is information, not a crisis: the navigator's own stall
-		// detection plus our ladder decide; we just avoid replanning storms here.
-		j.nav.havePlan = false
+	holder := j.holder
+	if j.f.State() == nav.Escaping {
+		holder += "/escape"
 	}
-	return Status{State: Moving}
-}
-
-// pickEscape proposes an escape bearing not yet tried from this stall: the navigator's
-// clearance-aware local search first, then cardinal offsets by distance.
-func (j *Journey) pickEscape(me data.Position) (data.Position, bool) {
-	cands := []data.Position{}
-	if e, ok := j.nav.localEscape(me); ok {
-		cands = append(cands, e)
-	}
-	for _, off := range []data.Position{{X: 14, Y: 0}, {X: -14, Y: 0}, {X: 0, Y: 14}, {X: 0, Y: -14},
-		{X: 10, Y: 10}, {X: -10, Y: -10}, {X: 10, Y: -10}, {X: -10, Y: 10}} {
-		cands = append(cands, data.Position{X: me.X + off.X, Y: me.Y + off.Y})
-	}
-	for _, c := range cands {
-		seen := false
-		for _, t := range j.tried {
-			if chebyshev(c, t) <= 4 {
-				seen = true
-				break
-			}
-		}
-		if !seen {
-			return c, true
-		}
-	}
-	return data.Position{}, false
+	verbs.Stride{To: to, Hold: hold, MinGain: 1, Planned: true}.Do(m, j.gr, p, led, holder)
+	return Status{State: Moving, Note: why}
 }
