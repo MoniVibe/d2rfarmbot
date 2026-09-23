@@ -53,6 +53,18 @@ func TestPotionKindForItemRecognizesVariants(t *testing.T) {
 	}
 }
 
+// The live belt reports its red potions as ID 603 "SmallCharm" (beltdump
+// 2026-09-23). In the belt that is health; in the bag it stays a charm.
+func TestBelt603IsHealthButBag603IsCharm(t *testing.T) {
+	it := data.Item{ID: 603, Name: item.Name("SmallCharm")}
+	if got := potionKindForBeltItem(it); got != potionHealth {
+		t.Errorf("belt 603: got potion kind %d, want health", got)
+	}
+	if got := potionKindForItem(it); got != potionNone {
+		t.Errorf("bag 603: got potion kind %d, want none", got)
+	}
+}
+
 func TestBeltColumnNormalizesFlattenedSlots(t *testing.T) {
 	for x, want := range []int{0, 1, 2, 3, 0, 1, 2, 3, 0, 1, 2, 3, 0, 1, 2, 3} {
 		got, ok := beltColumn(data.Position{X: x})

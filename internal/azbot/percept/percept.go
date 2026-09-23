@@ -494,7 +494,7 @@ func (p *Perceptor) Capture() *Snapshot {
 	// relying on one custom ID or Position.Y made variants such as health potion 2
 	// invisible to the drink reflex.
 	for _, bp := range d.Inventory.Belt.Items {
-		kind := potionKindForItem(bp)
+		kind := potionKindForBeltItem(bp)
 		s.Me.BeltItems = append(s.Me.BeltItems, BeltItemRef{
 			ID: bp.ID, Name: string(bp.Name), Pos: bp.Position,
 			Kind: potionKindName(kind),
@@ -515,7 +515,7 @@ func (p *Perceptor) Capture() *Snapshot {
 	s.Me.BeltSlots = d.Inventory.Belt.Rows() * 4
 	s.Me.BeltUsed = len(d.Inventory.Belt.Items)
 	for _, bp := range d.Inventory.Belt.Items {
-		switch potionKindForItem(bp) {
+		switch potionKindForBeltItem(bp) {
 		case potionHealth:
 			s.Me.BeltHP++
 		case potionMana:
@@ -794,6 +794,20 @@ func potionKindForItem(it data.Item) potionKind {
 	default:
 		return potionNone
 	}
+}
+
+// beltPotionID603 is the mod's red belt potion as the scrambled table reports it:
+// ID 603 "SmallCharm". Measured live 2026-09-23 (beltdump: 8 belt items, all 603,
+// screen showing red potions). Outside the belt 603 IS a real small charm, so this
+// meaning applies only to belt contents — a charm cannot sit in a belt.
+const beltPotionID603 = 603
+
+// potionKindForBeltItem classifies an item known to be in the belt.
+func potionKindForBeltItem(it data.Item) potionKind {
+	if it.ID == beltPotionID603 {
+		return potionHealth
+	}
+	return potionKindForItem(it)
 }
 
 func potionKindName(kind potionKind) string {

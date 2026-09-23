@@ -20,4 +20,12 @@ func main() {
 	for _, it := range d.Inventory.ByLocation(item.LocationBelt) {
 		fmt.Printf("belt id=%d name=%q x=%d y=%d\n", it.ID, string(it.Name), it.Position.X, it.Position.Y)
 	}
+	fmt.Printf("Belt.Items=%d\n", len(d.Inventory.Belt.Items))
+	for _, it := range d.Inventory.Belt.Items {
+		fmt.Printf("beltstruct id=%d name=%q x=%d y=%d\n", it.ID, string(it.Name), it.Position.X, it.Position.Y)
+	}
+	// Every item the reader sees, with its location — finds potions filed elsewhere.
+	for _, it := range d.Inventory.AllItems {
+		fmt.Printf("all loc=%v id=%d name=%q x=%d y=%d\n", it.Location, it.ID, string(it.Name), it.Position.X, it.Position.Y)
+	}
 }
