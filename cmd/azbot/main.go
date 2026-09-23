@@ -2349,6 +2349,14 @@ func main() {
 					map[string]any{"kind": v.Pathology.String(), "at": time.Now().UnixMilli()})
 				if v.CoolWho != "" {
 					cooldowns[v.CoolWho] = v.CoolUntil
+					// ADVANCE CONSUMES THE VERDICT (item 3): the cooldown is the
+					// backstop, but the marcher also climbs its escalation ladder
+					// so the plan it returns to is a DIFFERENT one, not the plan
+					// the watchdog just convicted. No-op unless the deliberate
+					// flag is armed and a committed intent is live.
+					if v.CoolWho == adv.Name() {
+						adv.NoteWatchdog(v.Pathology.String(), led)
+					}
 				}
 				arb.Release()
 				// One decisive displacement in a fresh bearing breaks the physical

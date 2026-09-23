@@ -252,6 +252,12 @@ type Advance struct {
 	// kills the town<->gate flip. Owned here, selected through intentLeg.
 	// Inert unless the deliberate flag is armed.
 	intent RouteIntent
+	// escalation ladder (escalate.go) — how Advance CONSUMES repeated
+	// stalls / watchdog verdicts for one committed intent, climbing to a
+	// different remedy each time instead of just being cooled. Flag-gated.
+	ladRung ladderRung
+	ladKey  string
+	ladAt   time.Time
 }
 
 // FrontierFor is the P-5F hint: the itinerary leg the march owns at this
@@ -946,6 +952,22 @@ func (a *Advance) Step(ctx *Ctx) Verdict {
 		a.bestDist, a.bestAt = ed, time.Now()
 	}
 	if time.Since(a.bestAt) > 60*time.Second {
+		// THE ESCALATION LADDER (escalate.go, item 3): a committed intent that
+		// eats a leg climbs rungs instead of repeating the same plan. Rung 0
+		// (REPLAN) throws away the stale journey and keeps the grant — one fresh
+		// plan before conceding. Rungs 1+ fall through to the proven strike /
+		// hand-back below (ALTERNATE door → PORTAL reroute → the next itinerary
+		// option), so the hard-won crossing epistemology stays the backstop.
+		if deliberate && a.intent.Active() {
+			switch a.escalate(ctx.Led, a.ladderKey(), fmt.Sprintf("60s stall at (%d,%d)", tgt.X, tgt.Y)) {
+			case rungReplan:
+				a.j, a.grid = nil, nil // force a Journey replan next tick
+				a.bestAt = time.Now()  // one fresh plan gets its own clock
+				return Running
+			}
+			// rung ALTERNATE and above: fall through to the strike + Abandon path,
+			// which disbelieves this exit and hands the march to the next option.
+		}
 		// A WASTED LEG IS A STRIKE (the owner, 21:17: "trying to traverse
 		// dark wood from a wrong place, just stuck there"): the map oracle
 		// names a position, known=true, he marches the lie, the 60s leash
