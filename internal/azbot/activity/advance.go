@@ -248,6 +248,10 @@ type Advance struct {
 	// benched for the session.
 	rerouteFromIdx int
 	rerouteJudge   bool
+	// intent: THE ROUTE INTENT (intent.go) — the committed destination that
+	// kills the town<->gate flip. Owned here, selected through intentLeg.
+	// Inert unless the deliberate flag is armed.
+	intent RouteIntent
 }
 
 // FrontierFor is the P-5F hint: the itinerary leg the march owns at this
@@ -627,7 +631,11 @@ func (a *Advance) Step(ctx *Ctx) Verdict {
 		}
 	}
 
-	next := a.Itinerary[minInt(a.campIdx()+1, len(a.Itinerary)-1)]
+	// THE ONE DESTINATION GATE (intent.go): the raw candidate is the deepest
+	// level-lawful campaign leg; intentLeg holds a committed target against a
+	// shallower recomputation. Flag OFF → rawIdx unchanged (legacy path).
+	rawIdx := minInt(a.campIdx()+1, len(a.Itinerary)-1)
+	next := a.Itinerary[a.intentLeg(ctx, s, rawIdx)]
 
 	// P-10 THE NETWORK BEATS THE ROAD (the owner, 23:35: "she's not taking
 	// the waypoint to cold plains"): in town, before any gate march, ride the
@@ -920,6 +928,9 @@ func (a *Advance) Step(ctx *Ctx) Verdict {
 		return Running
 	}
 	a.marchGoal, a.marchGoalAt = tgt, time.Now() // P-5.7: the retreat may lean on this
+	if deliberate && a.intent.Active() {
+		a.intent.Goal = tgt // refresh the committed door hint as she walks
+	}
 	ed := chebyshev(me, tgt)
 	NavDebug(ctx, tgt, "march") // the owner's window (logs/nav.png + nav line)
 	// P-5.10 THE CROSSING BRACKET: holding a door contracts the hunt to

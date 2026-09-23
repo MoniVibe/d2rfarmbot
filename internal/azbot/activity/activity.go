@@ -357,6 +357,11 @@ func NewWorld() {
 	crossingBracketUntil = time.Time{}
 	vaultHungerUntil = time.Time{}
 	marchLawfulUntil = time.Time{}
+	// The deliberate-routing seam signals belong to the old world too: a fresh
+	// map re-rolls every door, so a crossing timestamp or a beyond-town
+	// commitment window from the dead world must never gate the new one.
+	lastSeamCrossAt = time.Time{}
+	advanceCommitBeyondTownUntil = time.Time{}
 }
 
 // CarryReach — P-5.9 THE MARCH CARRIES THE REACH TOOL (the owner, at the
