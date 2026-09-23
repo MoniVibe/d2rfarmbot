@@ -6,6 +6,7 @@ import (
 
 	"github.com/hectorgimenez/d2go/pkg/data"
 	"github.com/hectorgimenez/koolo/internal/azbot/percept"
+	"github.com/hectorgimenez/koolo/internal/azbot/verbs"
 	"github.com/hectorgimenez/koolo/internal/game"
 )
 
@@ -39,6 +40,9 @@ func SelfTest(ctx *Ctx, refresh func() *percept.Snapshot) []SelfTestResult {
 	}
 	snap := func() *percept.Snapshot { ctx.Snap = refresh(); return ctx.Snap }
 
+	if n := EnsureWorld(ctx.GR, ctx.M); n > 0 {
+		add("ui-cleared", true, "%d blocking screen(s) on screen at start — clicked away", n)
+	}
 	s := snap()
 	add("focus", ctx.M.GameFocused(), "D2R foreground=%v (focused mode is the operating contract)", ctx.M.GameFocused())
 	if !s.Valid || !s.Me.InTown {
@@ -99,8 +103,17 @@ func SelfTest(ctx *Ctx, refresh func() *percept.Snapshot) []SelfTestResult {
 	r := NewRestock()
 	deadline := time.Now().Add(75 * time.Second)
 	open := false
+	lastTrace := ""
 	for time.Now().Before(deadline) {
-		snap()
+		ss := snap()
+		// PHASE TRACE: the errand's state machine, visible (the 3-second 6-try
+		// burst on 2026-09-23 was undiagnosable without it).
+		tr := fmt.Sprintf("phase=%d menuTry=%d tries=%d menuOpen=%v tradeSelected=%v pos=(%d,%d)",
+			r.e.phase, r.e.menuTry, r.e.tries, ss.MenuOpen, r.e.tradeSelected, ss.Me.Pos.X, ss.Me.Pos.Y)
+		if tr != lastTrace {
+			ctx.Led.Append(verbs.Outcome{Verb: "errand-trace", Holder: "selftest", Result: verbs.ResDone, Evidence: tr})
+			lastTrace = tr
+		}
 		o, dead := r.e.step(ctx, "selftest")
 		if dead {
 			break
@@ -124,6 +137,9 @@ func SelfTest(ctx *Ctx, refresh func() *percept.Snapshot) []SelfTestResult {
 	ev := ""
 	if rec := ctx.Led.Recent(1); len(rec) > 0 {
 		ev = rec[0].Evidence
+	}
+	if v != buyOK {
+		snapPNG(ctx, "logs/selftest_buyfail.png") // the shop as it stood when the buy failed
 	}
 	add("buy-potion", v == buyOK, "%s", ev)
 	closeShop(ctx)

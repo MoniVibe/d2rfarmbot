@@ -148,7 +148,7 @@ func (e *errand) step(ctx *Ctx, who string) (shopOpen bool, dead bool) {
 	// oracle the Lexicon already trusts: if it reads, we are trading. Jump
 	// straight to act, and NEVER re-click an open shop closed. Trade errands
 	// only — Heal wants the heal-dialog, not the merchant's shelves.
-	if e.trade && e.tradeSelected && len(d.Inventory.ByLocation(item.LocationVendor)) > 0 {
+	if e.trade && e.tradeSelected && len(d.Inventory.ByLocation(item.LocationVendor)) > 0 && game.TradePanelVisible(ctx.GR.Screenshot()) {
 		e.phase = 4
 		return true, false
 	}
@@ -194,7 +194,11 @@ func (e *errand) step(ctx *Ctx, who string) (shopOpen bool, dead bool) {
 			if m == 0 {
 				m = 1
 			}
-			back := data.Position{X: target.Position.X + adx*5/m, Y: target.Position.Y + ady*5/m}
+			// 8 out, not 5: from dist 3 a 5-out point sits 2 tiles away, inside Stride's
+			// arrived-early radius — the backstep "arrived" instantly forever
+			// (2026-09-23 selftest: 75s of gain=0 arrived-early). Stride stops ~2 short,
+			// landing ~6 out: inside the 4..7 band.
+			back := data.Position{X: target.Position.X + adx*8/m, Y: target.Position.Y + ady*8/m}
 			verbs.Stride{To: back, Hold: 400 * time.Millisecond}.Do(ctx.M, ctx.GR, ctx.P, ctx.Led, who)
 			return false, false
 		}
@@ -243,6 +247,16 @@ func (e *errand) step(ctx *Ctx, who string) (shopOpen bool, dead bool) {
 		// vendor-stock short-circuit at the top of step() handles the
 		// already-open case so an open shop is never re-navigated closed.
 		if s.MenuOpen {
+			// OUR menu only (2026-09-23 selftest photo: a walk-click beside another
+			// NPC opened HIS Talk/Introduction/Gossip menu; the errand steered it six
+			// times and never traded). A menu that opened without our talk click in
+			// the last few seconds is a stray: close it for real and carry on.
+			if e.clickAt.IsZero() || time.Since(e.clickAt) > 5*time.Second {
+				safeEsc(ctx)
+				ctx.Led.Append(verbs.Outcome{Verb: "errand", Holder: who, Result: verbs.ResRefused,
+					Evidence: "closed a stray NPC menu (not opened by our talk click)"})
+				return false, false
+			}
 			e.phase = 3
 			return false, false
 		}
@@ -348,8 +362,15 @@ func (e *errand) step(ctx *Ctx, who string) (shopOpen bool, dead bool) {
 		e.tradeSelected = true // a Trade selection was actually made
 		e.phase = 4
 	case 4:
-		if len(ctx.GR.GetData().Inventory.ByLocation(item.LocationVendor)) > 0 {
-			return true, false
+		// The trade window takes a moment to populate after ENTER. Poll, don't
+		// glance (2026-09-23 trace: an instant check read 0 stock, ESC'd the
+		// opening shop and burned all six menu tries in three seconds).
+		for i := 0; i < 20; i++ {
+			// stock LINGERS; the screen decides (game.TradePanelVisible)
+			if len(ctx.GR.GetData().Inventory.ByLocation(item.LocationVendor)) > 0 && game.TradePanelVisible(ctx.GR.Screenshot()) {
+				return true, false
+			}
+			time.Sleep(100 * time.Millisecond)
 		}
 		// Trade did not open: the slot was wrong (menus GROW when quest lines appear —
 		// the blind 'second item is Trade' law cost run 26 a 30-minute restock loop).
@@ -361,7 +382,7 @@ func (e *errand) step(ctx *Ctx, who string) (shopOpen bool, dead bool) {
 			return false, true
 		}
 		if s.MenuOpen {
-			ctx.M.KeyLane().Press(0x1B) // close menu/dialog — safe: a panel IS open
+			safeEsc(ctx) // close menu/dialog; re-clears a pause menu the ESC may open
 			time.Sleep(300 * time.Millisecond)
 		}
 		e.phase = 2
@@ -372,7 +393,13 @@ func (e *errand) step(ctx *Ctx, who string) (shopOpen bool, dead bool) {
 
 // closeShop escapes out of the panel stack.
 func closeShop(ctx *Ctx) {
-	ctx.M.KeyLane().Press(0x1B) // ESC — safe: a panel IS open
+	// Close by the panel's own X — never ESC, which opens the pause menu when the
+	// shop has already closed. Then peel anything else off the screen.
+	if x, y, ok := game.ShopOpenX(ctx.GR.Screenshot()); ok {
+		ctx.M.RealMenuClick(x, y)
+		time.Sleep(400 * time.Millisecond)
+	}
+	EnsureWorld(ctx.GR, ctx.M)
 	time.Sleep(300 * time.Millisecond)
 }
 

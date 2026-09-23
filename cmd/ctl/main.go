@@ -24,6 +24,7 @@ import (
 	"unsafe"
 
 	"github.com/hectorgimenez/d2go/pkg/data/item"
+	"github.com/hectorgimenez/koolo/internal/azbot/percept"
 	"github.com/hectorgimenez/koolo/internal/config"
 	"github.com/hectorgimenez/koolo/internal/game"
 	"github.com/lxn/win"
@@ -150,7 +151,8 @@ func main() {
 				}
 			}
 		}
-		fmt.Printf("panels: %+v\n", d.OpenMenus)
+		ps := percept.New(gr).Capture()
+		fmt.Printf("ui: MenuOpen(0xF4)=%v QuitMenu=%v\n", ps.MenuOpen, ps.QuitMenu)
 	}
 	parseXY := func() (int, int) {
 		var x, y int

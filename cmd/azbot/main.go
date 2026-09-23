@@ -315,6 +315,17 @@ func main() {
 		// means "continue" — it respawned Fableboi in town and left his corpse in
 		// the field; the second press then opened the pause menu. A blind ESC is
 		// not a medic. The gate now fails loudly and the operator looks (shot.exe).
+		// A PAUSED GAME READS AS GARBAGE (2026-09-23: position/stats invalid behind
+		// the ESC menu — two attach failures that day were a stray pause). The
+		// screen identifies it; the cure is a click on Return to Game, never ESC.
+		if i == 4 || i == 10 {
+			if _, x, y, ok := game.UIBlocker(gr.Screenshot()); ok {
+				hid.FocusGame()
+				time.Sleep(200 * time.Millisecond)
+				game.SendClickRealScreen(int(float64(x)/(*dpiScale))+gr.WindowLeftX, int(float64(y)/(*dpiScale))+gr.WindowTopY)
+				logger.Warn("attach: gate failing behind a PAUSE/sub-panel screen — clicked it away", "try", i)
+			}
+		}
 		if i == 12 {
 			logger.Warn("attach: gate failing — NOT pressing anything; check the screen (death screen? menu?)", "try", i)
 		}
@@ -2285,12 +2296,16 @@ func main() {
 		// READABLE (OpenMenus.QuitMenu, UI byte 0x09 — never byte-blind after
 		// all). Standing unsanctioned, it is a wedge that freezes the world;
 		// the sentry closes it within a tick. Relog alone sanctions it.
-		if s.QuitMenu && time.Now().After(activity.MenuSanctionUntil) &&
-			time.Since(lastDeEsc) > 5*time.Second {
-			logger.Warn("menu sentry: quit menu standing with no sanction — de-ESC")
-			m.RealEsc()
+		// 2026-09-23: s.QuitMenu reads FALSE with the pause menu on screen, so this
+		// sentry never fired and a stray pause ate whole runs. The screen is the
+		// oracle now (game.PauseMenuVisible, 12/12 vs 0/12 on real captures), and
+		// the cure is a click on Return to Game — never an ESC, which toggles.
+		if time.Now().After(activity.MenuSanctionUntil) && time.Since(lastDeEsc) > 3*time.Second {
 			lastDeEsc = time.Now()
-			continue // fresh snapshot next tick; the byte verifies the close
+			if activity.ClearPause(gr, m) {
+				logger.Warn("menu sentry: pause menu on screen with no sanction — clicked Return to Game")
+				continue
+			}
 		}
 
 		var demands []arbiter.Demand

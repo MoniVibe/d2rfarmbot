@@ -319,6 +319,11 @@ func (m *Motor) RealMenuClick(shotX, shotY int) bool {
 	if !m.Engage.Engaged() {
 		return false
 	}
+	// A HARDWARE click lands where the GAME reads the cursor — and the game reads
+	// our PATCHED GetPhysicalCursorPos, still pointing at the last world aim
+	// (2026-09-23: the shop's tab click hit Drognan and walked out of the trade).
+	// Hand the real cursor back first.
+	m.ReleasePanelCursor()
 	m.hid.FocusGame()
 	if !m.hid.GameFocused() {
 		return false
@@ -337,6 +342,7 @@ func (m *Motor) RealMenuRightClick(shotX, shotY int) bool {
 	if !m.Engage.Engaged() {
 		return false
 	}
+	m.ReleasePanelCursor() // see RealMenuClick: the game reads the patched cursor
 	m.hid.FocusGame()
 	if !m.hid.GameFocused() {
 		return false

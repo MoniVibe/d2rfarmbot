@@ -7,6 +7,7 @@ import (
 	"github.com/hectorgimenez/d2go/pkg/data"
 	"github.com/hectorgimenez/d2go/pkg/data/item"
 	"github.com/hectorgimenez/koolo/internal/azbot/verbs"
+	"github.com/hectorgimenez/koolo/internal/game"
 )
 
 // ---------------------------------------------------------------- Verified shop buys
@@ -102,9 +103,17 @@ func buyVerified(ctx *Ctx, holder string, what string, want func(data.Item) bool
 			Evidence: what + ": vendor stocks none"})
 		return buyNotStock
 	}
+	// The panel must be ON SCREEN — lingering stock is not an open shop, and a
+	// right-click into the town casts a skill ("Impossible.").
+	if !game.TradePanelVisible(ctx.GR.Screenshot()) {
+		ctx.Led.Append(verbs.Outcome{Verb: "buy", Holder: holder, Result: verbs.ResRefused,
+			Evidence: what + ": trade panel not on screen — no click"})
+		return buyNoConfirm
+	}
 	target := stock[0]
 	tx, ty := shopTabPx(ctx, target.Location.Page)
 	cx, cy := shopCellPx(ctx, target.Position)
+	snapPNG(ctx, "logs/buy_pre.png")
 	// The tab first (harmless if already shown), then the purchase itself.
 	if !ctx.M.RealMenuClick(tx, ty) {
 		ctx.Led.Append(verbs.Outcome{Verb: "buy", Holder: holder, Result: verbs.ResRefused,
@@ -112,6 +121,7 @@ func buyVerified(ctx *Ctx, holder string, what string, want func(data.Item) bool
 		return buyNoConfirm
 	}
 	time.Sleep(250 * time.Millisecond)
+	snapPNG(ctx, "logs/buy_tab.png")
 	gold0 := ctx.GR.GetData().PlayerUnit.TotalPlayerGold()
 	have0 := ownedCount(ctx, int(target.ID))
 	if !ctx.M.RealMenuRightClick(cx, cy) {

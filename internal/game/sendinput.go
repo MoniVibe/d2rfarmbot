@@ -131,8 +131,16 @@ func SendKeyRealScan(vk uint16) {
 	procMapVirtualKey := user32SI.NewProc("MapVirtualKeyW")
 	sc, _, _ := procMapVirtualKey.Call(uintptr(vk), 0) // MAPVK_VK_TO_VSC
 	// KEYBDINPUT packs into the union as wVk(low16)|wScan(high16), then dwFlags.
-	down := hwInput{inputType: inputKeyboard, a: uint32(sc) << 16, b: keyeventfScancode}
-	up := hwInput{inputType: inputKeyboard, a: uint32(sc) << 16, b: keyeventfScancode | keyeventfKeyUp}
+	// EXTENDED KEYS (2026-09-23: NPC menus opened TALK instead of TRADE — the
+	// DOWN scancode without KEYEVENTF_EXTENDEDKEY is NUMPAD 2, HOME is NUMPAD 7;
+	// only ENTER landed). Navigation keys carry the E0 prefix flag.
+	flags := uint32(keyeventfScancode)
+	switch vk {
+	case 0x21, 0x22, 0x23, 0x24, 0x25, 0x26, 0x27, 0x28, 0x2D, 0x2E: // PgUp PgDn End Home arrows Ins Del
+		flags |= 0x0001 // KEYEVENTF_EXTENDEDKEY
+	}
+	down := hwInput{inputType: inputKeyboard, a: uint32(sc) << 16, b: flags}
+	up := hwInput{inputType: inputKeyboard, a: uint32(sc) << 16, b: flags | keyeventfKeyUp}
 	sendInputs([]hwInput{down})
 	sendInputs([]hwInput{up})
 }
