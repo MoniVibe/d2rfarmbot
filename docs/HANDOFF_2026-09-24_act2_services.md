@@ -3,6 +3,11 @@
 Branch `laptop-3.2` pushed to `public` (github.com/MoniVibe/d2rfarmbot) at 12a2aa9.
 `origin` is the UPSTREAM fork (danonji89/koolo_Fixed) — never push there.
 
+**Build setup (any machine):** d2go is a sibling checkout. `go.mod` has
+`replace github.com/hectorgimenez/d2go => ../d2go-local`, so clone the fork
+(github.com/MoniVibe/d2go, private, branch `master`) as `../d2go-local` next to this repo.
+Laptop layout already matches: `C:\dev\koolo-build` + `C:\dev\d2go-local`.
+
 ## State at close
 - Fableboi (Barbarian) **level 26**, alive, last seen Dry Hills / Lut Gholein, gear on,
   belt full (3x id 603 health + 4x id 608 mana). D2R closed by the owner.
