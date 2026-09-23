@@ -1798,7 +1798,7 @@ func main() {
 
 	// ---- THE EXECUTIVE: one arbiter, one activity per cycle, honest grants ----
 	led := verbs.NewLedger(2048)
-	sh := newShadow(logger)
+	sh := newShadow(logger, gr)
 	led.Sink = func(o verbs.Outcome) {
 		// done outcomes are the quiet normal; exceptions speak — except the route
 		// owner's decisions, which are the story of WHERE she is going and why.
@@ -1810,6 +1810,9 @@ func main() {
 			if ln, ok := trace.Nav(o.Holder, o.Evidence, curTick.Load()); ok {
 				emit(ln)
 			}
+		}
+		if uiVerbs[o.Verb] {
+			sh.Kick()
 		}
 	}
 	activity.PhaseSink = func(ln string) { emit(trace.Phase(ln, curTick.Load())) }
@@ -2147,6 +2150,9 @@ func main() {
 			wasFocused = focused
 		}
 		s := p.Capture()
+		// SHADOW SCREEN (v2 step 5): read, trace and publish what is on screen —
+		// engaged or not, so the owner's panels are named too. Nothing gates on it.
+		sh.observe(tick, s, holderWho(arb))
 		ses := "InGame"
 		switch {
 		case !m.Engage.Engaged():
