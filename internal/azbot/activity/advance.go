@@ -538,7 +538,11 @@ func (a *Advance) Step(ctx *Ctx) Verdict {
 			return Done // adopted AND geometrically clear — the next leg re-bids fresh
 		}
 		out := data.Position{X: me.X + a.clearDir.X*14, Y: me.Y + a.clearDir.Y*14}
-		clickStride(ctx, out, 1200*time.Millisecond, a.Name())
+		// item 4: the planner knows the fences the raw click walks into; keep the
+		// click-stride only when there is no grid (or the flag is off).
+		if !a.journeyPush(ctx, out) {
+			clickStride(ctx, out, 1200*time.Millisecond, a.Name())
+		}
 		return Running
 	}
 	if a.idx >= len(a.Itinerary)-1 && s.Me.Area == a.Itinerary[a.idx].Area {
@@ -1393,8 +1397,12 @@ func (a *Advance) cross(ctx *Ctx, d game.Data, me data.Position, tgt data.Positi
 		if td > 12 { // generous: a BOUNCE off the mouth must not zero the ritual timer
 			a.contactAt, a.clickTry = time.Time{}, 0
 		}
-		verbs.Stride{To: tgt, Hold: 500 * time.Millisecond, MinGain: 1}.
-			Do(ctx.M, ctx.GR, ctx.P, ctx.Led, a.Name())
+		// item 4: walk the APPROACH to the door through the planner where a grid
+		// exists — the contact push below (td<=3, warp ritual) is untouched.
+		if !a.journeyPush(ctx, tgt) {
+			verbs.Stride{To: tgt, Hold: 500 * time.Millisecond, MinGain: 1}.
+				Do(ctx.M, ctx.GR, ctx.P, ctx.Led, a.Name())
+		}
 		return
 	}
 	if a.contactAt.IsZero() {
@@ -1789,6 +1797,26 @@ func clampToGrid(p data.Position, g *game.Grid) data.Position {
 		y = g.OffsetY + g.Height - 3
 	}
 	return data.Position{X: x, Y: y}
+}
+
+// journeyPush routes a short travel push through the clearance-inflated A*
+// follower (item 4: the raw clickStride/verbs.Stride in clearing and cross
+// bypassed Journey and walked into the mod's fences). It reuses a.j with the
+// same clamp + rebuild-on-move discipline as the far-march, and reports whether
+// the planner OWNED the move this tick. It returns false — leaving the caller's
+// legacy stride to run — when the flag is off, when Grid==nil (the ONLY case
+// the brief keeps the stride fallback for), or when the planner itself refuses
+// (NoPath/Stalled through unstreamed rooms). Inert unless the flag is armed.
+func (a *Advance) journeyPush(ctx *Ctx, tgt data.Position) bool {
+	if !deliberate || ctx.Grid == nil {
+		return false
+	}
+	goal := clampToGrid(tgt, ctx.Grid)
+	if a.j == nil || chebyshev(a.j.Goal, goal) > 8 {
+		a.j = journey.New(ctx.GR, ctx.Grid, goal, a.Name())
+	}
+	st := a.j.Step(ctx.M, ctx.P, ctx.Led)
+	return st.State != journey.NoPath && st.State != journey.Stalled
 }
 
 // stepDir reduces a→b to a unit step {-1,0,1} per axis — the leg's travel direction.
