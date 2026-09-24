@@ -249,6 +249,7 @@ func main() {
 	holdsF := flag.String("holds", "80,120,200,300,500,800,1200,2000", "hold durations in ms")
 	reps := flag.Int("reps", 2, "repetitions per direction x hold")
 	dist := flag.Int("dist", 10, "target distance in tiles (Stride stops within 2 tiles of it)")
+	reach := flag.Float64("reach", 0, "cap the cursor's distance from the player in logical px (0 = carrot box edge, what azbot uses); run once per value to measure travel vs reach")
 	budget := flag.Duration("budget", 4*time.Minute+30*time.Second, "hard runtime cap for the trial loop")
 	flag.Parse()
 
@@ -469,7 +470,7 @@ func main() {
 		t0 := time.Now()
 		wg.Add(1)
 		go sample(gr, r.start, t0, stop, &smp, &wg)
-		o := verbs.Stride{To: to, Hold: time.Duration(holdMS) * time.Millisecond, MinGain: 1, Planned: true}.Do(m, gr, p, led, "stridecal/"+kind)
+		o := verbs.Stride{To: to, Hold: time.Duration(holdMS) * time.Millisecond, MinGain: 1, Planned: true, Reach: *reach}.Do(m, gr, p, led, "stridecal/"+kind)
 		lease.Release() // MoveStop again; redundant by design
 		time.Sleep(300 * time.Millisecond)
 		close(stop)
@@ -545,8 +546,8 @@ func main() {
 	var trials []row
 	skipped := map[string]bool{}
 	t0 := time.Now()
-	fmt.Printf("running %d dirs x %d holds x %d reps (budget %s, mode=%s, spoof=%v, dist=%d)\n",
-		len(dirs), len(holds), *reps, *budget, *modeF, *spoof, *dist)
+	fmt.Printf("running %d dirs x %d holds x %d reps (budget %s, mode=%s, spoof=%v, dist=%d, reach=%.0fpx)\n",
+		len(dirs), len(holds), *reps, *budget, *modeF, *spoof, *dist, *reach)
 loop:
 	for rp := 1; rp <= *reps; rp++ {
 		for _, dsp := range dirs {

@@ -24,6 +24,10 @@ type Stride struct {
 	// steerAround — a second steering authority bending a planned heading up to
 	// ±112° fights the route (and walks off it into the next wall).
 	Planned bool
+	// Reach caps the cursor's distance from the player in logical px (0 = the
+	// carrot box edge). The game walks toward the cursor point, so reach sets how
+	// far one tap travels (R6). Measured by cmd/stridecal -reach before any use.
+	Reach float64
 }
 
 // isoCarrot projects the TRUE direction to an always-in-window screen point
@@ -31,8 +35,8 @@ type Stride struct {
 // drops the cursor sample — walkCarrot's lesson, in the type). The angle is kept
 // exactly (nav.ScreenCarrot): the old (300cos, 140sin) ellipse bent world-axis
 // headings ~20°, straight into corridor walls.
-func isoCarrot(gr *game.MemoryReader, me data.Position, tx, ty int) (int, int) {
-	ox, oy := nav.ScreenCarrot(float64(tx-me.X), float64(ty-me.Y), nav.IsoX, nav.IsoY, nav.CarrotX, nav.CarrotY)
+func isoCarrot(gr *game.MemoryReader, me data.Position, tx, ty int, reach float64) (int, int) {
+	ox, oy := nav.ScreenCarrotReach(float64(tx-me.X), float64(ty-me.Y), nav.IsoX, nav.IsoY, nav.CarrotX, nav.CarrotY, reach)
 	return gr.GameAreaSizeX/2 + ox, gr.GameAreaSizeY/2 + oy
 }
 
@@ -113,7 +117,7 @@ func (s Stride) Do(m *motor.Motor, gr *game.MemoryReader, p *percept.Perceptor, 
 	if turned != 0 {
 		detour = fmt.Sprintf(" detour=%+d°", turned*45/2)
 	}
-	ax, ay := isoCarrot(gr, start.Me.Pos, to.X, to.Y)
+	ax, ay := isoCarrot(gr, start.Me.Pos, to.X, to.Y, s.Reach)
 	if !m.StrideEdge(ax, ay) {
 		o := Outcome{Verb: "stride", Holder: holder, Result: ResRefused, Evidence: "motor disengaged"}
 		led.Append(o)

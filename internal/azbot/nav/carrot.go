@@ -33,3 +33,21 @@ func ScreenCarrot(dx, dy float64, isoX, isoY, rx, ry float64) (int, int) {
 	}
 	return int(math.Round(r * c)), int(math.Round(r * s))
 }
+
+// ScreenCarrotReach is ScreenCarrot with the cursor radius capped at reach px
+// (0 = the box edge). D2R force-move walks toward the cursor POINT, not just its
+// direction: R6 measured ~7 tiles of travel from an 80ms tap with the carrot on the
+// box edge (~15 tiles out), so a short tap cannot mean a short step unless the
+// cursor comes in. Angle is preserved either way.
+func ScreenCarrotReach(dx, dy float64, isoX, isoY, rx, ry, reach float64) (int, int) {
+	ox, oy := ScreenCarrot(dx, dy, isoX, isoY, rx, ry)
+	if reach <= 0 {
+		return ox, oy
+	}
+	l := math.Hypot(float64(ox), float64(oy))
+	if l <= reach || l < 1e-9 {
+		return ox, oy
+	}
+	k := reach / l
+	return int(math.Round(float64(ox) * k)), int(math.Round(float64(oy) * k))
+}
