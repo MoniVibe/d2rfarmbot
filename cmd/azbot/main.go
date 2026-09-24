@@ -2474,6 +2474,11 @@ func main() {
 				}
 				logger.Warn("idle: nobody bids", "for", time.Since(idleSince).Round(time.Second),
 					"town", s.Me.InTown, "benched", strings.Join(benchedNow, " "), "rx", rx)
+				// The town deadlock valve (a decision, not an actuation): an abandoned
+				// errand keeps ServicesPending true, so Travel stands down for it and
+				// nobody bids ("hangs on Akara"). Silencing services frees the march;
+				// the errands retry next trip. Retired when the Director owns TownVisit.
+				activity.CoolAllServices(90 * time.Second)
 			}
 			time.Sleep(200 * time.Millisecond)
 			continue
