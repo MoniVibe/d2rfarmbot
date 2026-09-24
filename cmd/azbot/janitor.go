@@ -45,6 +45,11 @@ type gatekeeper struct {
 	picker  string    // the last holder that owned cursor work while the item rode it
 	handAt  time.Time // the last hand-back (bench) — at most one per handBackRest
 	heldSay time.Time // the last loud "CURSOR ITEM HELD" line
+	// invKey/bagAt: a held item with the bag shut gets the bag OPENED (R24: a
+	// potion the fence left on the cursor waited forever for a parker that never
+	// bid). The open bag then makes the Park rule place it in a free cell.
+	invKey uint16
+	bagAt  time.Time
 }
 
 // handBackRest: how long a holder is benched to hand a held cursor item back.
@@ -172,6 +177,15 @@ func (g *gatekeeper) step(tick uint64, s *percept.Snapshot, arb *arbiter.Arbiter
 	}
 	if d.CursorHold || (d.Cursor && d.Wedged) {
 		g.cursorHeld(tick, who, d, s, arb, roster, demands)
+		if d.CursorHold && g.invKey != 0 && time.Since(g.bagAt) > 2*time.Second {
+			g.bagAt = time.Now()
+			act := fmt.Sprintf("open the bag (key 0x%02X) for the held item's park", g.invKey)
+			if !g.m.RealKey(g.invKey) {
+				act += " (refused: no foreground)"
+			}
+			g.sh.Kick()
+			emit(trace.Gate(who, d.Why, act, tick))
+		}
 	}
 	if d.Act {
 		act := g.perform(d)

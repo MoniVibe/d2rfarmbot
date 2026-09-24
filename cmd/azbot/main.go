@@ -1902,6 +1902,7 @@ func main() {
 	sd := newSessionDriver(logger, m, gr, sh, relog)
 	sd.ses.WindCap, sd.ses.PauseFailsafe = *windDownF, *pauseFailsafeF
 	gk := newGatekeeper(logger, m, gr, sh, sd.ses)
+	gk.invKey = uint16(hid.GetASCIICode(*invKeyF))
 	hygiene := func() {
 		if janitorOn {
 			if n := gk.settle(p); n > 0 {
