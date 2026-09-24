@@ -1,0 +1,78 @@
+time=2026-09-24T06:12:51.401+03:00 level=INFO msg="azbot attaching" pid=34076
+[d2go] PATTERN NOT FOUND (memlen=41508864): 44 88 25 00 00 00 00 66 44 89 25 00 00 00 00
+[d2go] PATTERN NOT FOUND (memlen=41508864): 48 8b 05 00 00 00 00 48 8b d9 f3 0f 10 50 00
+[d2go] PATTERN NOT FOUND (memlen=41508864): 02 45 33 d2 4d 8b
+[d2go] PATTERN NOT FOUND (memlen=41508864): 48 8b 0d 00 00 00 00 4c 8d 44 24 00 48 03 c2
+[d2go] PATTERN NOT FOUND (memlen=41508864): 48 89 05 00 00 00 00 0f 11 00
+time=2026-09-24T06:12:55.844+03:00 level=INFO msg="aim calibration loaded" kx=1.1125320679211068 ky=1.1293540875695656 ox=2.951161121414657 oy=-27.490030603728087
+time=2026-09-24T06:12:55.845+03:00 level=INFO msg="world scale" scale=1.25 client=1536x840 dpi=1.25
+time=2026-09-24T06:12:55.845+03:00 level=INFO msg="navigation mode" deliberate=false
+[sendinput] structSize=40 n=1 injected=1 err=The operation completed successfully.
+[sendinput] structSize=40 n=1 injected=1 err=The operation completed successfully.
+[sendinput] structSize=40 n=1 injected=1 err=The operation completed successfully.
+[sendinput] structSize=40 n=1 injected=1 err=The operation completed successfully.
+[sendinput] structSize=40 n=1 injected=1 err=The operation completed successfully.
+[sendinput] structSize=40 n=1 injected=1 err=The operation completed successfully.
+[interception] create_context failed — driver not installed? (using SendInput fallback)
+time=2026-09-24T06:12:55.890+03:00 level=INFO msg="attach report" verdict="position=true stats=true uibytes=true mode=true"
+time=2026-09-24T06:13:02.014+03:00 level=INFO msg="sentinel live" killswitch=f10 drinkAt=60
+time=2026-09-24T06:13:02.014+03:00 level=INFO msg=director goal=farm
+time=2026-09-24T06:13:05.447+03:00 level=INFO msg="map data fetched" seed=466817790 areas=136
+time=2026-09-24T06:13:05.598+03:00 level=INFO msg=outcome verb=errand-trace holder=selftest result=refused ev="phase=Seek menuTry=0 tries=0 menuOpen=false tradeSelected=false"
+time=2026-09-24T06:13:05.752+03:00 level=INFO msg=outcome verb=errand-trace holder=selftest result=refused ev="phase=Approach menuTry=0 tries=0 menuOpen=false tradeSelected=false"
+time=2026-09-24T06:13:06.101+03:00 level=INFO msg=outcome verb=stride holder=selftest result=done ev="from=(5091,5033) to=(5095,5035) gain=4 arrived-early"
+time=2026-09-24T06:13:06.599+03:00 level=INFO msg=outcome verb=stride holder=selftest result=done ev="from=(5098,5036) to=(5096,5035) gain=2 arrived-early"
+time=2026-09-24T06:13:06.903+03:00 level=INFO msg=outcome verb=errand-trace holder=selftest result=refused ev="phase=Talk menuTry=0 tries=0 menuOpen=false tradeSelected=false"
+[sendinput] structSize=40 n=1 injected=1 err=The operation completed successfully.
+[sendinput] structSize=40 n=1 injected=1 err=The operation completed successfully.
+[sendinput] structSize=40 n=1 injected=1 err=The operation completed successfully.
+[sendinput] structSize=40 n=1 injected=1 err=The operation completed successfully.
+[sendinput] structSize=40 n=1 injected=1 err=The operation completed successfully.
+[sendinput] structSize=40 n=1 injected=1 err=The operation completed successfully.
+time=2026-09-24T06:13:07.194+03:00 level=INFO msg=outcome verb=errand-trace holder=selftest result=refused ev="phase=Talk menuTry=0 tries=1 menuOpen=true tradeSelected=false"
+time=2026-09-24T06:13:07.346+03:00 level=INFO msg=outcome verb=errand-trace holder=selftest result=refused ev="phase=Menu menuTry=0 tries=1 menuOpen=true tradeSelected=false"
+[sendinput] structSize=40 n=1 injected=1 err=The operation completed successfully.
+[sendinput] structSize=40 n=1 injected=1 err=The operation completed successfully.
+[sendinput] structSize=40 n=1 injected=1 err=The operation completed successfully.
+[sendinput] structSize=40 n=1 injected=1 err=The operation completed successfully.
+[sendinput] structSize=40 n=1 injected=1 err=The operation completed successfully.
+[sendinput] structSize=40 n=1 injected=1 err=The operation completed successfully.
+time=2026-09-24T06:13:07.955+03:00 level=INFO msg=outcome verb=errand-trace holder=selftest result=refused ev="phase=Act menuTry=0 tries=1 menuOpen=true tradeSelected=true"
+[sendinput] structSize=40 n=1 injected=1 err=The operation completed successfully.
+[sendinput] structSize=40 n=1 injected=1 err=The operation completed successfully.
+[sendinput] structSize=40 n=1 injected=1 err=The operation completed successfully.
+[sendinput] structSize=40 n=1 injected=1 err=The operation completed successfully.
+[sendinput] structSize=40 n=1 injected=1 err=The operation completed successfully.
+[sendinput] structSize=40 n=1 injected=1 err=The operation completed successfully.
+time=2026-09-24T06:13:10.842+03:00 level=INFO msg=outcome verb=buy holder=selftest result=done ev="health potion id=603 page=3 grid(9,2) px(612,333) gold 84418→84418 owned 5→6"
+[sendinput] structSize=40 n=1 injected=1 err=The operation completed successfully.
+[sendinput] structSize=40 n=1 injected=1 err=The operation completed successfully.
+[sendinput] structSize=40 n=1 injected=1 err=The operation completed successfully.
+==== azbot preflight self-test ====
+PASS focus              D2R foreground=true (focused mode is the operating contract)
+time=2026-09-24T06:13:11.916+03:00 level=INFO msg=selftest result="PASS focus              D2R foreground=true (focused mode is the operating contract)"
+PASS in-town            area=40 pos=(5091,5033)
+time=2026-09-24T06:13:11.916+03:00 level=INFO msg=selftest result="PASS in-town            area=40 pos=(5091,5033)"
+PASS belt               used=8/8 hp=4 mana=4 unknown=0 hpCols=[3 0]
+time=2026-09-24T06:13:11.916+03:00 level=INFO msg=selftest result="PASS belt               used=8/8 hp=4 mana=4 unknown=0 hpCols=[3 0]"
+PASS aim-npc            npc=177 dist=2 confirmed=true after 1 probes
+time=2026-09-24T06:13:11.916+03:00 level=INFO msg=selftest result="PASS aim-npc            npc=177 dist=2 confirmed=true after 1 probes"
+PASS trade-open         vendor npc=177 stock=87
+time=2026-09-24T06:13:11.916+03:00 level=INFO msg=selftest result="PASS trade-open         vendor npc=177 stock=87"
+PASS buy-potion         health potion id=603 page=3 grid(9,2) px(612,333) gold 84418→84418 owned 5→6
+time=2026-09-24T06:13:11.916+03:00 level=INFO msg=selftest result="PASS buy-potion         health potion id=603 page=3 grid(9,2) px(612,333) gold 84418→84418 owned 5→6"
+==== 6/6 passed ====
+[sendinput] structSize=40 n=1 injected=1 err=The operation completed successfully.
+[sendinput] structSize=40 n=1 injected=1 err=The operation completed successfully.
+[sendinput] structSize=40 n=1 injected=1 err=The operation completed successfully.
+[sendinput] structSize=40 n=1 injected=1 err=The operation completed successfully.
+[sendinput] structSize=40 n=1 injected=1 err=The operation completed successfully.
+[sendinput] structSize=40 n=1 injected=1 err=The operation completed successfully.
+time=2026-09-24T06:13:11.943+03:00 level=INFO msg="healed input fn" fn=GetPhysicalCursorPos
+time=2026-09-24T06:13:11.943+03:00 level=INFO msg="healed input fn" fn=GetCursorPos
+time=2026-09-24T06:13:11.943+03:00 level=INFO msg="healed input fn" fn=GetCursorInfo
+time=2026-09-24T06:13:11.943+03:00 level=INFO msg="healed input fn" fn=SetCursorPos
+time=2026-09-24T06:13:11.943+03:00 level=INFO msg="healed input fn" fn=GetKeyState
+time=2026-09-24T06:13:11.943+03:00 level=INFO msg="healed input fn" fn=GetAsyncKeyState
+time=2026-09-24T06:13:11.943+03:00 level=INFO msg="healed input fn" fn=GetKeyboardState
+time=2026-09-24T06:13:11.943+03:00 level=INFO msg="healed input fn" fn=TrackMouseEvent

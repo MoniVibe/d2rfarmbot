@@ -1,0 +1,11 @@
+06:12:48 D2R foreground
+==== azbot preflight self-test ====
+PASS focus              D2R foreground=true (focused mode is the operating contract)
+PASS in-town            area=40 pos=(5091,5033)
+PASS belt               used=8/8 hp=4 mana=4 unknown=0 hpCols=[3 0]
+PASS aim-npc            npc=177 dist=2 confirmed=true after 1 probes
+PASS trade-open         vendor npc=177 stock=87
+PASS buy-potion         health potion id=603 page=3 grid(9,2) px(612,333) gold 84418→84418 owned 5→6
+==== 6/6 passed ====
+06:13:12 launched r4b
+06:33:36 bot already exited
