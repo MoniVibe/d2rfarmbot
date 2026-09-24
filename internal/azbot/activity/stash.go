@@ -47,8 +47,17 @@ const (
 	stashNextPgY    = 752.0
 	stashSharedTabX = 297.0 // the "Shared" tab header (measured in a click drill, R29)
 	stashSharedTabY = 89.0
-	stashMaxPages   = 5
-	stashEmptyMax   = 22 // every sampled channel at or below this = an empty cell
+)
+
+// The stash tabs (headers at y=89, measured on the R29 captures).
+const (
+	stashTabPersonal = iota
+	stashTabShared
+	stashTabGems
+	stashTabMaterials
+	stashTabRunes
+	stashMaxPages = 5
+	stashEmptyMax = 22 // every sampled channel at or below this = an empty cell
 )
 
 // stashWorks: the live belief that the stash ritual moves items on this mod. Two
@@ -93,6 +102,9 @@ type Stash struct {
 	fails     int
 	coolAt    time.Time
 	tabbed    bool      // the Shared tab was clicked this episode
+	tab, want int       // the open tab, and the tab the current keeper belongs in
+	shifting  bool      // a shift-transfer is being judged
+	noShift   bool      // this keeper takes the lift-and-place path
 	fullUntil time.Time // a stash with no room for the keeper: stand down (no retry loop)
 	// the chest hover sweep (one aim per tick)
 	aimIdx     int
@@ -175,7 +187,7 @@ func (st *Stash) Begin(ctx *Ctx, resumed bool) {
 	if !resumed {
 		st.moved, st.fails = 0, 0
 	}
-	st.target, st.pages, st.tabbed = 0, 0, false
+	st.target, st.pages, st.tabbed, st.shifting, st.noShift = 0, 0, false, false, false
 }
 
 func (st *Stash) Suspend(ctx *Ctx, _ phase.Reason) { st.life.suspend(ctx) }
@@ -243,6 +255,7 @@ func (st *Stash) Step(ctx *Ctx) Status {
 				k := shopScale(ctx)
 				ctx.M.RealMenuClick(int(stashSharedTabX*k), int(stashSharedTabY*k))
 				st.tabbed, st.clickT = true, time.Now()
+				st.tab, st.want = stashTabShared, stashTabShared
 				return l.wait(400 * time.Millisecond)
 			}
 			l.to(stLift, "stash open on the Shared tab (by sight)")
@@ -274,18 +287,65 @@ func (st *Stash) Step(ctx *Ctx) Status {
 			l.to(stPlace, "keeper on the cursor")
 			return l.running()
 		}
-		if st.target != 0 && time.Since(st.clickT) < 600*time.Millisecond {
+		// SHIFT+CLICK TRANSFER (owner, 2026-09-24: "it can shift click so things
+		// transfer"): one click moves the bag item into the OPEN tab — no cursor,
+		// no free-cell guessing. Runes, gems and the mod's rows get their own tabs.
+		if st.target != 0 && st.shifting {
+			if time.Since(st.clickT) < 600*time.Millisecond {
+				return l.wait(100 * time.Millisecond)
+			}
+			st.shifting = false
+			if !inBag(ctx, st.target) {
+				st.moved++
+				ctx.Led.Append(verbs.Outcome{Verb: "stash", Holder: st.Name(), Result: verbs.ResDone,
+					Evidence: fmt.Sprintf("shift-stashed unit %d (%dx%d) from bag (%d,%d) to the %s tab", int(st.target), st.tgtW, st.tgtH, st.tgtGX, st.tgtGY, stashTabName[st.tab])})
+				st.target = 0
+				return l.running()
+			}
+			// It stayed: this tab/page has no room. A special tab falls back to
+			// Shared; Shared turns its page; after the pages, the cursor path.
+			switch {
+			case st.tab != stashTabShared:
+				st.want = stashTabShared
+			case st.pages < stashMaxPages:
+				k := shopScale(ctx)
+				ctx.M.RealMenuClick(int(stashNextPgX*k), int(stashNextPgY*k))
+				st.pages++
+				st.clickT = time.Now()
+				return l.wait(400 * time.Millisecond)
+			default:
+				st.noShift = true // the lift-and-place path takes this item
+			}
+		}
+		if st.target != 0 && !st.shifting && st.want == st.tab && !st.noShift && time.Since(st.clickT) < 600*time.Millisecond {
 			return l.wait(100 * time.Millisecond)
 		}
-		keep := stashable(s, loot.Active())
-		if len(keep) == 0 {
-			return l.finish(ctx, phase.Done, phase.Completed, fmt.Sprintf("bag emptied of keepers (moved %d)", st.moved))
+		var k percept.BagItem
+		if st.target != 0 && inBag(ctx, st.target) {
+			k = percept.BagItem{Unit: st.target, GX: st.tgtGX, GY: st.tgtGY}
+		} else {
+			keep := stashable(s, loot.Active())
+			if len(keep) == 0 {
+				return l.finish(ctx, phase.Done, phase.Completed, fmt.Sprintf("bag emptied of keepers (moved %d)", st.moved))
+			}
+			k = keep[0]
+			c := loot.Classify(k.ID)
+			st.target, st.tgtW, st.tgtH, st.tgtGX, st.tgtGY, st.pages, st.noShift = k.Unit, c.W, c.H, k.GX, k.GY, 0, false
+			st.want = stashTabFor(c.Kind)
 		}
-		k := keep[0]
-		c := loot.Classify(k.ID)
-		st.target, st.tgtW, st.tgtH, st.tgtGX, st.tgtGY, st.pages = k.Unit, c.W, c.H, k.GX, k.GY, 0
+		if st.want != st.tab {
+			kk := shopScale(ctx)
+			ctx.M.RealMenuClick(int(stashTabX[st.want]*kk), int(stashSharedTabY*kk))
+			st.tab, st.pages, st.clickT = st.want, 0, time.Now()
+			return l.wait(400 * time.Millisecond)
+		}
 		cx, cy := invCellPx(ctx, k.GX, k.GY)
-		ctx.M.RealMenuClick(cx, cy)
+		if st.noShift {
+			ctx.M.RealMenuClick(cx, cy) // lift; stPlace sets it down by sight
+		} else {
+			ctx.M.RealMenuShiftClick(cx, cy)
+			st.shifting = true
+		}
 		st.clickT = time.Now()
 		return l.wait(250 * time.Millisecond)
 	case stPlace:
@@ -458,4 +518,20 @@ func stashBlockPx(gx, gy, w, h int, k float64) (int, int) {
 	x := stashCell0X + stashPitchX*(float64(gx)+float64(w-1)/2)
 	y := stashCell0Y + stashPitchY*(float64(gy)+float64(h-1)/2)
 	return int(x * k), int(y * k)
+}
+
+var stashTabX = [...]float64{203, 297, 393, 487, 583}
+var stashTabName = [...]string{"Personal", "Shared", "Gems", "Materials", "Runes"}
+
+// stashTabFor: runes, gems and the mod's own rows have their own tabs.
+func stashTabFor(k loot.Kind) int {
+	switch k {
+	case loot.KindRune:
+		return stashTabRunes
+	case loot.KindGem:
+		return stashTabGems
+	case loot.KindModUnknown:
+		return stashTabMaterials
+	}
+	return stashTabShared
 }

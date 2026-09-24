@@ -361,6 +361,24 @@ func (m *Motor) RealMenuRightClick(shotX, shotY int) bool {
 	return true
 }
 
+// RealMenuShiftClick: RealMenuClick with Shift held (by scancode) — the stash
+// transfer: a bag item Shift+clicked with the stash open moves to its open tab.
+func (m *Motor) RealMenuShiftClick(shotX, shotY int) bool {
+	if !m.Engage.Engaged() {
+		return false
+	}
+	m.ReleasePanelCursor()
+	m.hid.FocusGame()
+	if !m.hid.GameFocused() {
+		return false
+	}
+	time.Sleep(250 * time.Millisecond)
+	sx := int(float64(shotX)/m.panelScale) + m.hid.WindowLeftX()
+	sy := int(float64(shotY)/m.panelScale) + m.hid.WindowTopY()
+	game.SendShiftClickRealScreen(sx, sy)
+	return true
+}
+
 // RealMenuCtrlClick: RealMenuClick with Ctrl held — the vendor quick-sell.
 func (m *Motor) RealMenuCtrlClick(shotX, shotY int) bool {
 	if !m.Engage.Engaged() {

@@ -4,6 +4,7 @@ import (
 	"image"
 
 	"github.com/hectorgimenez/d2go/pkg/data"
+	"github.com/hectorgimenez/koolo/internal/azbot/loot"
 	"image/color"
 	"testing"
 )
@@ -63,5 +64,12 @@ func TestFootprintIsModAware(t *testing.T) {
 	}
 	if w, h := footprint(data.Item{ID: 620}); w != 1 || h != 3 {
 		t.Fatalf("grand charm footprint: want 1x3, got %dx%d", w, h)
+	}
+}
+
+func TestStashTabForKind(t *testing.T) {
+	if stashTabFor(loot.KindRune) != stashTabRunes || stashTabFor(loot.KindGem) != stashTabGems ||
+		stashTabFor(loot.KindModUnknown) != stashTabMaterials || stashTabFor(loot.KindCharm) != stashTabShared {
+		t.Fatal("runes/gems/mod rows go to their tabs; the rest to Shared")
 	}
 }

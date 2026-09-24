@@ -186,13 +186,22 @@ func SendClickReal(screenX, screenY, virtualLeft, virtualTop, virtualW, virtualH
 	sendInputs([]hwInput{up})
 }
 
-// SendCtrlClickRealScreen: OS-level Ctrl+left-click — the vendor quick-sell
-// gesture (2026-09-23: the posted SellClick never landed on this build; trade
-// panels honor only real input). Ctrl is released even on the way out.
-func SendCtrlClickRealScreen(screenX, screenY int) {
-	const vkControl = 0x11
-	sendInputs([]hwInput{{inputType: inputKeyboard, a: uint32(vkControl), b: 0}})
-	defer sendInputs([]hwInput{{inputType: inputKeyboard, a: uint32(vkControl), b: keyeventfKeyUp}})
+// SendCtrlClickRealScreen: OS-level Ctrl+left-click — the vendor quick-sell.
+func SendCtrlClickRealScreen(screenX, screenY int) { SendModClickRealScreen(0x1D, screenX, screenY) }
+
+// SendShiftClickRealScreen: OS-level Shift+left-click — with the stash open, the
+// transfer gesture: the bag item moves to the open stash tab (owner, 2026-09-24).
+func SendShiftClickRealScreen(screenX, screenY int) { SendModClickRealScreen(0x2A, screenX, screenY) }
+
+// SendModClickRealScreen: a left-click with a modifier held BY SCANCODE. The old
+// Ctrl sender pressed the virtual key only, and the game read a plain click —
+// the fence's "SELL BECAME A PICKUP" (the game reads modifiers by scancode, as
+// every proven key sender here does). The modifier is released on the way out.
+func SendModClickRealScreen(scan uint16, screenX, screenY int) {
+	down := hwInput{inputType: inputKeyboard, a: uint32(scan) << 16, b: keyeventfScancode}
+	up := hwInput{inputType: inputKeyboard, a: uint32(scan) << 16, b: keyeventfScancode | keyeventfKeyUp}
+	sendInputs([]hwInput{down})
+	defer sendInputs([]hwInput{up})
 	time.Sleep(60 * time.Millisecond)
 	SendClickRealScreen(screenX, screenY)
 	time.Sleep(60 * time.Millisecond)
