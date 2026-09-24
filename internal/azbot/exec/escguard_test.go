@@ -12,7 +12,8 @@ import (
 // THE ESC GUARD (docs/AZBOT_V2.md, "Guard tests"): every blind ESC on
 // 2026-09-23 raised the pause menu or landed in a sub-panel that ate the next
 // run's keys. An ESC may be sent only by the janitor (from a positively seen
-// panel), by Respawn on a death screen, and by the few legacy paths below —
+// panel), by Respawn on a death screen, by the session's single OpenPause ESC
+// (relog.go's Perform), and by the few legacy paths below —
 // each a ratchet: its count may go down, never up, and each names the
 // migration step that deletes it.
 //
@@ -33,9 +34,11 @@ var escAllowed = map[string]struct {
 	// TODO(step 8, Session FSM): the OFF-path respawn press goes with the legacy executive.
 	"internal/azbot/activity/activity.go": {1, "Respawn: death-screen ESC"},
 
-	// TODO(step 8, Session FSM + Relog): relog's ESC ritual becomes Session
-	// Relogging phases — one ESC only when the Reading is World with no panels.
-	"internal/azbot/activity/relog.go": {2, "relog ritual RealEsc ×2"},
+	// Step 8 (Session FSM + Relog): the ESC ritual (×3 per attempt, a closing
+	// ESC between attempts) became the session's Relogging phases. What stays
+	// is the motor half of the ONE OpenPause ESC, which exec.Session asks for
+	// only on a stable Reading that is World with nothing blocking.
+	"internal/azbot/activity/relog.go": {1, "the session's OpenPause ESC (Relog.Perform)"},
 
 	// Step 7 retired safeEsc (pause.go) and Equip/Spend closePanel
 	// (services.go): the town services close their own panels by sight via
@@ -45,9 +48,9 @@ var escAllowed = map[string]struct {
 	// (step 9 deleted the watchdog ESC probe pair):
 	// TODO(step 6 close-out: delete the janitor-OFF path once the stray panel
 	// drill passes): the cursor-drop RealEsc;
-	// TODO(step 8, Session FSM + Relog): -relogtest's ESC pair;
 	// TODO(step 10, Calibrate): -wpcaltest's lane ESC after photographing the waypoint panel.
-	"cmd/azbot/main.go": {4, "legacy OFF path + harnesses"},
+	// (step 8 turned -relogtest into the session drill and took its ESC pair.)
+	"cmd/azbot/main.go": {2, "legacy OFF path + harnesses"},
 }
 
 func repoRoot(t *testing.T) string {
