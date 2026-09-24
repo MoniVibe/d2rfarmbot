@@ -45,13 +45,13 @@ var escAllowed = map[string]struct {
 	// janitor-OFF path only.
 	"internal/azbot/activity/services.go": {2, "Equip/Spend closePanel, janitor OFF"},
 
-	// cmd/azbot/main.go, janitor-OFF legacy executive and manual harnesses:
-	// TODO(step 9, pure watchdog + Unstick): the watchdog ESC probe (×2);
+	// cmd/azbot/main.go, janitor-OFF legacy executive and manual harnesses
+	// (step 9 deleted the watchdog ESC probe pair):
 	// TODO(step 6 close-out: delete the janitor-OFF path once the stray panel
 	// drill passes): the cursor-drop RealEsc;
 	// TODO(step 8, Session FSM + Relog): -relogtest's ESC pair;
 	// TODO(step 10, Calibrate): -wpcaltest's lane ESC after photographing the waypoint panel.
-	"cmd/azbot/main.go": {6, "legacy OFF path + harnesses"},
+	"cmd/azbot/main.go": {4, "legacy OFF path + harnesses"},
 }
 
 func repoRoot(t *testing.T) string {

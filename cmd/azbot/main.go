@@ -36,6 +36,7 @@ import (
 	"github.com/hectorgimenez/koolo/internal/azbot/phase"
 	"github.com/hectorgimenez/koolo/internal/azbot/sentinel"
 	"github.com/hectorgimenez/koolo/internal/azbot/trace"
+	"github.com/hectorgimenez/koolo/internal/azbot/unstick"
 	"github.com/hectorgimenez/koolo/internal/azbot/verbs"
 	"github.com/hectorgimenez/koolo/internal/azbot/watchdog"
 	"github.com/hectorgimenez/koolo/internal/config"
@@ -1920,7 +1921,7 @@ func main() {
 	}
 	// One registry for live and -replay; its order breaks exact bid ties.
 	roster := activity.Registry(legs, road)
-	adv, fight := roster.Advance, roster.Fight
+	fight := roster.Fight
 	// The lifecycle rides the arbiter's Changes: Suspend on preempt/outbid,
 	// Begin on every seat, End on every verdict or monitor release.
 	core := &exec.Core[*activity.Ctx]{Arb: arb, Find: roster.Lifecycle, Trace: emit}
@@ -2096,19 +2097,16 @@ func main() {
 	var ring []*percept.Snapshot
 	wasArmed := false
 	wasDead := false
+	// The watchdog is pure: it observes and prescribes (stuck, orbit, thrash, the
+	// deadman box, the pacer); the executive benches, and Unstick performs.
 	wd := watchdog.New()
-	cooldowns := map[string]time.Time{}
-	wdCheckAt := time.Time{}
 	deadline := time.Now().Add(time.Duration(*seconds) * time.Second)
 	statusAt := time.Time{}
 	stallWarnAt := time.Time{}
-	deadmanPos := data.Position{}
-	deadmanAt := time.Now()
 	prevEngaged := true
 	engagedAt := time.Now()
-	emaX, emaY := 0.0, 0.0
-	emaRef := data.Position{}
-	emaRefAt := time.Now()
+	var lastEvidence time.Time // the ledger's last append credited as the holder's progress
+	lastPhase := ""            // the holder's last reported phase (a change is progress)
 	cursorItemAt := time.Time{}
 	cursorDropAt := time.Time{}
 	sawInvalid := false
@@ -2121,18 +2119,10 @@ func main() {
 		}
 		return "-"
 	}
-	lastUnpause := time.Time{}
 	lastDeEsc := time.Time{}
 	gateOpenAt := time.Time{} // janitor ON: when the gate last reopened (the stall alarm's grace)
 	idleSince := time.Time{}
-	stuckRunN := 0
-	stuckRunPos := data.Position{}
-	lastPocketTP := time.Time{}
-	// Rotating escape bearings (the advisor's ladder: novel headings — the
-	// old fixed NW fling was the door pendulum).
-	escBearings := []data.Position{{X: 20, Y: 0}, {X: 14, Y: 14}, {X: 0, Y: 20}, {X: -14, Y: 14},
-		{X: -20, Y: 0}, {X: -14, Y: -14}, {X: 0, Y: -20}, {X: 14, Y: -14}}
-	escDirIdx := 0
+	idleSaidAt := time.Time{}
 	lastTick := time.Time{}
 	for time.Now().Before(deadline) {
 		// THE TICK HAS A FLOOR (night-2 audit finding 10): the granted path had
@@ -2158,7 +2148,7 @@ func main() {
 		if focused := m.GameFocused(); focused != wasFocused {
 			if focused {
 				logger.Info("executive: game refocused")
-				wd = watchdog.New() // a pause-frozen position history would read as pathology
+				wd.Reset() // a pause-frozen position history would read as pathology
 			} else {
 				logger.Info("executive: game unfocused — playing on (posted input, your windows untouched)")
 			}
@@ -2331,40 +2321,33 @@ func main() {
 			}
 		}
 
-		var demands []arbiter.Demand
-		var benched []arbiter.Demand
-		for _, d := range roster.Demands(s) { // registry order, Order stamped
-			// The watchdog's prescriptions: a cooled activity may not win again
-			// until its moment passes — survival and recovery are never cooled.
-			if until, cooled := cooldowns[d.Who]; cooled && time.Now().Before(until) &&
-				d.Class > arbiter.ClassRecover {
-				benched = append(benched, d)
-				continue
-			}
-			demands = append(demands, d)
-		}
-		// A cooldown must be real.  The old empty-field fallback immediately
+		demands := roster.Demands(s) // registry order, Order stamped
+		// A bench must be real. The old empty-field fallback immediately
 		// re-granted the activity the watchdog had just convicted (observed:
 		// "cooling advance for 15s" followed by an advance grant 38ms later),
-		// turning recovery into the same failed plan repeated forever.  Re-seat
-		// a sole bidder only in the final two seconds of its short recovery
-		// window; until then the watchdog's novel stride owns the reset.
-		if len(demands) == 0 && len(benched) > 0 {
-			soonest := time.Duration(1<<63 - 1)
-			for _, d := range benched {
-				if until, ok := cooldowns[d.Who]; ok {
-					if left := time.Until(until); left < soonest {
-						soonest = left
-					}
+		// turning recovery into the same failed plan repeated forever. The
+		// arbiter filters benched bids; only when EVERY bidder is benched and
+		// one is within two seconds of release are they re-seated early.
+		if len(demands) > 0 {
+			soonest, all := time.Duration(1<<63-1), true
+			for _, d := range demands {
+				left, ok := arb.BenchLeft(d.Who)
+				if !ok {
+					all = false
+					break
 				}
+				soonest = min(soonest, left)
 			}
-			if soonest <= 2*time.Second {
-				demands = benched
+			if all && soonest <= 2*time.Second {
+				for _, d := range demands {
+					arb.Unbench(d.Who)
+				}
+				logger.Info("bench: every bidder benched — re-seating early", "left", soonest.Round(100*time.Millisecond))
 			}
 		}
 		// One context per tick: the lifecycle calls inside Decide and the Step
 		// below see the same world.
-		actx := &activity.Ctx{M: m, GR: gr, P: p, Led: led, Grid: grid, Cap: &cap, Snap: s, SwapKey: hid.GetASCIICode(*swapKey), InvKey: hid.GetASCIICode(*invKeyF), Regrid: regrid, Mem: mem}
+		actx := &activity.Ctx{M: m, GR: gr, P: p, Led: led, Grid: grid, Cap: &cap, Snap: s, SwapKey: hid.GetASCIICode(*swapKey), InvKey: hid.GetASCIICode(*invKeyF), Regrid: regrid, Mem: mem, Held: arb.Held}
 		if janitorOn {
 			actx.Screen = gk.Stable()
 		}
@@ -2374,15 +2357,13 @@ func main() {
 		// THE GATE (v2 step 6, janitor ON): the holder's Needs against the
 		// stable screen Reading. A foreign panel or cursor item earns ONE
 		// janitor action; the holder's clock pauses and it does not Step. The
-		// monitors below are skipped too — a gated holder is not stuck, and the
-		// watchdog's escape stride must not walk into a panel.
+		// monitors below are skipped too — a gated holder is not stuck.
 		if janitorOn {
 			open, was := gk.step(tick, s, arb, roster)
 			if was > 2*time.Second {
 				// A long block starved the position monitors: start them fresh
 				// (the refocus precedent) so the wait is not read as a wedge.
-				wd = watchdog.New()
-				deadmanPos, deadmanAt, emaRefAt = s.Me.Pos, time.Now(), time.Now()
+				wd.Reset()
 			}
 			if was > 0 {
 				gateOpenAt = time.Now()
@@ -2393,174 +2374,78 @@ func main() {
 		}
 
 		// SELF-OBSERVATION (the owner's ask: "tell what the bot is up to, moments where
-		// it's stuck, looping, thrashing — and unstuck itself"): the bot consumes its own
-		// position and grant streams, names the pathology out loud, cools the culprit,
-		// and breaks the physical state with one fresh-bearing stride.
+		// it's stuck, looping, thrashing — and unstuck itself"). The watchdog is pure:
+		// it reads the position and grant streams and returns a verdict with its
+		// evidence and a remedy. The executive (a) hands the verdict to the culprit
+		// (Judged — Advance climbs its ladder), (b) benches it, (c) opens a
+		// prescription the Unstick activity bids on. No monitor moves the character
+		// (docs/AZBOT_V2.md step 9): the escape strides, the pocket breaker's
+		// blocking TP and the deadman/pacer TP all live in Unstick now.
 		holderName := ""
 		if grant != nil {
 			holderName = grant.Demand.Who
 		}
-		// The dodge reflex blips sub-second by design — dodge↔fight alternation IS the
-		// arrow dance, not thrash (the watchdog cooled fight mid-dance, measured 02:51).
-		obsHolder := holderName
-		if obsHolder == "dodge" {
-			obsHolder = ""
+		wd.Observe(watchdog.Sample{Pos: s.Me.Pos, Holder: holderName, InTown: s.Me.InTown, Dead: s.Me.HPPct <= 0})
+		enemyAt := make([]data.Position, 0, len(s.Enemies))
+		for _, e := range s.Enemies {
+			enemyAt = append(enemyAt, e.Pos)
 		}
-		wd.Observe(s.Me.Pos, obsHolder)
-		if time.Since(wdCheckAt) > 5*time.Second {
-			wdCheckAt = time.Now()
-			// A volleying archer holds ground by design: fight + a target in bow range
-			// vouches for stillness (Stuck/Orbit suppressed; Thrash still watched).
-			// Stand holds ground by definition — convicting it mid-melee benched the
-			// survival holder while HP fell (R1 run u, 14:41).
-			stationaryOK := false
-			if holderName == "fight" || holderName == "stand" {
-				for _, e := range s.Enemies {
-					if chebyshev(s.Me.Pos, e.Pos) <= 28 {
-						stationaryOK = true
-						break
+		// A volleying archer and a melee Stand hold ground by design: fight/stand
+		// with a target in range vouches for stillness (Stuck/Orbit suppressed,
+		// Thrash still watched; the deadman box answers whoever holds).
+		if v := wd.Check(watchdog.Context{
+			Holder:       holderName,
+			StationaryOK: watchdog.StationaryOK(holderName, s.Me.Pos, enemyAt),
+			CrossingHot:  activity.CrossingHot(),
+			CanPortal:    !s.Me.InTown && s.Me.HPPct > 0 && cap.TownTP != nil,
+		}); v.Pathology != watchdog.Healthy {
+			why := "judged: " + v.Summary()
+			emit(trace.Watchdog(v.Pathology.String(), v.Remedy.String(), v.Culprit, v.Evidence, tick))
+			logger.Warn("PATHOLOGY", "kind", v.Pathology.String(), "remedy", v.Remedy.String(),
+				"culprit", v.Culprit, "holder", v.Holder, "evidence", v.Evidence)
+			mem.PutJSON("pathology.last", memory.ScopeGame,
+				memory.Provenance{Source: "measured", Evidence: v.Evidence},
+				map[string]any{"kind": v.Pathology.String(), "remedy": v.Remedy.String(), "at": time.Now().UnixMilli()})
+			// (a) The culprit hears its verdict first (the place's holder when
+			// the place, not a holder, is convicted).
+			judged := v.Culprit
+			if judged == "" {
+				judged = v.Holder
+			}
+			if j, ok := roster.Get(judged).(activity.Judgeable); ok {
+				j.Judged(actx, v)
+			}
+			// (b) Bench the culprit: the next Decide releases it with the
+			// verdict as its reason. Survival and recovery are never benched;
+			// a convicted holder of those classes still has its episode ended.
+			convicted := false
+			if v.Culprit != "" {
+				cls := arbiter.ClassIdle
+				for _, d := range demands {
+					if d.Who == v.Culprit {
+						cls = d.Class
 					}
+				}
+				if cls > arbiter.ClassRecover {
+					arb.Bench(v.Culprit, time.Now().Add(v.BenchFor), why)
+					convicted = v.Culprit == holderName
+				} else if v.Culprit == holderName {
+					core.End(actx, holderName, phase.Abandoned, phase.Judged, why)
+					convicted = true
 				}
 			}
-			if v := wd.Check(holderName, stationaryOK); v.Pathology != watchdog.Healthy {
-				logger.Warn("PATHOLOGY", "kind", v.Pathology.String(), "detail", v.Detail,
-					"cooling", v.CoolWho, "for", time.Until(v.CoolUntil).Round(time.Second))
-				mem.PutJSON("pathology.last", memory.ScopeGame,
-					memory.Provenance{Source: "measured", Evidence: v.Detail},
-					map[string]any{"kind": v.Pathology.String(), "at": time.Now().UnixMilli()})
-				if v.CoolWho != "" {
-					cooldowns[v.CoolWho] = v.CoolUntil
-					// ADVANCE CONSUMES THE VERDICT (item 3): the cooldown is the
-					// backstop, but the marcher also climbs its escalation ladder
-					// so the plan it returns to is a DIFFERENT one, not the plan
-					// the watchdog just convicted. No-op unless the deliberate
-					// flag is armed and a committed intent is live.
-					if v.CoolWho == adv.Name() {
-						adv.NoteWatchdog(v.Pathology.String(), led)
-					}
+			// (c) Prescribe: Unstick bids from the next tick. Thrash is a
+			// decision problem — bench only, no prescription.
+			if v.Remedy != watchdog.RemedyNone {
+				rx := unstick.Rx{Kind: v.Pathology.String(), Portal: v.Remedy == watchdog.RemedyPortal,
+					Site: v.Site, Area: int(s.Me.Area), Opened: time.Now(), Culprit: v.Culprit, Evidence: v.Evidence}
+				if roster.Unstick.Prescribe(rx) {
+					logger.Info("prescription opened", "remedy", v.Remedy.String(), "kind", rx.Kind,
+						"site", fmt.Sprintf("(%d,%d)", rx.Site.X, rx.Site.Y))
 				}
-				detail := "watchdog " + v.Pathology.String()
-				if v.CoolWho != "" {
-					detail += fmt.Sprintf("; cool %s %s", v.CoolWho, time.Until(v.CoolUntil).Round(time.Second))
-				}
-				core.End(actx, holderName, phase.Abandoned, phase.Judged, detail) // was arb.Release()
-				// One decisive displacement in a fresh bearing breaks the physical
-				// loop — a ROTATING bearing (the advisor's ladder: novel headings),
-				// never the old fixed NW that pendulumed her off every door mouth.
-				escDirIdx = (escDirIdx + 3) % 8
-				eb := escBearings[escDirIdx]
-				esc := data.Position{X: s.Me.Pos.X + eb.X, Y: s.Me.Pos.Y + eb.Y}
-				if (v.Pathology == watchdog.Stuck || v.Pathology == watchdog.Orbit) &&
-					activity.CrossingHot() {
-					// P-5.10: the door owns motion. The watchdog's escape fling
-					// from a door mouth was the pendulum — count toward the
-					// breaker (a frozen world at a door still ends in a TP home)
-					// but throw no footwork of its own.
-					if chebyshev(s.Me.Pos, stuckRunPos) > 10 {
-						stuckRunPos, stuckRunN = s.Me.Pos, 0
-					}
-					stuckRunN++
-					// A held door earns a LONG leash (03:44: the breaker fired
-					// at ~20s while the arch-click ritual needed ~30 to reach
-					// its turn — the medicine kept outrunning the cure).
-					if stuckRunN >= 10 && !s.Me.InTown && cap.TownTP != nil &&
-						time.Since(lastPocketTP) > 120*time.Second {
-						logger.Warn("watchdog: POCKET BREAKER (door) — the portal is the door now")
-						activity.NoteBreakerSite(s.Me.Pos)
-						activity.MarkPortalHot(4 * time.Minute)
-						verbs.CastSelf{Key: cap.TownTP.Key}.Do(m, gr, p, led, "watchdog")
-						time.Sleep(2200 * time.Millisecond)
-						if s2 := p.Capture(); s2.Valid && len(s2.Portals) > 0 {
-							verbs.EnterPortal{Target: s2.Portals[0].ID, TargetPos: s2.Portals[0].Pos}.
-								Do(m, gr, p, led, "watchdog")
-						}
-						lastPocketTP = time.Now()
-						stuckRunN = 0
-					}
-					continue
-				}
-				if v.Pathology == watchdog.Stuck || v.Pathology == watchdog.Orbit {
-					// THE POCKET BREAKER (01:23: pinned in a Stony pen, every local
-					// maneuver a wiggle inside the box): four stucks in one 10-box
-					// refute footwork — the portal is the door. Ride home, run the
-					// services (the banked points too), re-enter by proven ground.
-					if chebyshev(s.Me.Pos, stuckRunPos) > 10 {
-						stuckRunPos, stuckRunN = s.Me.Pos, 0
-					}
-					stuckRunN++
-					if stuckRunN >= 4 && !s.Me.InTown && cap.TownTP != nil &&
-						time.Since(lastPocketTP) > 120*time.Second {
-						logger.Warn("watchdog: POCKET BREAKER — footwork refuted; the portal is the door")
-						activity.NoteBreakerSite(s.Me.Pos)
-						activity.MarkPortalHot(4 * time.Minute) // Return must NOT ride back into the pen (02:28)
-						verbs.CastSelf{Key: cap.TownTP.Key}.Do(m, gr, p, led, "watchdog")
-						time.Sleep(2200 * time.Millisecond)
-						if s2 := p.Capture(); s2.Valid && len(s2.Portals) > 0 {
-							verbs.EnterPortal{Target: s2.Portals[0].ID, TargetPos: s2.Portals[0].Pos}.
-								Do(m, gr, p, led, "watchdog")
-						}
-						lastPocketTP = time.Now()
-						stuckRunN = 0
-						continue
-					}
-					o := verbs.Stride{To: esc, Hold: 2 * time.Second, MinGain: 3}.Do(m, gr, p, led, "watchdog")
-					// WARNING 4: the pause menu is byte-blind and can arrive from
-					// outside (a swap mid-relog, measured 08:41) — a REFUSED watchdog
-					// stride in a safe town is its only shadow. The probe is SELF-
-					// CONTAINED: RealEsc (menus are deaf to lane input), stride retest
-					// in the SAME cycle, and a restoring RealEsc when the retest still
-					// fails — the world is never left ambiguous for the next holder
-					// (the 08:46 spend burned its belief clicking into a menu a blind
-					// half-probe had just raised).
-					// The probe runs on ANY safe ground, not just town (00:44: a
-					// field attach inherited a frozen world and the town-gated
-					// probe left her pinned two minutes at full blood — the
-					// freeze doesn't care where she stands, and a frozen world
-					// holds its monsters frozen too).
-					// The probe is a FOCUS GRAB (the owner, 02:35: "why does it
-					// bring diablo to the forefront sometimes") — it may not
-					// fire on the first stumble. Three same-box stucks first:
-					// real wedges persist; noise doesn't steal the screen.
-					// JANITOR ON: no probe — the screen Reading answers "is a
-					// menu up?" and the gate already acted on it.
-					if !janitorOn && o.Result != verbs.ResDone && !s.Me.CursorItem && stuckRunN >= 3 &&
-						time.Since(lastUnpause) > 30*time.Second {
-						safeGround := true
-						for _, e := range s.Enemies {
-							if chebyshev(s.Me.Pos, e.Pos) <= 12 {
-								safeGround = false
-								break
-							}
-						}
-						// FROZEN-WORLD OVERRIDE (02:19: the quit menu stood by a
-						// pad with frozen monsters "nearby" — the safety gate
-						// blocked the probe FOREVER, because frozen enemies never
-						// leave). Six same-box stucks prove the world is not
-						// running; frozen teeth cannot bite, and if they are real
-						// after all, two minutes of paralysis is deadlier than
-						// one ESC. (The QuitMenu byte reads FALSE under this
-						// mod's menu — the behavioral probe is the only sentry.)
-						if !safeGround && stuckRunN >= 6 {
-							safeGround = true
-						}
-						// The shadow probe is optional diagnostics, not a reason to
-						// steal the desktop. RealEsc focuses D2R before sending the
-						// key; only probe when D2R already owns the foreground.
-						if safeGround && m.GameFocused() {
-							m.RealEsc()
-							time.Sleep(500 * time.Millisecond)
-							o2 := verbs.Stride{To: esc, Hold: 700 * time.Millisecond, MinGain: 1}.Do(m, gr, p, led, "watchdog/shadow")
-							if o2.Result == verbs.ResDone {
-								logger.Info("watchdog: ESC probe — a menu WAS up; the world moves again")
-							} else {
-								m.RealEsc() // raised on clear ground: restore before releasing
-								logger.Info("watchdog: ESC probe — stride still refused; not the menu (fence?), state restored")
-							}
-							lastUnpause = time.Now()
-						}
-					}
-				}
-				continue
+			}
+			if convicted {
+				continue // the convicted holder does not Step this tick
 			}
 		}
 		if grant == nil {
@@ -2569,18 +2454,26 @@ func main() {
 					"area", int(s.Me.Area), "hp", s.Me.HPPct, "lvl", s.Me.Level)
 				statusAt = time.Now()
 			}
-			// THE IDLE BREAKER (the owner, 04:47: 'hangs on Akara' — a service
-			// abandoned, nothing re-bid, and he stood dead by the healer for
-			// minutes). The advisor's law: bench the strategy, not the mission.
-			// Sustained idle in town cools EVERY service (they hard-gate the
-			// march via ServicesPending) so the march reclaims the actuator and
-			// retries the errands from the field next trip.
+			// THE IDLE LOG (was the idle breaker, the owner, 04:47: 'hangs on
+			// Akara'). It used to cool every service to shove the march back on
+			// the wheel; in v2 no monitor actuates, so sustained idle is NAMED:
+			// who is benched and why, and whether a prescription waits.
 			if idleSince.IsZero() {
 				idleSince = time.Now()
-			} else if time.Since(idleSince) > 12*time.Second {
-				activity.CoolAllServices(90 * time.Second)
-				logger.Warn("idle breaker: services cooled 90s — the march reclaims the wheel")
-				idleSince = time.Time{}
+			} else if time.Since(idleSince) > 12*time.Second && time.Since(idleSaidAt) > 12*time.Second {
+				idleSaidAt = time.Now()
+				var benchedNow []string
+				for _, a := range roster.Acts {
+					if bwhy, ok := arb.Benched(a.Name()); ok {
+						benchedNow = append(benchedNow, a.Name()+"("+bwhy+")")
+					}
+				}
+				rx := "-"
+				if o, ok := roster.Unstick.Open(); ok {
+					rx = o.Kind
+				}
+				logger.Warn("idle: nobody bids", "for", time.Since(idleSince).Round(time.Second),
+					"town", s.Me.InTown, "benched", strings.Join(benchedNow, " "), "rx", rx)
 			}
 			time.Sleep(200 * time.Millisecond)
 			continue
@@ -2594,93 +2487,63 @@ func main() {
 		if st.V.Terminal() {
 			logger.Info("verdict", "activity", grant.Demand.Who, "verdict", st.V.String())
 			core.End(actx, grant.Demand.Who, st.V, st.Why, st.Evidence) // was arb.Release()
+		} else {
+			// Progress evidence for the arbiter's mute clock: a ledger outcome, a
+			// phase change, or an honest Wait with a wake time.
+			who := grant.Demand.Who
+			if la := led.LastAppend(); la.After(lastEvidence) {
+				lastEvidence = la
+				arb.MarkProgress(who)
+			}
+			if ph := who + "/" + st.Phase; ph != lastPhase {
+				lastPhase = ph
+				arb.MarkProgress(who)
+			}
+			if st.V == phase.Wait && st.WakeAt.After(time.Now()) {
+				arb.MarkProgress(who)
+			}
 		}
 		// THE STALL ALARM (the owner, session 2: "bouts of idleness while
 		// surrounded by monsters"; 13:03 anatomy: six Survive grants, 26s,
-		// zero outcomes — a mute holder bled him out invisibly). A Survive
-		// holder that writes NOTHING for 2s gets named in the log while it
-		// happens, not exhumed from a black box after.
-		// ALL classes, not just Survive (21:18: a fight-class holder pinned
-		// him at one tile for 100+ seconds, invisible to the Survive-only
-		// alarm — the owner saw it before the log did, again). Survive
-		// stalls at 2s; everyone else gets 4s of grace before being named.
+		// zero outcomes — a mute holder bled him out invisibly). A holder with
+		// no progress evidence for its bar is named in the log while it
+		// happens: Survive at 2s, everyone else 4s. Silence is the arbiter's
+		// mute clock — held time, so gate blocks and preemption never count.
 		// Engage-transition grace (21:39: the ledger is naturally silent while
 		// the OWNER drives, so the alarm fired the instant F10 handed back).
 		if m.Engage.Engaged() != prevEngaged {
 			prevEngaged = m.Engage.Engaged()
 			engagedAt = time.Now()
+			arb.MarkProgress(holderWho(arb))
 		}
 		// Gate grace (janitor ON): a holder the gate held was silent by order.
-		if grant != nil && time.Since(stallWarnAt) > 2*time.Second && !led.LastAppend().IsZero() &&
+		if grant != nil && !st.V.Terminal() && holderWho(arb) == grant.Demand.Who &&
 			time.Since(engagedAt) > 5*time.Second && time.Since(gateOpenAt) > 5*time.Second {
-			silent := time.Since(led.LastAppend())
+			who := grant.Demand.Who
 			bar := 4 * time.Second
 			if grant.Demand.Class == arbiter.ClassSurvive {
 				bar = 2 * time.Second
 			}
-			if silent > bar {
+			silent := arb.Silence(who)
+			if silent > bar && time.Since(stallWarnAt) > 2*time.Second {
 				logger.Warn("STALL — mute holder", "class", grant.Demand.Class.String(),
-					"holder", grant.Demand.Who, "silent", silent.Round(100*time.Millisecond),
+					"holder", who, "silent", silent.Round(100*time.Millisecond),
 					"hp", s.Me.HPPct, "pos", fmt.Sprintf("(%d,%d)", s.Me.Pos.X, s.Me.Pos.Y))
 				stallWarnAt = time.Now()
-				// NO MUTE GRANT (2026-09-23, the owner: "the occasional idling"):
-				// naming the mute holder never freed the wheel — hysteresis kept
-				// granting it while it did nothing. Twice the bar of silence now
-				// RELEASES the grant and cools that holder briefly, so the next
-				// bidder acts. Survive is exempt: its silence is a bug to fix, but
-				// yanking it mid-crowd is worse than the silence.
-				if silent > 2*bar && grant.Demand.Class != arbiter.ClassSurvive {
-					cooldowns[grant.Demand.Who] = time.Now().Add(5 * time.Second)
-					logger.Warn("STALL — mute grant released", "holder", grant.Demand.Who, "cool", "5s")
-					if holderWho(arb) == grant.Demand.Who { // was arb.Release(): a no-op once a verdict ended it
-						core.End(actx, grant.Demand.Who, phase.Abandoned, phase.Mute,
-							fmt.Sprintf("stall: silent %s; cool 5s", silent.Round(100*time.Millisecond)))
-					}
+			}
+			// NO MUTE GRANT (2026-09-23, the owner: "the occasional idling"):
+			// the arbiter's mute policy — twice the bar of silence ends the
+			// episode as Abandoned(Mute) and benches the holder briefly so the
+			// next bidder acts. Survive is exempt: its silence is a bug to fix,
+			// but yanking it mid-crowd is worse; recovery is ended, not benched.
+			if grant.Demand.Class != arbiter.ClassSurvive && arb.Mute(who, 2*bar) {
+				detail := fmt.Sprintf("stall: silent %s", silent.Round(100*time.Millisecond))
+				logger.Warn("STALL — mute holder ended", "holder", who, "silent", silent.Round(100*time.Millisecond))
+				core.End(actx, who, phase.Abandoned, phase.Mute, detail)
+				if grant.Demand.Class > arbiter.ClassRecover {
+					arb.Bench(who, time.Now().Add(5*time.Second), "mute: "+detail)
 				}
 			}
-		}
-		// THE DEADMAN BOX (21:29: ten minutes pinned in a UP pocket across two
-		// binaries while the pocket breaker STARVED — it counts blocked
-		// strides, and a fight-class holder never strides. Position truth
-		// needs no holder's cooperation: 75s inside a 6-box on hostile ground
-		// refutes everything — the portal is the door, WHOEVER holds.)
-		//
-		// THE PACER'S DEADMAN (00:44, the owner: "going back and forth most
-		// of the time — his new favorite spot"): shuttling between two pockets
-		// 20 tiles apart resets every box-based breaker forever. The EMA of
-		// his position barely moves while his feet never stop: <12 tiles of
-		// centroid drift in 3 field-minutes refutes footwork the same way.
-		emaX = emaX*0.98 + float64(s.Me.Pos.X)*0.02
-		emaY = emaY*0.98 + float64(s.Me.Pos.Y)*0.02
-		if s.Me.InTown || s.Me.HPPct <= 0 ||
-			chebyshev(data.Position{X: int(emaX), Y: int(emaY)}, emaRef) > 12 {
-			emaRef, emaRefAt = data.Position{X: int(emaX), Y: int(emaY)}, time.Now()
-		}
-		pacerTripped := time.Since(emaRefAt) > 3*time.Minute
-		if chebyshev(s.Me.Pos, deadmanPos) > 6 || s.Me.InTown || s.Me.HPPct <= 0 {
-			deadmanPos, deadmanAt = s.Me.Pos, time.Now()
-		}
-		if (time.Since(deadmanAt) > 75*time.Second || pacerTripped) && !s.Me.InTown && s.Me.HPPct > 0 &&
-			cap.TownTP != nil &&
-			m.Engage.Engaged() && time.Since(lastPocketTP) > 120*time.Second {
-			who := "none"
-			if grant != nil {
-				who = grant.Demand.Who
-			}
-			logger.Warn("watchdog: DEADMAN BOX — 75s in a 6-box; the portal is the door, whoever holds",
-				"holder", who)
-			activity.NoteBreakerSite(s.Me.Pos)
-			activity.MarkPortalHot(4 * time.Minute)
-			verbs.CastSelf{Key: cap.TownTP.Key}.Do(m, gr, p, led, "watchdog")
-			time.Sleep(2200 * time.Millisecond)
-			if s2 := p.Capture(); s2.Valid && len(s2.Portals) > 0 {
-				verbs.EnterPortal{Target: s2.Portals[0].ID, TargetPos: s2.Portals[0].Pos}.
-					Do(m, gr, p, led, "watchdog")
-			}
-			lastPocketTP = time.Now()
-			deadmanPos, deadmanAt = data.Position{}, time.Now()
-			emaRefAt = time.Now()
-			continue
 		}
 		// THE CURSOR-ITEM DROP (the owner, 02:13: "inventory open and an item
 		// held by the cursor, locking the bot — all it has to do is lmb to

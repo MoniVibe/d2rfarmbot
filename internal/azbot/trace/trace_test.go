@@ -28,6 +28,17 @@ func TestGrant(t *testing.T) {
 		`T L=grant from=loot to=- why="end: done/completed" tick=9`)
 }
 
+func TestWatchdogLine(t *testing.T) {
+	eq(t, Watchdog("stuck", "unstick-stride", "advance", "holder=advance pinned in 0x0 box for 19s run=1", 12),
+		`T L=watchdog verdict=stuck remedy=unstick-stride culprit=advance evidence="holder=advance pinned in 0x0 box for 19s run=1" tick=12`)
+	eq(t, Watchdog("pinned", "unstick-portal", "", "76s in a 6-box", 3),
+		`T L=watchdog verdict=pinned remedy=unstick-portal culprit=- evidence="76s in a 6-box" tick=3`)
+	// The bench's reason rides the arbiter's release into the grant line.
+	eq(t, Grant(arbiter.Change{From: "advance", To: "unstick", Kind: arbiter.Released,
+		Reason: "advance benched: judged: stuck holder=advance pinned in 0x0 box for 19s run=1"}, 13),
+		`T L=grant from=advance to=unstick why="released: advance benched: judged: stuck holder=advance pinned in 0x0 box for 19s run=1" tick=13`)
+}
+
 func TestUI(t *testing.T) {
 	tr := screen.Transition{From: screen.State{Mode: screen.World},
 		To: screen.State{Mode: screen.World, Panels: screen.Inventory}, Evidence: "right-half panel"}

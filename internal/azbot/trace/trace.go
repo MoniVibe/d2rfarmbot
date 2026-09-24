@@ -10,6 +10,7 @@
 //	T L=nav act=advance from=following to=stuck why="no gain 1.5s" tick=48213
 //	T L=life act=fight ev=end why="abandoned/no-target: withdrawn while suspended" tick=48213
 //	T L=gate hold=fight why="foreign: right-panel" act="click 1788,18" tick=48213
+//	T L=watchdog verdict=stuck remedy=unstick-stride culprit=advance evidence="holder=advance pinned in 0x0 box for 19s run=1" tick=48213
 //	S 15:04:05 #48213 ses=InGame mode=World ui=- cur=- hold=fight held=7.2s gate=- phase=- hp=64 mp=30 pos=5012,4431 en=5
 package trace
 
@@ -65,6 +66,13 @@ func UI(t screen.Transition, tick uint64, hold string) string {
 // "key 0x1B", "drop 960,665"), or a change in why the holder is held ("-").
 func Gate(hold, why, act string, tick uint64) string {
 	return fmt.Sprintf("T L=gate hold=%s why=%q act=%q tick=%d", dash(hold), why, dash(act), tick)
+}
+
+// Watchdog is one verdict with its remedy and evidence (the watchdog never acts;
+// the executive benches the culprit and Unstick carries the remedy out).
+func Watchdog(verdict, remedy, culprit, evidence string, tick uint64) string {
+	return fmt.Sprintf("T L=watchdog verdict=%s remedy=%s culprit=%s evidence=%q tick=%d",
+		verdict, remedy, dash(culprit), evidence, tick)
 }
 
 // Phase re-heads a phase.Phaser log line ("phase act=... from=... to=...").
