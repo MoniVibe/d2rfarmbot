@@ -308,6 +308,7 @@ func NewWorld() {
 	equipWorks.Store(true)
 	identifyWorks.Store(true)
 	cainIDWorks.Store(true)
+	stashWorks.Store(true)
 	scrollWorks.Store(true)
 	spendWorks.Store(true)
 	skillSpendWorks.Store(true)
