@@ -2065,19 +2065,9 @@ func main() {
 	// Live journeys adopt every regrid: a wall that streams in across a route
 	// replans it at once.
 	journey.Source = func() *game.Grid { return grid }
-	// Stride's look-ahead reads the CURRENT live grid (the closure follows every
-	// regrid). Unknown/unloaded ground stays walkable — only real walls refuse.
-	verbs.Walkable = func(p data.Position) bool {
-		g := grid
-		if g == nil {
-			return true
-		}
-		rp := g.RelativePosition(p)
-		if rp.X < 0 || rp.Y < 0 || rp.X >= g.Width || rp.Y >= g.Height {
-			return true
-		}
-		return g.IsWalkable(p)
-	}
+	// (Stride's own look-ahead, verbs.Walkable + steerAround, is gone: every
+	// stride is planned by MoveTo on this same grid.)
+
 	gridArea := -1
 	var gridAt time.Time
 	// THE CARTOGRAPHER: every area crossing she ever makes — by march, by wander, by

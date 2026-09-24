@@ -114,7 +114,7 @@ type Act struct {
 	To      data.Position
 	Hold    time.Duration
 	MinGain int
-	Planned bool // the bearing was checked against the grid (skip steerAround)
+	Planned bool // the bearing was checked clear on the grid (logged "clear" vs "blind")
 	Portal  Portal
 	First   bool // ActCast: the episode's first cast (mark the breaker site)
 }

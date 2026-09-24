@@ -1,6 +1,6 @@
 // stridecal — MEASURE force-move strides before anyone tunes them. Drives short
 // planned strides through the exact path azbot's nav follower uses
-// (verbs.Stride{Planned: true} -> motor.StrideEdge -> posted WM_KEYDOWN + GetKeyState
+// (a planned verbs.Stride -> motor.StrideEdge -> posted WM_KEYDOWN + GetKeyState
 // override, released by motor.MoveStop), across holds and 8 world directions, and
 // records what the game actually did with each one.
 //
@@ -359,7 +359,7 @@ func main() {
 		}
 		rp := grid.RelativePosition(pp)
 		if rp.X < 0 || rp.Y < 0 || rp.X >= grid.Width || rp.Y >= grid.Height {
-			return true // unknown ground: azbot's verbs.Walkable convention
+			return true // unknown ground: the fused map's optimistic convention
 		}
 		return grid.IsWalkable(pp)
 	}
@@ -432,7 +432,7 @@ func main() {
 	baseHP := s0.Me.HPPct
 	abort := ""
 
-	// stride runs ONE verbs.Stride{Planned:true} under a RoleSteer lease (the dead-man
+	// stride runs ONE planned verbs.Stride under a RoleSteer lease (the dead-man
 	// timer backs the key release) with the sampler alongside, then settles and reads.
 	stride := func(kind string, repN int, dir string, dirDeg int, to data.Position, holdMS int) (row, bool) {
 		r := row{kind: kind, rep: repN, dir: dir, dirDeg: dirDeg, holdReq: int64(holdMS), target: to, headErr: math.NaN()}
@@ -470,7 +470,7 @@ func main() {
 		t0 := time.Now()
 		wg.Add(1)
 		go sample(gr, r.start, t0, stop, &smp, &wg)
-		o := verbs.Stride{To: to, Hold: time.Duration(holdMS) * time.Millisecond, MinGain: 1, Planned: true, Reach: *reach}.Do(m, gr, p, led, "stridecal/"+kind)
+		o := verbs.Stride{To: to, Hold: time.Duration(holdMS) * time.Millisecond, MinGain: 1, Reach: *reach}.Do(m, gr, p, led, "stridecal/"+kind)
 		lease.Release() // MoveStop again; redundant by design
 		time.Sleep(300 * time.Millisecond)
 		close(stop)

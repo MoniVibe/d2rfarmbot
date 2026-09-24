@@ -85,7 +85,7 @@ func (g GameLegs) Here() (data.Position, bool) {
 }
 
 func (g GameLegs) Stride(to data.Position, hold time.Duration, minGain int, holder string) verbs.Outcome {
-	return verbs.Stride{To: to, Hold: hold, MinGain: minGain, Planned: true}.Do(g.M, g.GR, g.P, g.Led, holder)
+	return verbs.Stride{To: to, Hold: hold, MinGain: minGain}.Do(g.M, g.GR, g.P, g.Led, holder)
 }
 
 // Object bubbles: the route keeps ~3 tiles off live objects when there is room,
