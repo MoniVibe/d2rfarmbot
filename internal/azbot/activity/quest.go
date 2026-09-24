@@ -33,8 +33,9 @@ type questLeg struct {
 }
 
 var questLegs = map[area.ID]questLeg{
-	area.HallsOfTheDeadLevel3: {chest: 354, item: "box", label: "Horadric Cube"},
-	area.MaggotLairLevel3:     {chest: 356, item: "msf", label: "Staff of Kings"},
+	area.HallsOfTheDeadLevel3:  {chest: 354, item: "box", label: "Horadric Cube"},
+	area.MaggotLairLevel3:      {chest: 356, item: "msf", label: "Staff of Kings"},
+	area.ClawViperTempleLevel2: {chest: 149, item: "vip", label: "Amulet of the Viper"}, // TaintedSunShrine altar
 }
 
 // questBudget: held time a quest leg may spend before the march moves on anyway.

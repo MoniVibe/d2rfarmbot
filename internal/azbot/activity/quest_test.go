@@ -28,7 +28,7 @@ func TestQuestLegHoldsUntilChestSpent(t *testing.T) {
 }
 
 func TestQuestChestsAreRites(t *testing.T) {
-	for _, n := range []int{354, 355, 356} {
+	for _, n := range []int{354, 355, 356, 149} {
 		if !percept.IsRite(data.Object{Name: objName(n)}) || !isQuestChest(objName(n)) {
 			t.Fatalf("object %d must be a quest rite", n)
 		}

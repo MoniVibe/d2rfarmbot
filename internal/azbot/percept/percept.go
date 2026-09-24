@@ -263,7 +263,7 @@ var ManaWells = map[object.Name]bool{
 // opened, hover-clicked, yielded under pressure.
 // QuestChests: the Horadric quest chests (objects.txt rows 354 Cube, 355 Scroll,
 // 356 Staff of Kings). Imbibe opens them from further out and first (activity/quest.go).
-var QuestChests = map[object.Name]bool{354: true, 355: true, 356: true}
+var QuestChests = map[object.Name]bool{354: true, 355: true, 356: true, 149: true} // 149: the Viper altar (TaintedSunShrine)
 
 func IsRite(ob data.Object) bool {
 	return (ob.IsShrine() && GivingShrines[ob.Shrine.ShrineType]) ||
