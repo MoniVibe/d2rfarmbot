@@ -2488,7 +2488,16 @@ func main() {
 			logger.Info("grant", "from", gch.From, "to", grant.Demand.Who, "class", grant.Demand.Class.String(),
 				"urgency", fmt.Sprintf("%.2f", grant.Demand.Urgency), "why", gch.Why())
 		}
-		st := roster.Get(grant.Demand.Who).Step(actx)
+		// WAIT (contract v2): a holder that answered Wait keeps the grant but
+		// is not Stepped until its WakeAt. Arbitration above still ran, so a
+		// survival bid preempts a sleeper like any holder (and drops the park).
+		var st exec.Status
+		if core.Asleep(grant.Demand.Who, time.Now()) {
+			st = exec.Status{V: phase.Wait}
+		} else {
+			st = roster.Get(grant.Demand.Who).Step(actx)
+			core.Park(grant.Demand.Who, st)
+		}
 		if st.V.Terminal() {
 			logger.Info("verdict", "activity", grant.Demand.Who, "verdict", st.V.String())
 			core.End(actx, grant.Demand.Who, st.V, st.Why, st.Evidence) // was arb.Release()

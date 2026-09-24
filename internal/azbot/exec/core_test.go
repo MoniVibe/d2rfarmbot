@@ -205,3 +205,48 @@ func TestNilFindIsSilentLifecycle(t *testing.T) {
 	step(c, x, flee)
 	want(t, x)
 }
+
+// A Wait parks the holder: it keeps the grant, is not Stepped until WakeAt,
+// and survival preemption still lands (and drops the park).
+func TestWaitParksHolder(t *testing.T) {
+	c, cl, x, _ := newCore()
+	step(c, x, loot)
+	want(t, x, "loot.begin(resumed=false)")
+	c.Park("loot", Status{V: phase.Wait, WakeAt: cl.t.Add(500 * time.Millisecond)})
+	if !c.Asleep("loot", cl.t) {
+		t.Fatal("parked holder should be asleep")
+	}
+	cl.Tick(200 * time.Millisecond)
+	step(c, x, loot)
+	want(t, x) // keeps the grant, no lifecycle
+	if !c.Asleep("loot", cl.t) {
+		t.Fatal("still asleep before WakeAt")
+	}
+	cl.Tick(400 * time.Millisecond)
+	if c.Asleep("loot", cl.t) {
+		t.Fatal("awake at WakeAt")
+	}
+	// Park again, then survival preempts: the park goes with the seat.
+	c.Park("loot", Status{V: phase.Wait, WakeAt: cl.t.Add(5 * time.Second)})
+	step(c, x, loot, flee)
+	want(t, x, "loot.suspend(preempted)", "flee.begin(resumed=false)")
+	if c.Asleep("loot", cl.t) {
+		t.Fatal("a suspended activity is not parked: its resume re-verifies at once")
+	}
+	// Running and a WakeAt-less Wait clear the park.
+	c.Park("flee", Status{V: phase.Wait, WakeAt: cl.t.Add(time.Second)})
+	c.Park("flee", Status{V: phase.Running})
+	if c.Asleep("flee", cl.t) {
+		t.Fatal("Running clears the park")
+	}
+	c.Park("flee", Status{V: phase.Wait})
+	if c.Asleep("flee", cl.t) {
+		t.Fatal("a Wait without WakeAt steps next tick")
+	}
+	// End drops it too.
+	c.Park("flee", Status{V: phase.Wait, WakeAt: cl.t.Add(time.Second)})
+	c.End(x, "flee", phase.Done, phase.Completed, "")
+	if c.Asleep("flee", cl.t) {
+		t.Fatal("End clears the park")
+	}
+}

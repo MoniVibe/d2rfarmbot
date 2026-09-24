@@ -26,7 +26,8 @@ type Core[C any] struct {
 	Trace func(line string)        // nil = silent
 	Tick  uint64                   // stamped on trace lines; the caller advances it
 
-	open     map[string]bool // begun and not yet ended (holding or suspended)
+	open     map[string]bool      // begun and not yet ended (holding or suspended)
+	wake     map[string]time.Time // parked by a Wait: not Stepped before this time
 	last     arbiter.Change  // last non-keep change, for flight frames
 	lastTick uint64
 }
@@ -59,6 +60,7 @@ func (c *Core[C]) begin(ctx C, who string, resumed bool) {
 	}
 	resumed = resumed || c.open[who]
 	c.open[who] = true
+	delete(c.wake, who) // a new seat re-verifies at once (Begin), never sleeps on
 	if l := c.find(who); l != nil {
 		l.Begin(ctx, resumed)
 	}
@@ -68,6 +70,7 @@ func (c *Core[C]) suspend(ctx C, who string, why phase.Reason) {
 	if !c.open[who] {
 		return
 	}
+	delete(c.wake, who)
 	if l := c.find(who); l != nil {
 		l.Suspend(ctx, why)
 	}
@@ -79,8 +82,41 @@ func (c *Core[C]) close(ctx C, who string, v phase.Verdict, why phase.Reason) bo
 		return false
 	}
 	delete(c.open, who)
+	delete(c.wake, who)
 	if l := c.find(who); l != nil {
 		l.End(ctx, v, why)
+	}
+	return true
+}
+
+// Park records a Step's Wait: until st.WakeAt the holder keeps its grant but
+// is not Stepped (Asleep). Any other verdict, or a Wait with no WakeAt, clears
+// the park — the holder Steps next tick. Arbitration still runs every tick, so
+// a survival bid preempts a sleeper exactly as it would a runner (and the
+// preemption drops the park: the resumed Begin re-verifies at once).
+func (c *Core[C]) Park(who string, st Status) {
+	if who == "" {
+		return
+	}
+	if st.V != phase.Wait || st.WakeAt.IsZero() {
+		delete(c.wake, who)
+		return
+	}
+	if c.wake == nil {
+		c.wake = map[string]time.Time{}
+	}
+	c.wake[who] = st.WakeAt
+}
+
+// Asleep reports whether who is parked by a Wait at now.
+func (c *Core[C]) Asleep(who string, now time.Time) bool {
+	t, ok := c.wake[who]
+	if !ok {
+		return false
+	}
+	if !now.Before(t) {
+		delete(c.wake, who)
+		return false
 	}
 	return true
 }
