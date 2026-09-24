@@ -1,6 +1,8 @@
 package activity
 
 import (
+	"os"
+	"path/filepath"
 	"testing"
 	"time"
 
@@ -8,9 +10,49 @@ import (
 	"github.com/hectorgimenez/koolo/internal/azbot/percept"
 )
 
-// resetLoot gives each test a fresh brain (the default policy, no wiring).
+// widePolicy is the pre-ruling wide net: these tests exercise every tier's
+// mechanics (swap, haul, urgency). The shipped default is the owner's narrow
+// "uniques and special items only" rule (config/loot.yaml).
+const widePolicy = `tiers:
+  unique: S
+  set: S
+  rare: A
+  crafted: A
+  magic_jewelry: A
+  magic_gear: B
+  plain_gear: C
+  rune: S
+  gem: S
+  jewel: S
+  charm: S
+  gold: A
+  potion: A
+  quest: S
+  ammo: C
+  scroll: C
+  misc: C
+  unknown_mod_item: A
+  quality_contradiction: A
+space:
+  swap_for_a: true
+`
+
+// useWideLoot points the loot brain at the wide policy for this test.
+func useWideLoot(t *testing.T) {
+	t.Helper()
+	p := filepath.Join(t.TempDir(), "loot.yaml")
+	if err := os.WriteFile(p, []byte(widePolicy), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	old := LootConfigPath
+	LootConfigPath = p
+	t.Cleanup(func() { LootConfigPath = old })
+}
+
+// resetLoot gives each test a fresh brain on the wide policy (no wiring).
 func resetLoot(t *testing.T) {
 	t.Helper()
+	useWideLoot(t)
 	theLoot = &lootMind{}
 	marchLawfulUntil = time.Time{}
 	haulCoolUntil = time.Time{}

@@ -109,6 +109,7 @@ func TestLootPickIsNearestAndSticky(t *testing.T) {
 // Bottles on the floor are wanted while the belt has room, never over a unique,
 // and not at all once the belt is full.
 func TestLootWantsPotionsForTheBelt(t *testing.T) {
+	resetLoot(t)
 	LootPotions = true
 	defer func() { LootPotions = false }()
 	l := NewLoot()

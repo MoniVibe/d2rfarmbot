@@ -95,16 +95,20 @@ type Config struct {
 func Default() *Config {
 	return &Config{
 		Defaults: Defaults{
-			Unique: TierS, Set: TierS, Rare: TierA, Crafted: TierA,
-			MagicJewelry: TierA, MagicGear: TierB, PlainGear: TierC,
-			Rune: TierS, Gem: TierS, Jewel: TierS, Charm: TierS,
-			Gold: TierA, Potion: TierA, Quest: TierS, Ammo: TierC,
+			// OWNER RULING (2026-09-24, watching relay R13): "for now pick up
+			// only uniques and special items (orbs)" — the wide net looped on
+			// piles. Special = quest items and the mod's own rows (orbs,
+			// currencies). Widen here once pickups are proven reliable.
+			Unique: TierS, Set: TierC, Rare: TierC, Crafted: TierC,
+			MagicJewelry: TierC, MagicGear: TierC, PlainGear: TierC,
+			Rune: TierC, Gem: TierC, Jewel: TierC, Charm: TierC,
+			Gold: TierC, Potion: TierC, Quest: TierS, Ammo: TierC,
 			Scroll: TierC, Misc: TierC,
-			UnknownModItem: TierA, QualityContradiction: TierA,
+			UnknownModItem: TierS, QualityContradiction: TierC,
 		},
 		IDs:   map[int]Tier{},
 		Codes: map[string]Tier{},
-		Space: Space{SwapForA: true, SwapForS: true, TownTripForS: true, SellRaresPct: 70},
+		Space: Space{SwapForA: false, SwapForS: true, TownTripForS: true, SellRaresPct: 70},
 		// A census every three minutes: often enough to read a run by, rare
 		// enough not to drown the log.
 		CensusEvery: 3 * time.Minute,

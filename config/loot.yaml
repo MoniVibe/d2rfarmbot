@@ -17,7 +17,7 @@
 #   wrong ("SmallCharm" is a red potion, "LumRune" is an Eld rune, "Fang" is
 #   gold). The bot undoes the shift; `codes:` below use the VANILLA codes.
 #   Rows past 673 are the mod's own items (orbs, currencies...). Until you tag
-#   them they default to tier A (unknown_mod_item) so nothing new is ignored.
+#   them they default to tier S (unknown_mod_item) — the orbs live there.
 #
 # FINDING IDS TO TAG
 #   logs/loot_catalog.jsonl gets one line per new (id, quality) the bot sees,
@@ -26,26 +26,29 @@
 #     verb=lootpick item=<id> name=<name> q=<quality> tier=<S|A|B|C> why=<...>
 
 # Default tier per class of item.
+# OWNER RULING (2026-09-24): for now ONLY uniques and special items (quest items,
+# the mod's own rows = orbs/currencies) are picked up. Everything else is C.
+# Raise tiers here once pickups are proven reliable.
 tiers:
   unique: S
-  set: S
-  rare: A
-  crafted: A
-  magic_jewelry: A        # magic rings and amulets
-  magic_gear: B           # magic weapons/armor: Fence fodder
+  set: C
+  rare: C
+  crafted: C
+  magic_jewelry: C        # magic rings and amulets
+  magic_gear: C           # magic weapons/armor
   plain_gear: C           # normal / superior / low-quality bases
-  rune: S
-  gem: S                  # gems and skulls, chipped included
-  jewel: S
-  charm: S                # small/large/grand charms (they work from the bag)
-  gold: A                 # needs no bag room
-  potion: A               # only while the belt has a free slot AND bottle looting is on
+  rune: C
+  gem: C                  # gems and skulls, chipped included
+  jewel: C
+  charm: C                # small/large/grand charms
+  gold: C
+  potion: C               # bottles off for now (the belt is restocked in town)
   quest: S                # uber keys, essences, organs, tokens
-  ammo: C                 # arrows/bolts (rare/unique ammo still follow rare/unique)
+  ammo: C                 # arrows/bolts
   scroll: C               # loose TP/ID scrolls (the tomes are refilled in town)
   misc: C                 # keys, torches, elixirs...
-  unknown_mod_item: A     # rows past the vanilla table: the mod's own items
-  quality_contradiction: A  # e.g. a "rune" row showing magic quality: the table is wrong about it
+  unknown_mod_item: S     # rows past the vanilla table: the mod's own items (orbs...)
+  quality_contradiction: C  # e.g. a "rune" row showing magic quality
 
 # Explicit tags. First match wins: ids, then codes, then names.
 # ids: the row number the game reports (the catalog's "id").
@@ -65,7 +68,7 @@ names:
 
 space:
   pick_tier_b: false      # true: take tier B when half the bag is free and she is not marching
-  swap_for_a: true        # a tier A drop may replace a worse carried item (not while marching)
+  swap_for_a: false       # a tier A drop may replace a worse carried item (not while marching)
   swap_for_s: true        # a tier S drop may replace a worse carried item
   town_trip_for_s: true   # a tier S drop may send her to town and back (needs a proven TP binding)
   sell_rares_pct: 70      # bag this full (%): identified rares that are not upgrades go to the Fence

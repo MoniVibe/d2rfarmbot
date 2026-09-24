@@ -49,7 +49,7 @@ func TestClassifyUndoesTheModShift(t *testing.T) {
 }
 
 func TestEvaluateTiers(t *testing.T) {
-	c := Default()
+	c := wide()
 	cases := []struct {
 		it   Item
 		tier Tier
@@ -80,8 +80,8 @@ func TestEvaluateTiers(t *testing.T) {
 }
 
 // New mod bits are never ignored: unknown rows and impossible qualities are A.
-func TestUnknownModItemsDefaultToA(t *testing.T) {
-	c := Default()
+func TestUnknownModItemsWideA(t *testing.T) {
+	c := wide()
 	if v := c.Evaluate(Item{ID: 746, Quality: QNormal}); v.Tier != TierA || !strings.Contains(v.Why, "unknown mod row") {
 		t.Fatalf("unknown mod row: %s (%s), want A", v.Tier, v.Why)
 	}
@@ -166,7 +166,7 @@ func TestShippedConfigMatchesDefaults(t *testing.T) {
 	}
 	d := Default()
 	if c.Defaults != d.Defaults || c.Space != d.Space || c.CensusEvery != d.CensusEvery {
-		t.Fatalf("shipped config drifted from Default():\n%+v\n%+v", c, d)
+		t.Fatalf("shipped config drifted from wide():\n%+v\n%+v", c, d)
 	}
 	if _, ok, err := Load(filepath.Join(t.TempDir(), "missing.yaml")); ok || err != nil {
 		t.Fatal("a missing file is the defaults, not an error")
@@ -181,7 +181,7 @@ func TestShippedConfigMatchesDefaults(t *testing.T) {
 func bagOf(items ...Carried) []Carried { return items }
 
 func TestPlanSpaceDecisions(t *testing.T) {
-	c := Default()
+	c := wide()
 	unique := Item{ID: 0, Quality: QUnique} // hand axe: 1x3
 	rare := Item{ID: 0, Quality: QRare}
 	junkAxe := Carried{Unit: 11, Item: Item{ID: 0, Quality: QNormal}, Identified: true} // plain gear, 3 cells
@@ -234,7 +234,7 @@ func TestPlanSpaceDecisions(t *testing.T) {
 // "Trying to progress": with the march urgent and the bag full, tier A waits
 // and tier S still wins.
 func TestPlanProgressUrgency(t *testing.T) {
-	c := Default()
+	c := wide()
 	junk := Carried{Unit: 1, Item: Item{ID: 0, Quality: QNormal}, Identified: true}
 	sit := Situation{Free: 0, Urgent: true, Bag: bagOf(junk)}
 	if p := c.Plan(Item{ID: 0, Quality: QRare}, sit); p.Act != Skip || !strings.Contains(p.Why, "urgent") {
@@ -262,7 +262,7 @@ func TestPlanProgressUrgency(t *testing.T) {
 }
 
 func TestPlanPotionsAndGold(t *testing.T) {
-	c := Default()
+	c := wide()
 	red := Item{ID: 603, Quality: QNormal, Potion: "health"}
 	if p := c.Plan(red, Situation{Free: 0, BeltFree: 3}); p.Act != Skip || !strings.Contains(p.Why, "gated") {
 		t.Fatalf("potions gated off: %s (%s)", p.Act, p.Why)
@@ -279,7 +279,7 @@ func TestPlanPotionsAndGold(t *testing.T) {
 }
 
 func TestSellGradeAndKeep(t *testing.T) {
-	c := Default()
+	c := wide()
 	idRare := Carried{Item: Item{ID: 0, Quality: QRare}, Identified: true}
 	if c.SellGrade(idRare, 40) {
 		t.Fatal("rares are kept while the bag is roomy")
@@ -321,7 +321,7 @@ func TestCensusAndCatalog(t *testing.T) {
 		t.Fatalf("census line: %q", line)
 	}
 	cat := NewCatalog()
-	c := Default()
+	c := wide()
 	it := Item{ID: 746, Name: "", Quality: QNormal}
 	e, isNew := cat.Note(it, c.Evaluate(it), 3, "ground", t0)
 	if !isNew || e.Tier != "A" || e.TagHint == "" || e.VanillaID != -1 {
@@ -353,5 +353,35 @@ func TestOccupiedBag(t *testing.T) {
 	}
 	if BagCells != 80 {
 		t.Fatal("this mod's bag is 10x8")
+	}
+}
+
+// wide is the pre-ruling policy: the mechanics tests (swap, haul, sell, census)
+// exercise every tier with it; the shipped default is the owner's narrow rule.
+func wide() *Config {
+	c := Default()
+	c.Defaults = Defaults{
+		Unique: TierS, Set: TierS, Rare: TierA, Crafted: TierA,
+		MagicJewelry: TierA, MagicGear: TierB, PlainGear: TierC,
+		Rune: TierS, Gem: TierS, Jewel: TierS, Charm: TierS,
+		Gold: TierA, Potion: TierA, Quest: TierS, Ammo: TierC,
+		Scroll: TierC, Misc: TierC,
+		UnknownModItem: TierA, QualityContradiction: TierA,
+	}
+	c.Space.SwapForA = true
+	return c
+}
+
+// The owner's ruling (2026-09-24): only uniques and special items by default.
+func TestDefaultIsUniquesAndSpecialOnly(t *testing.T) {
+	d := Default().Defaults
+	if d.Unique != TierS || d.Quest != TierS || d.UnknownModItem != TierS {
+		t.Fatalf("uniques, quest items and mod rows must be S: %+v", d)
+	}
+	for name, tr := range map[string]Tier{"set": d.Set, "rare": d.Rare, "rune": d.Rune, "gem": d.Gem,
+		"charm": d.Charm, "gold": d.Gold, "potion": d.Potion, "magic_jewelry": d.MagicJewelry} {
+		if tr != TierC {
+			t.Errorf("%s must be C under the ruling, got %v", name, tr)
+		}
 	}
 }
