@@ -200,11 +200,21 @@ func SendShiftClickRealScreen(screenX, screenY int) { SendModClickRealScreen(0x2
 func SendModClickRealScreen(scan uint16, screenX, screenY int) {
 	down := hwInput{inputType: inputKeyboard, a: uint32(scan) << 16, b: keyeventfScancode}
 	up := hwInput{inputType: inputKeyboard, a: uint32(scan) << 16, b: keyeventfScancode | keyeventfKeyUp}
+	// The proven drill order (R33: Ctrl-then-move-click lifted in the bot while
+	// the hand drill transferred): cursor first, settle, modifier, click, release.
+	cx, _, _ := procGetSystemMetrics.Call(0)
+	cy, _, _ := procGetSystemMetrics.Call(1)
+	nx := uint32(float64(screenX) * 65535.0 / float64(cx))
+	ny := uint32(float64(screenY) * 65535.0 / float64(cy))
+	sendInputs([]hwInput{{inputType: inputMouse, a: nx, b: ny, d: mouseeventfMove | mouseeventfAbsolute | mouseeventfVirtualDesk}})
+	time.Sleep(120 * time.Millisecond)
 	sendInputs([]hwInput{down})
 	defer sendInputs([]hwInput{up})
-	time.Sleep(60 * time.Millisecond)
-	SendClickRealScreen(screenX, screenY)
-	time.Sleep(60 * time.Millisecond)
+	time.Sleep(80 * time.Millisecond)
+	sendInputs([]hwInput{{inputType: inputMouse, a: nx, b: ny, d: mouseeventfLeftDown | mouseeventfAbsolute | mouseeventfVirtualDesk}})
+	time.Sleep(70 * time.Millisecond)
+	sendInputs([]hwInput{{inputType: inputMouse, a: nx, b: ny, d: mouseeventfLeftUp | mouseeventfAbsolute | mouseeventfVirtualDesk}})
+	time.Sleep(80 * time.Millisecond)
 }
 
 // OSCursorPos: the desktop cursor as Windows reports it to THIS process (the
