@@ -45,6 +45,7 @@ const (
 	stashPitchY     = 47.7
 	stashNextPgX    = 615.0 // the page arrow right of "Page n / 5"
 	stashNextPgY    = 752.0
+	stashPrevPgX    = 462.0 // the page arrow left of "Page n / 5"
 	stashSharedTabX = 297.0 // the "Shared" tab header (measured in a click drill, R29)
 	stashSharedTabY = 89.0
 )
@@ -90,23 +91,25 @@ func stashClaims(p stPhase) screen.Panel {
 
 // Stash is the town errand that empties the bag of keepers into the stash.
 type Stash struct {
-	life      svcLife[stPhase]
-	clickT    time.Time
-	target    data.UnitID // the keeper being moved
-	tgtW      int
-	tgtH      int
-	tgtGX     int
-	tgtGY     int
-	pages     int // page turns this lift
-	moved     int
-	fails     int
-	coolAt    time.Time
-	tabbed    bool      // the Shared tab was clicked this episode
-	tab, want int       // the open tab (read by sight), and the tab the current keeper belongs in
-	tabTries  int       // clicks toward want that did not show it
-	shifting  bool      // a shift-transfer is being judged
-	noShift   bool      // this keeper takes the lift-and-place path
-	fullUntil time.Time // a stash with no room for the keeper: stand down (no retry loop)
+	life          svcLife[stPhase]
+	clickT        time.Time
+	target        data.UnitID // the keeper being moved
+	tgtW          int
+	tgtH          int
+	tgtGX         int
+	tgtGY         int
+	pages         int // page turns this lift
+	moved         int
+	fails         int
+	coolAt        time.Time
+	tabbed        bool      // the Shared tab was clicked this episode
+	tab, want     int       // the open tab (read by sight), and the tab the current keeper belongs in
+	tabTries      int       // clicks toward want that did not show it
+	shifting      bool      // a shift-transfer is being judged
+	rewinds       int       // left-arrow presses toward Shared page 1 this episode
+	triedPersonal bool      // Shared full: Personal was tried
+	noShift       bool      // this keeper takes the lift-and-place path
+	fullUntil     time.Time // a stash with no room for the keeper: stand down (no retry loop)
 	// the chest hover sweep (one aim per tick)
 	aimIdx     int
 	aimX, aimY int
@@ -142,6 +145,7 @@ func stashable(s *percept.Snapshot, c *loot.Config) []percept.BagItem {
 	}
 	p := c.NewPlanner(s.Me.InvFree)
 	p.Level = s.Me.Level
+	p.UsesBow = s.Me.HasBow
 	var out []percept.BagItem
 	for _, b := range s.Bag {
 		d, _ := p.Dispose(loot.Carried{Unit: uint32(b.Unit), Unique: int(b.Unique), Item: loot.Item{ID: b.ID, Name: b.Name, Quality: b.Qual}, GX: b.GX, GY: b.GY, Identified: b.Ident, Upgrade: b.Upgrade})
@@ -191,6 +195,7 @@ func (st *Stash) Begin(ctx *Ctx, resumed bool) {
 		st.moved, st.fails = 0, 0
 	}
 	st.target, st.pages, st.tabbed, st.shifting, st.noShift = 0, 0, false, false, false
+	st.rewinds, st.triedPersonal = 0, false
 }
 
 func (st *Stash) Suspend(ctx *Ctx, _ phase.Reason) { st.life.suspend(ctx) }
@@ -314,14 +319,20 @@ func (st *Stash) Step(ctx *Ctx) Status {
 			switch {
 			case st.tab != stashTabShared:
 				st.want = stashTabShared
-			case st.pages < stashMaxPages:
+			// OWNER (R38): "he tries to stash things but only on the 5th page, there
+			// are other pages and a personal tab too". Shared is rewound to page 1 on
+			// arrival (below), filled forward to page 5, then Personal.
+			case st.tab == stashTabShared && st.pages < stashMaxPages-1:
 				k := shopScale(ctx)
 				ctx.M.RealMenuClick(int(stashNextPgX*k), int(stashNextPgY*k))
 				st.pages++
 				st.clickT = time.Now()
 				return l.wait(400 * time.Millisecond)
+			case st.tab == stashTabShared && !st.triedPersonal:
+				st.want, st.triedPersonal = stashTabPersonal, true
 			default:
-				st.noShift = true // the lift-and-place path takes this item
+				st.fullUntil = time.Now().Add(30 * time.Minute)
+				return l.finish(ctx, phase.Abandoned, phase.Refused, "no room on Shared pages 1-5 or Personal")
 			}
 		}
 		if st.target != 0 && !st.shifting && st.want == st.tab && !st.noShift && time.Since(st.clickT) < 600*time.Millisecond {
@@ -361,6 +372,14 @@ func (st *Stash) Step(ctx *Ctx) Status {
 			return l.wait(400 * time.Millisecond)
 		}
 		st.tabTries = 0
+		if st.tab == stashTabShared && st.rewinds < stashMaxPages-1 {
+			k := shopScale(ctx)
+			ctx.M.RealMenuClick(int(stashPrevPgX*k), int(stashNextPgY*k)) // back to page 1 (a page-1 press is harmless)
+			st.rewinds++
+			st.pages = 0
+			st.clickT = time.Now()
+			return l.wait(200 * time.Millisecond)
+		}
 		cx, cy := invCellPx(ctx, k.GX, k.GY)
 		if st.noShift {
 			ctx.M.RealMenuClick(cx, cy) // lift; stPlace sets it down by sight

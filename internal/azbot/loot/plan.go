@@ -40,7 +40,9 @@ type Planner struct {
 	tight      bool
 	charmCells int
 	// Level is the character's level (outlevelled uniques are sold); 0 = unknown.
-	Level   int
+	Level int
+	// UsesBow: he carries a bow or crossbow (arrows/bolts are then keepers).
+	UsesBow bool
 	uniques map[int]bool // unique rows already kept this plan (a second copy sells)
 	// UniqueReq resolves a unique row to (its base code, its level requirement);
 	// ok=false when unknown. Wired to gamedata by the caller; nil = rule off.
@@ -109,6 +111,11 @@ func (p *Planner) Dispose(it Carried) (Disposition, string) {
 			}
 		}
 		p.uniques[it.Unique] = true
+	}
+	// Unique arrows/bolts for a character with no bow (R38: two unique quivers
+	// rode a barbarian's bag): merchandise.
+	if cl.Kind == KindAmmo && !p.UsesBow {
+		return DispSell, "ammo, no bow"
 	}
 	v, pinned := p.c.EvaluateCarried(it)
 	if pinned || v.Tier >= TierA {

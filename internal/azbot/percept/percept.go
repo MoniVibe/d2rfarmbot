@@ -689,6 +689,7 @@ func (p *Perceptor) Capture() *Snapshot {
 	bagPots := map[inventory.Potion]int{} // bag potions per family — the reserve audit (P-4.5)
 	planner := policy.NewPlanner(loot.BagCells - occupied)
 	planner.Level = s.Me.Level
+	planner.UsesBow = s.Me.HasBow
 	for _, it := range bag {
 		id := int(it.ID)
 		up := isUpgrade(it)
