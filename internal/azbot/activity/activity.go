@@ -15,6 +15,7 @@ import (
 	"github.com/hectorgimenez/d2go/pkg/data/skill"
 	"github.com/hectorgimenez/koolo/internal/azbot/arbiter"
 	"github.com/hectorgimenez/koolo/internal/azbot/combat"
+	"github.com/hectorgimenez/koolo/internal/azbot/combat/policy"
 	"github.com/hectorgimenez/koolo/internal/azbot/exec"
 	"github.com/hectorgimenez/koolo/internal/azbot/journey"
 	"github.com/hectorgimenez/koolo/internal/azbot/memory"
@@ -126,28 +127,55 @@ func losClear(g *game.Grid, a, b data.Position) bool {
 // gait and out of point-blank range where Double Swing is the steadier fallback.
 // The live skill binding is selected by calibration; this helper only decides
 // which already-proven key is safe to issue this tick.
-func meleeAttackKey(ctx *Ctx, s *percept.Snapshot, allowLeap bool) byte {
+//
+// dist is the Chebyshev distance to what will be struck. The blind strike
+// sites (Stand, Flee, Breakout) fire volleyAt, where key 0 is SHIFT+left —
+// the owner's left skill in place — so Approach (policy.Choose's "out of
+// reach, no hover") degrades to that in-place swing there.
+func meleeAttackKey(ctx *Ctx, s *percept.Snapshot, dist int) byte {
+	_, key := meleeStrike(ctx, s, dist, false, true)
+	return key
+}
+
+// leftAudit benches the left skill after a run of evidence-free left strikes
+// (policy.LeftAudit); Fight feeds it, every strike site obeys it.
+var leftAudit policy.LeftAudit
+
+// meleeStrike runs the pure strike policy on the proven capability and maps
+// the answer onto a key: 0 for the left hand (and the plain attack), the
+// proven right binding's key otherwise.
+func meleeStrike(ctx *Ctx, s *percept.Snapshot, dist int, hoverOK, leapOK bool) (policy.Kind, byte) {
 	if ctx == nil || ctx.Cap == nil || s == nil {
-		return 0
+		return policy.Basic, 0
 	}
-	if allowLeap && ctx.Cap.LeapAttack != nil && leapAttackReady(s) {
-		return ctx.Cap.LeapAttack.Key
+	c := ctx.Cap
+	combatIsLeap := c.Combat != nil && c.LeapAttack != nil && c.Combat.Skill == c.LeapAttack.Skill
+	combat := c.Combat
+	if combat == nil {
+		combat = c.Contact
 	}
-	if ctx.Cap.DoubleSwing != nil && s.Me.MPPct > 10 {
-		return ctx.Cap.DoubleSwing.Key
+	k := policy.Choose(policy.Inputs{
+		LeftProven:   c.Left.Primary(),
+		LeftBenched:  leftAudit.Benched(time.Now()),
+		LeapProven:   c.LeapAttack != nil,
+		SwingProven:  c.DoubleSwing != nil,
+		CombatProven: combat != nil,
+		CombatIsLeap: combatIsLeap,
+		Dist:         dist,
+		MPPct:        s.Me.MPPct,
+		LeapReady:    leapAttackReady(s),
+		LeapBlocked:  !leapOK || time.Now().Before(vaultHungerUntil),
+		HoverOK:      hoverOK,
+	})
+	switch k {
+	case policy.Leap:
+		return k, c.LeapAttack.Key
+	case policy.Swing:
+		return k, c.DoubleSwing.Key
+	case policy.Combat:
+		return k, combat.Key
 	}
-	if ctx.Cap.Combat != nil {
-		// Do not re-issue Leap Attack when the mana/range gate rejected it.
-		if ctx.Cap.LeapAttack != nil && ctx.Cap.Combat.Skill == ctx.Cap.LeapAttack.Skill &&
-			(!allowLeap || !leapAttackReady(s)) {
-			return 0
-		}
-		return ctx.Cap.Combat.Key
-	}
-	if ctx.Cap.Contact != nil {
-		return ctx.Cap.Contact.Key
-	}
-	return 0
+	return k, 0
 }
 
 func leapAttackReady(s *percept.Snapshot) bool {
@@ -536,7 +564,7 @@ func (st *Stand) Step(ctx *Ctx) Verdict {
 	case s.Me.WeaponKind == "bow" && ctx.Cap != nil && ctx.Cap.Reach != nil && s.Me.MPPct > 10:
 		key = ctx.Cap.Reach.Key
 	default:
-		key = meleeAttackKey(ctx, s, bd > 3)
+		key = meleeAttackKey(ctx, s, bd)
 	}
 	if time.Since(st.lastStrikeAt) >= 350*time.Millisecond {
 		volleyAt(ctx, best, key, false)
@@ -765,7 +793,7 @@ func (f *Flee) Step(ctx *Ctx) Verdict {
 		var key byte
 		switch {
 		case s.Me.WeaponKind == "melee":
-			key = meleeAttackKey(ctx, s, closest > 3)
+			key = meleeAttackKey(ctx, s, closest)
 		case s.Me.WeaponKind == "bow" && ctx.Cap != nil && ctx.Cap.Reach != nil:
 			key = ctx.Cap.Reach.Key
 		}
@@ -1132,7 +1160,7 @@ func (b *Breakout) Step(ctx *Ctx) Verdict {
 					if ctx.Cap != nil && ctx.Cap.Throw != nil {
 						key = ctx.Cap.Throw.Key
 					} else {
-						key = meleeAttackKey(ctx, s, gd > 3)
+						key = meleeAttackKey(ctx, s, gd)
 					}
 					volleyAt(ctx, doorman.Pos, key, false) // walk-proof, sweep-free
 					b.lastStrikeAt = time.Now()
@@ -1272,7 +1300,7 @@ func (b *Breakout) Step(ctx *Ctx) Verdict {
 		}
 		if bd <= 4 && time.Since(b.lastStrikeAt) >= 350*time.Millisecond {
 			var key byte
-			key = meleeAttackKey(ctx, s, bd > 3)
+			key = meleeAttackKey(ctx, s, bd)
 			volleyAt(ctx, best, key, false)
 			b.lastStrikeAt = time.Now()
 		} else if bd > 4 {
@@ -1290,7 +1318,7 @@ func (b *Breakout) Step(ctx *Ctx) Verdict {
 			if ctx.Cap != nil && ctx.Cap.Throw != nil {
 				key = ctx.Cap.Throw.Key
 			} else {
-				key = meleeAttackKey(ctx, s, true)
+				key = meleeAttackKey(ctx, s, chebyshev(s.Me.Pos, blocker.Pos))
 			}
 			volleyAt(ctx, blocker.Pos, key, false)
 			b.lastStrikeAt = time.Now()
@@ -1346,6 +1374,11 @@ type Fight struct {
 	watchTarget data.UnitID
 	watchSince  time.Time
 	vaultAt     time.Time // P-2.11(3): leap-to-the-raiser cooldown
+	// Strike telemetry (strikelog.go): issued strikes awaiting evidence, the
+	// current lock's running account, and kills already credited.
+	open       []strikeRec
+	tally      fightTally
+	deathTaken map[data.UnitID]bool
 	// March is Advance's live door hint. P-5.8: within 12 of the march door the
 	// REACH TOOL holds — the clinch swap is suppressed and the volley fires
 	// point-blank; the funnel rewards the pierce, not the poke.
@@ -1360,6 +1393,7 @@ func NewFight() *Fight { return &Fight{blacklist: map[data.UnitID]time.Time{}} }
 // stayed plain-arrow forever across every reclaim).
 func (f *Fight) Recalibrated() {
 	f.rangedDead, f.rangedShots, f.rangedFlinch = false, 0, 0
+	leftAudit = policy.LeftAudit{} // new hands: the left skill re-proves from zero
 }
 
 func (f *Fight) Name() string { return "fight" }
@@ -1460,6 +1494,7 @@ func (f *Fight) Step(ctx *Ctx) Verdict {
 	if !s.Valid {
 		return Running
 	}
+	f.resolveStrikes(ctx, time.Now()) // last ticks' strikes meet this tick's evidence
 	// (Re)select target: keep the current one while it lives and is un-blacklisted.
 	// A flinch observed here IS the volley's evidence — no strike ever waits for it.
 	alive := false
@@ -1573,10 +1608,12 @@ func (f *Fight) Step(ctx *Ctx) Verdict {
 			fightCoolUntil = time.Now().Add(2 * time.Second)
 			ctx.Led.Append(verbs.Outcome{Verb: "fight", Holder: f.Name(), Result: verbs.ResRefused,
 				Evidence: "no sighted target within radius — fight cools 2s, the march proceeds"})
+			f.noteLock(ctx, time.Now()) // the fight ended: its summary line
 			return Done
 		}
 		f.target, f.targetPos = bestClear.ID, bestClear.Pos
 	}
+	f.noteLock(ctx, time.Now())
 
 	d := chebyshev(s.Me.Pos, f.targetPos)
 	contact := 1 << 30
@@ -1703,9 +1740,17 @@ func (f *Fight) Step(ctx *Ctx) Verdict {
 		// Leap Attack is the declared damage skill when it has enough mana; a
 		// proven Double Swing key takes over for low-mana or point-blank swings.
 		// The old Leap movement skill remains Vault and is never selected here.
-		mk := meleeAttackKey(ctx, s, d > 3 && contact > 3)
+		// THE LEFT HAND (the owner, 2026-09-24: Carnage mapped to the LEFT
+		// button): combat/policy picks the hand. A proven left skill is the
+		// primary strike — key 0, the left button, NO right-skill key press
+		// before it; Leap Attack only closes a gap beyond reach; Double Swing
+		// carries while the left audit benches a silent left skill. Without a
+		// left skill the pre-Carnage order (Leap, Double Swing, plain) stands.
+		// rk is the IN-REACH strike (ring, clinch); the pursuit key is chosen
+		// below, once the lock has settled.
+		_, rk := meleeStrike(ctx, s, contact, false, true)
 		if time.Now().Before(vaultHungerUntil) {
-			mk = 0 // the pool is spoken for: the movement leap eats first
+			rk = 0 // the pool is spoken for: the movement leap eats first
 		}
 		// A dry bow set is no bow at all: while Arrows==0 the javelins ARE the build —
 		// chase and stab instead of kiting toward a weapon that whiffs at air.
@@ -1721,7 +1766,7 @@ func (f *Fight) Step(ctx *Ctx) Verdict {
 		if !dryBow && s.Me.HasBow {
 			f.trySwap(ctx)
 			if contact <= 4 {
-				f.strike(ctx, f.nearestID(s), contactPos, mk)
+				f.strike(ctx, f.nearestID(s), contactPos, rk)
 			}
 			return Running
 		}
@@ -1778,7 +1823,9 @@ func (f *Fight) Step(ctx *Ctx) Verdict {
 			// fallen forever while the shaman rezzed behind — P-1.15 bypassed
 			// by the ring-queue shortcut). A raiser lock is PURSUED through
 			// the ring; ordinary rings get the sweepless positional swings.
-			f.strike(ctx, f.nearestID(s), contactPos, mk)
+			// With the left skill primary rk is 0: SHIFT+left, Carnage in
+			// place — walk-proof without a hover confirmation.
+			f.strike(ctx, f.nearestID(s), contactPos, rk)
 			return Running
 		}
 		// THE LEAP IS NOT A WEAPON (the owner, 04:5x night 2: "its leaping
@@ -1807,6 +1854,21 @@ func (f *Fight) Step(ctx *Ctx) Verdict {
 				// convict the fresh one — counters are per-victim.
 				f.noEvid, f.volleys = 0, 0
 			}
+		}
+		// The PURSUIT strike, on the settled lock. Hover-confirmable → an aimed
+		// left click on the monster (the game's attack command closes and
+		// swings). Beyond reach with the hover dark and no leap ready →
+		// Approach: an unconfirmed left click there is a walk (bare) or a
+		// swing at air (SHIFT), so close on foot and swing in reach.
+		d = chebyshev(s.Me.Pos, f.targetPos)
+		hoverOK := ctx.M.HoverReady() && !time.Now().Before(f.hoverBlindUntil)
+		ck, mk := meleeStrike(ctx, s, d, hoverOK, contact > 3)
+		if time.Now().Before(vaultHungerUntil) && mk != 0 {
+			ck, mk = policy.Basic, 0 // the pool is spoken for: the movement leap eats first
+		}
+		if ck == policy.Approach {
+			f.approach(ctx)
+			return Running
 		}
 		// THE BLIND BRAWLER: with the hover oracle benched, the fight runs
 		// entirely on positional volleys — no pump, no whiff log spam, the
@@ -1854,7 +1916,8 @@ func (f *Fight) Step(ctx *Ctx) Verdict {
 				f.hoverWhiffRun = 0
 			}
 		}
-		if o.Result == verbs.ResWhiff && time.Since(f.lastStrikeAt) >= 350*time.Millisecond {
+		switch {
+		case o.Result == verbs.ResWhiff && time.Since(f.lastStrikeAt) >= 350*time.Millisecond:
 			// THE WHIFF STILL SWINGS (the owner, 11:15: "still kind of runs
 			// around instead of killing"): 31 hover whiffs in barb29's ten
 			// minutes, each a cycle with NO click issued — he walked beside
@@ -1862,8 +1925,25 @@ func (f *Fight) Step(ctx *Ctx) Verdict {
 			// march-swing AT the target's position (the right-click melee
 			// walk: the game closes and swings); the aimed strike resumes
 			// the moment hover confirms.
-			volleyAt(ctx, f.targetPos, mk, false)
+			// The LEFT hand cannot march-swing: an unconfirmed left strike
+			// is SHIFT+left, which swings in place — at a target beyond
+			// reach that is air. Close the gap instead.
+			if ck == policy.Left && d > policy.MeleeReach {
+				f.noteStrike(ctx, f.target, mk, false)
+				f.approach(ctx)
+				break
+			}
+			issued := volleyAt(ctx, f.targetPos, mk, false)
 			f.lastStrikeAt = time.Now()
+			f.noteStrike(ctx, f.target, mk, issued)
+		case o.Result == verbs.ResWhiff:
+			f.noteStrike(ctx, f.target, mk, false)
+		case o.Result == verbs.ResDone:
+			hit := f.target
+			if o.Unit != 0 {
+				hit = data.UnitID(o.Unit) // Accept landed on a neighbour
+			}
+			f.noteStrike(ctx, hit, mk, true)
 		}
 		f.assess(o)
 		return Running
@@ -1890,7 +1970,7 @@ func (f *Fight) Step(ctx *Ctx) Verdict {
 	if canThrow {
 		key = ctx.Cap.Throw.Key
 	} else {
-		key = meleeAttackKey(ctx, s, d > 3)
+		key = meleeAttackKey(ctx, s, d)
 	}
 	f.strike(ctx, f.target, f.targetPos, key)
 	return Running
@@ -1902,7 +1982,10 @@ func (f *Fight) Step(ctx *Ctx) Verdict {
 // A skill right-click casts at the cursor and can never walk; a SHIFT+left attack
 // swings/fires toward the cursor and can never walk. Precision is the projectile's
 // job. The tome readback guard survives: right-clicks never fire a book.
-func volleyAt(ctx *Ctx, pos data.Position, key byte, skipSelect bool) {
+// key 0 is the LEFT hand — SHIFT+left fires whatever skill the owner mapped
+// there (Carnage, 2026-09-24) with no key press and no chance of a move order.
+// Reports whether a click went out (false: no clickable world on the ray).
+func volleyAt(ctx *Ctx, pos data.Position, key byte, skipSelect bool) bool {
 	d := ctx.GR.GetData()
 	me := d.PlayerUnit.Position
 	bx := int(float32((pos.X-me.X)-(pos.Y-me.Y))*19.8) + ctx.GR.GameAreaSizeX/2
@@ -1915,7 +1998,7 @@ func volleyAt(ctx *Ctx, pos data.Position, key byte, skipSelect bool) {
 	if !ok {
 		ctx.Led.Append(verbs.Outcome{Verb: "volley", Holder: "volley", Result: verbs.ResRefused,
 			Evidence: fmt.Sprintf("at (%d,%d): no clickable world on the ray (HUD)", pos.X, pos.Y)})
-		return
+		return false
 	}
 	ctx.M.MoveStop()
 	// EVERY VOLLEY WRITES (rule zero at death scale, 13:03: six Survive
@@ -1939,11 +2022,12 @@ func volleyAt(ctx *Ctx, pos data.Position, key byte, skipSelect bool) {
 		if rs != skill.TomeOfIdentify && rs != skill.ScrollOfIdentify &&
 			rs != skill.TomeOfTownPortal && rs != skill.ScrollOfTownPortal {
 			ctx.M.ClickRight(bx, by)
-			return
+			return true
 		}
 		// A tome refuses to disarm: fall through to the plain attack below.
 	}
 	ctx.M.AttackClick(bx, by)
+	return true
 }
 
 // strike fires one volley shot: paced to the attack animation (~350ms), selection
@@ -1954,7 +2038,8 @@ func (f *Fight) strike(ctx *Ctx, target data.UnitID, pos data.Position, key byte
 		return // the animation is still playing; clicking now buys nothing
 	}
 	skip := key != 0 && key == f.lastKey && time.Since(f.lastStrikeAt) < 2*time.Second
-	volleyAt(ctx, pos, key, skip)
+	issued := volleyAt(ctx, pos, key, skip)
+	f.noteStrike(ctx, target, key, issued)
 	f.lastKey, f.lastStrikeAt = key, time.Now()
 	f.volleys++
 	if f.volleys >= 8 {

@@ -201,6 +201,7 @@ func main() {
 	goal := flag.String("goal", "farm", "the Director's current goal: farm (routes+explore+loot) | campaign/rampage (Act 1 march) | gamble (Gheed errand when bankrolled). Goals shape WHICH activities bid; the arbiter still owns every moment.")
 	meleeKeyF := flag.String("meleekey", "", "OWNER-DECLARED melee skill key (e.g. f1 for Jab) — config beats inference on a scrambled mod; overrides calibration")
 	rangedKeyF := flag.String("rangedkey", "", "OWNER-DECLARED bow skill key — overrides calibration (the flinch audit still verifies)")
+	leftSkillF := flag.String("leftskill", "auto", "LEFT-button primary strike (the owner's Carnage, 2026-09-24): auto = primary when calibration reads a non-basic, owned PlayerUnit.LeftSkill | on = force it primary whatever calibration saw | off = never (right-skill strikes only, the pre-Carnage order)")
 	invKeyF := flag.String("invkey", "i", "inventory-panel toggle key (the Equip service's door; KeyBindings memory is dead, so declare it if rebound)")
 	roadTest := flag.Bool("roadtest", false, "M2 soak: walk the measured town road out and back on Stride verbs, print the outcome histogram, exit")
 	jTest := flag.String("jtest", "", "M3 soak: journey to world x,y on the live grid via the Journey authority, print the verdict, exit")
@@ -1825,7 +1826,10 @@ func main() {
 	led.Sink = func(o verbs.Outcome) {
 		// done outcomes are the quiet normal; exceptions speak — except the route
 		// owner's decisions, which are the story of WHERE she is going and why.
-		if o.Result != verbs.ResDone || o.Verb == "intent" || o.Verb == "escalate" {
+		// Strike hits and fight summaries are the Carnage run's telemetry
+		// (2026-09-24): every one speaks.
+		if o.Result != verbs.ResDone || o.Verb == "intent" || o.Verb == "escalate" ||
+			o.Verb == "strike" || o.Verb == "fight" {
 			logger.Info("outcome", "verb", o.Verb, "holder", o.Holder, "tgt", o.Target, "result", o.Result.String(), "ev", o.Evidence)
 		}
 		// Nav follower transitions are ResDone too — the trace names every one.
@@ -1905,6 +1909,30 @@ func main() {
 			k := hid.GetASCIICode(*rangedKeyF)
 			c.Reach = &combat.Binding{Key: k, Skill: provenSkill(k)}
 			logger.Info("capability: owner-declared ranged key", "key", *rangedKeyF, "skill", int(c.Reach.Skill))
+		}
+		// -leftskill: the owner's word on the LEFT-button primary when
+		// calibration cannot see it (on) or must not use it (off).
+		switch strings.ToLower(*leftSkillF) {
+		case "on", "force", "true", "1":
+			if c.Left == nil {
+				c.Left = combat.ReadLeft(gr.GetData().PlayerUnit)
+			}
+			c.Left.Forced = true
+			logger.Info("capability: left skill FORCED primary (-leftskill=on)",
+				"skill", int(c.Left.Skill), "skill_name", c.Left.Name, "proven", c.Left.Proven)
+		case "off", "false", "0", "none":
+			if c.Left != nil {
+				c.Left.Disabled = true
+			}
+			logger.Info("capability: left-click primary DISABLED (-leftskill=off) — right-skill strikes only")
+		default: // auto
+			if c.Left.Primary() {
+				logger.Info("capability: left skill is the PRIMARY strike",
+					"skill", int(c.Left.Skill), "skill_name", c.Left.Name, "mouse", "left")
+			} else if c.Left != nil {
+				logger.Info("capability: left skill not proven — right-skill strike order",
+					"skill", int(c.Left.Skill), "skill_name", c.Left.Name)
+			}
 		}
 		// UNARM THE TOME: probing leaves the LAST flipped skill selected — F3 is the
 		// Identify tome, so she stood around visibly armed with Identify (the owner

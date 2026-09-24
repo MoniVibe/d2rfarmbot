@@ -6,9 +6,11 @@
 package combat
 
 import (
+	"fmt"
 	"log/slog"
 	"time"
 
+	"github.com/hectorgimenez/d2go/pkg/data"
 	"github.com/hectorgimenez/d2go/pkg/data/skill"
 	"github.com/hectorgimenez/koolo/internal/azbot/memory"
 	"github.com/hectorgimenez/koolo/internal/game"
@@ -18,6 +20,36 @@ import (
 type Binding struct {
 	Key   byte     `json:"key"`
 	Skill skill.ID `json:"skill"`
+}
+
+// LeftBinding is the LEFT mouse skill as the game reports it. Nothing is
+// pressed to learn it: PlayerUnit.LeftSkill is read straight from memory. The
+// owner maps the left skill by hand (2026-09-24: the mod's Carnage on
+// Fableboi), so the bot's job is to SEE it, never to select it.
+type LeftBinding struct {
+	Skill skill.ID `json:"skill"`
+	Name  string   `json:"name"`  // the local d2go table's name, or "skill#<id>" when it has none
+	Mouse string   `json:"mouse"` // always "left" — the marker the strike telemetry prints
+	// Proven: LeftSkill is not the basic Attack AND the skill is present in the
+	// live Skills map (she owns it; a stale or scrambled id reads as absent).
+	Proven bool `json:"proven"`
+	// Forced: the owner's -leftskill=on declared it without calibration's proof.
+	Forced bool `json:"forced,omitempty"`
+	// Disabled: the owner's -leftskill=off. The binding stays so telemetry
+	// still names what a plain (key 0) left strike fires.
+	Disabled bool `json:"disabled,omitempty"`
+}
+
+// Primary reports whether the left skill is the fight's primary strike.
+func (l *LeftBinding) Primary() bool { return l != nil && !l.Disabled && (l.Proven || l.Forced) }
+
+// ReadLeft reads the live left skill and judges it: proven when it is not
+// the basic Attack and the skill is present in the Skills map.
+func ReadLeft(pu data.PlayerUnit) *LeftBinding {
+	id := pu.LeftSkill
+	_, owned := pu.Skills[id]
+	return &LeftBinding{Skill: id, Name: SkillName(id), Mouse: "left",
+		Proven: id != skill.AttackSkill && owned}
 }
 
 // Capability is what the character can provably do right now. Role fields
@@ -38,6 +70,10 @@ type Capability struct {
 	TownTP      *Binding // proven town portal selection
 	Identify    *Binding // proven identify selection
 	Vault       *Binding // proven cursor-targeted displacement (Leap-family)
+	// Left is the live LEFT mouse skill (read, not pressed). Left.Primary()
+	// makes it the fight's primary strike; Leap Attack is then a gap-closer
+	// and Double Swing the no-evidence fallback (combat/policy).
+	Left *LeftBinding
 }
 
 // Calibrate presses each candidate key once and reads RightSkill back. Run at session
@@ -49,12 +85,27 @@ func Calibrate(log *slog.Logger, gr *game.MemoryReader, hid *game.HID, mem *memo
 	for id, pts := range d.PlayerUnit.Skills {
 		cap.Known[id] = int(pts.Level)
 	}
+	// THE LEFT HAND FIRST, before any key is pressed: a candidate key bound to
+	// a left skill would repaint LeftSkill, and the owner's mapping is the one
+	// he left on the button.
+	cap.Left = ReadLeft(d.PlayerUnit)
+	log.Info(fmt.Sprintf("capability: left skill %s (id %d)", cap.Left.Name, int(cap.Left.Skill)),
+		"skill", int(cap.Left.Skill), "skill_name", cap.Left.Name, "mouse", "left", "proven", cap.Left.Proven)
+	leftKeys := map[skill.ID]byte{} // keys observed to repaint the LEFT skill
+	leftBefore := d.PlayerUnit.LeftSkill
 	before := d.PlayerUnit.RightSkill
 	for _, name := range candidates {
 		key := hid.GetASCIICode(name)
 		hid.PressKey(key)
 		time.Sleep(120 * time.Millisecond)
-		after := gr.GetData().PlayerUnit.RightSkill
+		pu := gr.GetData().PlayerUnit
+		after := pu.RightSkill
+		if pu.LeftSkill != leftBefore {
+			leftKeys[pu.LeftSkill] = key
+			log.Warn("capability: key repainted the LEFT skill", "key", name,
+				"from", int(leftBefore), "to", int(pu.LeftSkill), "skill_name", SkillName(pu.LeftSkill))
+			leftBefore = pu.LeftSkill
+		}
 		if after != before {
 			b := Binding{Key: key, Skill: after}
 			cap.Proven = append(cap.Proven, b)
@@ -121,6 +172,20 @@ func Calibrate(log *slog.Logger, gr *game.MemoryReader, hid *game.HID, mem *memo
 		v := *cap.Contact
 		cap.Combat = &v
 	}
+	// Put the owner's left skill back if probing moved it (possible only when
+	// a probed key is bound to a left skill and another probed key restores it).
+	if cur := gr.GetData().PlayerUnit.LeftSkill; cur != cap.Left.Skill {
+		if k, ok := leftKeys[cap.Left.Skill]; ok {
+			hid.PressKey(k)
+			time.Sleep(120 * time.Millisecond)
+			cur = gr.GetData().PlayerUnit.LeftSkill
+		}
+		if cur != cap.Left.Skill {
+			log.Warn("capability: probing left the LEFT skill changed — the primary strike follows the live skill",
+				"was", int(cap.Left.Skill), "now", int(cur), "now_name", SkillName(cur))
+			cap.Left = ReadLeft(gr.GetData().PlayerUnit)
+		}
+	}
 	if cap.Combat != nil {
 		log.Info("capability: combat binding", "skill", int(cap.Combat.Skill),
 			"skill_name", skillName(cap.Combat.Skill), "key", int(cap.Combat.Key))
@@ -130,9 +195,17 @@ func Calibrate(log *slog.Logger, gr *game.MemoryReader, hid *game.HID, mem *memo
 	return cap
 }
 
-func skillName(id skill.ID) string {
-	if def, ok := skill.Skills[id]; ok {
+func skillName(id skill.ID) string { return SkillName(id) }
+
+// SkillName names a skill by the local d2go table, falling back to the enum's
+// name and finally to "skill#<id>" — the mod's own skills (Carnage) may be
+// absent from both; the ID is the stable coordinate.
+func SkillName(id skill.ID) string {
+	if def, ok := skill.Skills[id]; ok && def.Name != "" {
 		return def.Name
 	}
-	return skill.SkillNames[id]
+	if n := skill.SkillNames[id]; n != "" {
+		return n
+	}
+	return fmt.Sprintf("skill#%d", int(id))
 }

@@ -51,6 +51,9 @@ type Outcome struct {
 	// caller as the next shot's hint (volley aim tracking). Not ledger-worthy.
 	AimDX int `json:"-"`
 	AimDY int `json:"-"`
+	// Unit: the unit id an aimed verb actually confirmed (HoverStrike's
+	// Accept may land on a neighbour) — the strike telemetry's target.
+	Unit int `json:"-"`
 }
 
 // Ledger is an in-memory ring + sink hook. The memory store persists what needs
