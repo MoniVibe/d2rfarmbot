@@ -290,6 +290,18 @@ func (a *Arbiter) Benched(who string) (string, bool) {
 	return b.why, true
 }
 
+// BenchLeft is how long who stays benched (ok false when it is not).
+func (a *Arbiter) BenchLeft(who string) (time.Duration, bool) {
+	if _, ok := a.Benched(who); !ok {
+		return 0, false
+	}
+	return a.bench[who].until.Sub(a.now()), true
+}
+
+// Unbench lifts who's bench early (the executive's empty-field rule: every
+// bidder benched and one nearly done).
+func (a *Arbiter) Unbench(who string) { delete(a.bench, who) }
+
 // MarkProgress resets who's "last evidence" clock (an outcome, a phase change).
 func (a *Arbiter) MarkProgress(who string) {
 	a.init()

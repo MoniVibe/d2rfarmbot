@@ -227,6 +227,26 @@ func TestBench(t *testing.T) {
 	}
 }
 
+func TestBenchLeftAndUnbench(t *testing.T) {
+	a, c := newArb()
+	if _, ok := a.BenchLeft("advance"); ok {
+		t.Fatal("unbenched reads benched")
+	}
+	a.Bench("advance", c.Now().Add(6*time.Second), "judged: stuck")
+	c.Tick(4500 * time.Millisecond)
+	if left, ok := a.BenchLeft("advance"); !ok || left != 1500*time.Millisecond {
+		t.Fatalf("BenchLeft = %s %v", left, ok)
+	}
+	a.Unbench("advance")
+	if _, ok := a.Benched("advance"); ok {
+		t.Fatal("Unbench left the bench")
+	}
+	g, _ := a.Decide([]Demand{dem("advance", ClassTravel, 1)})
+	if holder(g) != "advance" {
+		t.Fatalf("unbenched sole bidder not seated: %s", holder(g))
+	}
+}
+
 func TestFreshNamesEndedHolder(t *testing.T) {
 	a, _ := newArb()
 	g, ch := a.Decide([]Demand{dem("loot", ClassLoot, 1)})
