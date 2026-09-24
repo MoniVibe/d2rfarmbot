@@ -118,3 +118,28 @@ Guard tests (Linux): ESC (0x1B/RealEsc) allowed only in janitor/session/respawn 
     no gate=blocked >2s, zero ESC outside allowed files, zero mute releases.
 11. **Advance / errand walkTo / Reclaim onto nav**; HUD no-click zone; ClickMove tome check;
     Interception extended-key flag.
+
+## Progress (branch `claude/diablo-bot-states-x834xf`, PR MoniVibe/d2rfarmbot#1)
+
+Live testing goes through the relay (docs/RELAY.md). `tools/test.sh` is the Linux gate
+(pure tests natively, Windows tests under wine, Windows build + vet).
+
+| Step | State | Proof so far |
+|---|---|---|
+| 1 nav + Journey, carrot angle | merged | Linux tests; R6: 0% zero-gain strides in all focus modes, heading 2–9° |
+| 2 screen oracle | merged | 15 sight detectors, 0 errors on 34 real captures (R2); 1.5 ms/frame |
+| 3 arbiter v2 | merged | Linux tests |
+| 4 contract v2, registry, trace/state line | merged | Linux tests; awaiting R7 |
+| 5 screen shadow mode (+ cursor before/after each flip) | merged | awaiting R7 Part A |
+| 6 janitor + gate (`-Janitor`) | merged, OFF by default | awaiting R7 Part B |
+| 7 town services on v2 (phases, claims, no sleeps) | merged | Linux/wine tests; awaiting R7 Part C |
+| 8 Session FSM + relog | merged | Linux tests; awaiting R7 Part D |
+| 9 pure watchdog + Unstick | merged | synthetic traces; awaiting R7 Part C |
+| 10 Calibrate, Director, step budgets | not started | |
+| 11 nav for Advance/errand/Reclaim; HUD zone; tome check; loot probe | HUD/tome/loot merged; nav migration pending R6b (cursor reach) | |
+
+Also merged: route plausibility + ladder that acts (phantom Halls door, R1 run w);
+zero-size screenshot guard; Stand exempt from stuck; DC leak fix; town idle valve.
+
+Open, measured: an 80 ms tap travels ~7 tiles because the game walks to the cursor
+point (R6) — `Stride.Reach` + `stridecal -reach` exist; R6b decides the follower's reach.
