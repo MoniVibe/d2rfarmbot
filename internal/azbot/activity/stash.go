@@ -102,7 +102,8 @@ type Stash struct {
 	fails     int
 	coolAt    time.Time
 	tabbed    bool      // the Shared tab was clicked this episode
-	tab, want int       // the open tab, and the tab the current keeper belongs in
+	tab, want int       // the open tab (read by sight), and the tab the current keeper belongs in
+	tabTries  int       // clicks toward want that did not show it
 	shifting  bool      // a shift-transfer is being judged
 	noShift   bool      // this keeper takes the lift-and-place path
 	fullUntil time.Time // a stash with no room for the keeper: stand down (no retry loop)
@@ -135,6 +136,7 @@ func (st *Stash) PhaseName() string { return st.life.ph.Phase().String() }
 // stashable: the bag's items the ONE bag plan (loot/plan.go) sends to the
 // stash, in bag order — the same plan percept's sell list comes from.
 func stashable(s *percept.Snapshot, c *loot.Config) []percept.BagItem {
+	now := time.Now()
 	if c == nil {
 		return nil
 	}
@@ -142,7 +144,7 @@ func stashable(s *percept.Snapshot, c *loot.Config) []percept.BagItem {
 	var out []percept.BagItem
 	for _, b := range s.Bag {
 		d, _ := p.Dispose(loot.Carried{Unit: uint32(b.Unit), Item: loot.Item{ID: b.ID, Name: b.Name, Quality: b.Qual}, GX: b.GX, GY: b.GY, Identified: b.Ident, Upgrade: b.Upgrade})
-		if d == loot.DispStash {
+		if d == loot.DispStash && !InvTracker.Quarantined(uint32(b.Unit), now) {
 			out = append(out, b)
 		}
 	}
@@ -337,12 +339,27 @@ func (st *Stash) Step(ctx *Ctx) Status {
 			st.target, st.tgtW, st.tgtH, st.tgtGX, st.tgtGY, st.pages, st.noShift = k.Unit, c.W, c.H, k.GX, k.GY, 0, false
 			st.want = stashTabFor(c.Kind)
 		}
+		// THE TAB IS READ, NOT ASSUMED (owner, R33: "it goes to the gems tab,
+		// returns to the regular tab"): the active header reads ~2x brighter
+		// (measured on three captures). Two clicks that do not show the wanted tab
+		// send this keeper to Shared, logged.
+		if seen := activeStashTab(ctx.GR.Screenshot(), shopScale(ctx)); seen >= 0 {
+			st.tab = seen
+		}
 		if st.want != st.tab {
+			if st.tabTries >= 2 {
+				ctx.Led.Append(verbs.Outcome{Verb: "stash", Holder: st.Name(), Result: verbs.ResWhiff,
+					Evidence: fmt.Sprintf("the %s tab never showed (seen %s) — this keeper goes to Shared", stashTabName[st.want], stashTabName[st.tab])})
+				st.want, st.tabTries = stashTabShared, 0
+				return l.running()
+			}
 			kk := shopScale(ctx)
 			ctx.M.RealMenuClick(int(stashTabX[st.want]*kk), int(stashSharedTabY*kk))
-			st.tab, st.pages, st.clickT = st.want, 0, time.Now()
+			st.tabTries++
+			st.pages, st.clickT = 0, time.Now()
 			return l.wait(400 * time.Millisecond)
 		}
+		st.tabTries = 0
 		cx, cy := invCellPx(ctx, k.GX, k.GY)
 		if st.noShift {
 			ctx.M.RealMenuClick(cx, cy) // lift; stPlace sets it down by sight
@@ -542,4 +559,30 @@ func stashTabFor(k loot.Kind) int {
 		return stashTabMaterials
 	}
 	return stashTabShared
+}
+
+// activeStashTab reads which tab header is lit (-1 when none stands out).
+func activeStashTab(img image.Image, k float64) int {
+	spans := [...][2]float64{{160, 245}, {252, 340}, {348, 436}, {444, 530}, {540, 628}}
+	best, bestV, second := -1, 0.0, 0.0
+	for i, sp := range spans {
+		sum, n := 0.0, 0
+		for x := sp[0]; x < sp[1]; x += 3 {
+			for y := 78.0; y < 100; y += 2 {
+				r, g, b, _ := img.At(int(x*k), int(y*k)).RGBA()
+				sum += float64(r>>8+g>>8+b>>8) / 3
+				n++
+			}
+		}
+		v := sum / float64(n)
+		if v > bestV {
+			second, bestV, best = bestV, v, i
+		} else if v > second {
+			second = v
+		}
+	}
+	if bestV < 1.5*second { // no header clearly lit
+		return -1
+	}
+	return best
 }

@@ -20,8 +20,9 @@ import (
 	"github.com/hectorgimenez/koolo/internal/azbot/activity"
 	"github.com/hectorgimenez/koolo/internal/azbot/arbiter"
 	"github.com/hectorgimenez/koolo/internal/azbot/exec"
-	"github.com/hectorgimenez/koolo/internal/azbot/motor"
+	"github.com/hectorgimenez/koolo/internal/azbot/inventory"
 	"github.com/hectorgimenez/koolo/internal/azbot/loot"
+	"github.com/hectorgimenez/koolo/internal/azbot/motor"
 	"github.com/hectorgimenez/koolo/internal/azbot/percept"
 	"github.com/hectorgimenez/koolo/internal/azbot/screen"
 	"github.com/hectorgimenez/koolo/internal/azbot/trace"
@@ -48,8 +49,10 @@ type gatekeeper struct {
 	// invKey/bagAt: a held item with the bag shut gets the bag OPENED (R24: a
 	// potion the fence left on the cursor waited forever for a parker that never
 	// bid). The open bag then makes the Park rule place it in a free cell.
-	invKey uint16
-	bagAt  time.Time
+	invKey   uint16
+	invPhase inventory.Phase // the last logged inventory state
+	invStuck inventory.Stuck
+	bagAt    time.Time
 }
 
 // handBackRest: how long a holder is benched to hand a held cursor item back.
@@ -132,6 +135,9 @@ func (g *gatekeeper) step(tick uint64, s *percept.Snapshot, arb *arbiter.Arbiter
 	seen := g.sh.Eye.Latest()
 	if s.Valid {
 		g.junk.observe(g.gr, s)
+	}
+	if s.Valid {
+		g.invObserve(now, s, who)
 	}
 	n := g.needs(who, s, roster)
 	switch {
@@ -355,4 +361,39 @@ func cursorKeeper(gr *game.MemoryReader) bool {
 		return true
 	}
 	return c.Keep(int(cur[0].ID), int(cur[0].Quality))
+}
+
+// invObserve feeds the ONE inventory tracker (owner: "let it know states like
+// 'inventory open' or 'item held' or 'inventory swap loop'"), logs each state
+// change, names a stuck state with its prescription, and applies the
+// quarantine (the gate's own cursor rules still park or shed a held item).
+func (g *gatekeeper) invObserve(now time.Time, s *percept.Snapshot, who string) {
+	r := g.Stable()
+	obs := inventory.Observation{At: now, Held: uint32(s.Me.CursorUnit)}
+	if r != nil {
+		obs.BagOpen = r.Sight&screen.Inventory != 0
+		obs.StashOpen = r.Sight&screen.Stash != 0
+		obs.VendorOpen = r.Sight&screen.Shop != 0
+	}
+	switch who {
+	case "stash", "fence", "belt", "equip", "identify", "restock", "repair", "discard":
+		obs.Planned = true // an inventory errand holds: its panel is its work
+	}
+	ph, st, rx, why := activity.InvTracker.Observe(obs)
+	if ph != g.invPhase {
+		g.logger.Info("inventory state", "state", ph.String(), "holder", who)
+		g.invPhase = ph
+	}
+	if st != g.invStuck {
+		if st != inventory.StuckNone {
+			g.logger.Warn("INVENTORY STUCK", "state", ph.String(), "stuck", st.String(), "rx", rx.String(), "why", why, "holder", who)
+			if rx == inventory.RxQuarantine {
+				if u := activity.InvTracker.StuckUnit(); u != 0 {
+					activity.InvTracker.Quarantine(u, now)
+					g.logger.Warn("inventory: unit quarantined", "unit", u, "for", inventory.QuarantineFor.String())
+				}
+			}
+		}
+		g.invStuck = st
+	}
 }

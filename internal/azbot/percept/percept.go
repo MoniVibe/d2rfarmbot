@@ -118,6 +118,8 @@ type PlayerState struct {
 	// CursorItem: something rides the cursor (WARNING 9) — every service's
 	// click interlock, and Equip's parking docket.
 	CursorItem bool
+	// CursorUnit: the unit on the cursor (0 = none) — the inventory tracker's swap-loop count.
+	CursorUnit data.UnitID
 }
 
 // EnemyRef is a live hostile: identity, position, and Mode (the honest liveness read —
@@ -197,6 +199,7 @@ type InvItem struct {
 // recorder prove whether that cell held a health potion, mana potion, or a
 // stranger that the classifier did not understand.
 type BeltItemRef struct {
+	Unit data.UnitID
 	ID   int
 	Name string
 	Pos  data.Position
@@ -547,6 +550,9 @@ func (p *Perceptor) Capture() *Snapshot {
 	}
 	s.Me.HasBow = bowActive || bowSecondary
 	s.Me.CursorItem = len(d.Inventory.ByLocation(item.LocationCursor)) > 0 // WARNING 9
+	if cur := d.Inventory.ByLocation(item.LocationCursor); len(cur) > 0 {
+		s.Me.CursorUnit = cur[0].UnitID
+	}
 	// Belt potions count by a single classifier. The mod scrambles the name table and
 	// also exposes the belt's flattened slot index in Position.X (0..7/0..15), so
 	// relying on one custom ID or Position.Y made variants such as health potion 2
@@ -554,7 +560,7 @@ func (p *Perceptor) Capture() *Snapshot {
 	for _, bp := range d.Inventory.Belt.Items {
 		kind := potionKindForBeltItem(bp)
 		s.Me.BeltItems = append(s.Me.BeltItems, BeltItemRef{
-			ID: bp.ID, Name: string(bp.Name), Pos: bp.Position,
+			Unit: bp.UnitID, ID: bp.ID, Name: string(bp.Name), Pos: bp.Position,
 			Kind: potionKindName(kind),
 		})
 		switch kind {
