@@ -21,6 +21,7 @@ import (
 	"github.com/hectorgimenez/koolo/internal/azbot/memory"
 	"github.com/hectorgimenez/koolo/internal/azbot/percept"
 	"github.com/hectorgimenez/koolo/internal/azbot/phase"
+	"github.com/hectorgimenez/koolo/internal/azbot/screen"
 	"github.com/hectorgimenez/koolo/internal/azbot/verbs"
 	"github.com/hectorgimenez/koolo/internal/game"
 )
@@ -1540,9 +1541,24 @@ func (eq *Equip) Step(ctx *Ctx) Verdict {
 	return Running
 }
 
+// suspended (janitor ON): a preempted Equip's bag is foreign and the janitor
+// closes it — the door must be opened again on resume.
+func (eq *Equip) suspended() {
+	if JanitorOn {
+		eq.opened = false
+	}
+}
+
 // closePanel ESCs the cast-opened inventory shut. Safe: we only get here after the
 // identify cast actually opened something (the pause-menu trap needs NO panel open).
+//
+// Janitor ON: no ESC. Every call is followed by Done/Abandoned, so the End that
+// follows drops Equip's bag claim and the janitor closes the bag by sight.
 func (eq *Equip) closePanel(ctx *Ctx) {
+	if JanitorOn {
+		eq.opened = false
+		return
+	}
 	if eq.opened {
 		ctx.M.KeyLane().Press(0x1B)
 		eq.opened = false
@@ -1655,6 +1671,11 @@ func (sp *Spend) Step(ctx *Ctx) Verdict {
 	}
 	if s.Me.StatPoints <= 0 || !spendWorks.Load() {
 		sp.closePanel(ctx)
+		if JanitorOn && Disowned()&(screen.CharSheet|screen.LeftPanel) != 0 {
+			// The janitor closes the disowned sheet first (its ESC would
+			// take a freshly opened tree down with it).
+			return Running
+		}
 		// P-8.7: skill points next — the dps ordnance.
 		if s.Me.SkillPoints <= 0 || !skillSpendWorks.Load() {
 			sp.closeTree(ctx)
@@ -1732,11 +1753,28 @@ func (sp *Spend) Step(ctx *Ctx) Verdict {
 	return Running
 }
 
+// suspended (janitor ON): a preempted Spend's panels are foreign and the
+// janitor closes them — both doors must be opened again on resume.
+func (sp *Spend) suspended() {
+	if JanitorOn {
+		sp.opened, sp.verified, sp.frozen = false, 0, 0
+		sp.treeOpen, sp.skVerified, sp.skFrozen = false, 0, 0
+	}
+}
+
 // closePanel ESCs shut ONLY when a verified spend proved a panel was open —
 // an unproven ESC is the pause trap (WARNING 4).
+//
+// Janitor ON: no ESC. The same proof now DISOWNS the char sheet: the janitor
+// closes it by sight before the skill phase (or after the episode ends, when
+// every Spend claim is dropped anyway).
 func (sp *Spend) closePanel(ctx *Ctx) {
 	if sp.opened && sp.verified > 0 {
-		ctx.M.KeyLane().Press(0x1B)
+		if JanitorOn {
+			Disown(screen.CharSheet | screen.LeftPanel)
+		} else {
+			ctx.M.KeyLane().Press(0x1B)
+		}
 	}
 	sp.opened, sp.verified, sp.frozen = false, 0, 0
 }

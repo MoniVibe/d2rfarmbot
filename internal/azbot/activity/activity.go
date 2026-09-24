@@ -19,6 +19,7 @@ import (
 	"github.com/hectorgimenez/koolo/internal/azbot/memory"
 	"github.com/hectorgimenez/koolo/internal/azbot/motor"
 	"github.com/hectorgimenez/koolo/internal/azbot/percept"
+	"github.com/hectorgimenez/koolo/internal/azbot/screen"
 	"github.com/hectorgimenez/koolo/internal/azbot/verbs"
 	"github.com/hectorgimenez/koolo/internal/game"
 )
@@ -48,6 +49,9 @@ type Ctx struct {
 	Regrid func() *game.Grid
 	// Mem: the WAL fact store — Advance reads the cartographer's border facts here.
 	Mem *memory.Store
+	// Screen: the stable screen Reading the gate judged this tick (janitor ON
+	// only; nil when the janitor is off or nothing has been captured yet).
+	Screen *screen.Reading
 }
 
 type Activity interface {
@@ -2375,6 +2379,12 @@ func (r *Respawn) Step(ctx *Ctx) Verdict {
 	s := ctx.Snap
 	if s.Valid && s.Me.HPPct > 0 && s.Me.Mode != mode.Death && s.Me.Mode != mode.Dead {
 		return Done // alive again
+	}
+	if JanitorOn && (ctx.Screen == nil || ctx.Screen.Mode != screen.Dead) {
+		// v2: the respawn ESC fires only on a death screen the screen oracle
+		// believes (docs/AZBOT_V2.md: "kept, only when Mode=Dead"); a blind
+		// ESC on a live world raises the pause menu.
+		return Running
 	}
 	if time.Since(r.pressedAt) > 2500*time.Millisecond {
 		ctx.M.KeyLane().Press(0x1B) // esc — the proven respawn input

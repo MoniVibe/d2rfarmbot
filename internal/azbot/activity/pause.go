@@ -4,6 +4,7 @@ import (
 	"time"
 
 	"github.com/hectorgimenez/koolo/internal/azbot/motor"
+	"github.com/hectorgimenez/koolo/internal/azbot/screen"
 	"github.com/hectorgimenez/koolo/internal/game"
 )
 
@@ -34,7 +35,15 @@ func ClearPause(gr *game.MemoryReader, m *motor.Motor) bool { return EnsureWorld
 // safeEsc closes an NPC dialog with a real ESC, then undoes any pause the ESC
 // may have raised (it does when the dialog had already closed). The fade-in is
 // not instant, so the screen is checked twice.
+//
+// Janitor ON: no ESC. The holder disowns the NPC menu and dialog instead; the
+// janitor closes them by sight (the 0xF4 byte is proven for the NPC menu) on
+// the next tick, while the holder's Step waits behind the gate.
 func safeEsc(ctx *Ctx) {
+	if JanitorOn {
+		Disown(screen.NPCMenu | screen.NPCDialog)
+		return
+	}
 	ctx.M.RealKey(0x1B)
 	time.Sleep(400 * time.Millisecond)
 	if EnsureWorld(ctx.GR, ctx.M) == 0 {

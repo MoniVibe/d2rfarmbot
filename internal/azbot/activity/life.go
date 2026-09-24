@@ -54,7 +54,15 @@ func (l *Legacy) Suspend(ctx *Ctx, _ phase.Reason) {
 	if ctx != nil && ctx.M != nil {
 		ctx.M.MoveStop()
 	}
+	if s, ok := l.A.(suspender); ok {
+		s.suspended()
+	}
 }
+
+// suspender: a legacy activity that forgets panel beliefs on preemption. Only
+// meaningful with the janitor ON (a suspended holder's panels are foreign and
+// get closed); each implementation is a no-op when JanitorOn is false.
+type suspender interface{ suspended() }
 
 func (l *Legacy) Step(ctx *Ctx) Status {
 	v := l.A.Step(ctx)
@@ -78,19 +86,29 @@ func (l *Legacy) PhaseName() string {
 	return ""
 }
 
-// allPanels: every panel bit — the services open trade, bag, dialogs and menus
-// today and nothing narrows which.
-var allPanels = func() screen.Panel {
-	var p screen.Panel
-	for _, q := range screen.All {
-		p |= q
-	}
-	return p
-}()
+// Claims per service (docs/AZBOT_V2.md: "Claims live only while it holds the
+// grant"). While the holder owns them the janitor leaves these panels alone;
+// the moment it loses the grant they are foreign and the janitor closes them by
+// sight. Inventory and the generic right half-panel go together because the
+// bag alone reads as RightPanel (its own detector exists only beside a vendor);
+// likewise the char sheet reads as LeftPanel.
+const (
+	// Identify / Equip: the bag the ID-tome cast opens.
+	claimsBag = screen.Inventory | screen.RightPanel
+	// Spend: the char sheet (left) and the skill tree (right).
+	claimsSpend = screen.CharSheet | screen.SkillTree | screen.LeftPanel | screen.RightPanel
+	// Vendor errands (Fence, Restock, Repair, Heal): NPC menu and speech, the
+	// trade window (the vendor IS the left frame) and the bag beside it.
+	claimsVendor = screen.NPCMenu | screen.NPCDialog | screen.Shop | screen.Inventory |
+		screen.RightPanel | screen.LeftPanel
+)
+
+func needsService(claims screen.Panel) Needs {
+	return Needs{Mode: exec.ModeOf(screen.World), Claims: claims, Cursor: exec.CursorOwn}
+}
 
 var (
-	needsWorld   = Needs{Mode: exec.ModeOf(screen.World)}
-	needsService = Needs{Mode: exec.ModeOf(screen.World), Claims: allPanels, Cursor: exec.CursorOwn}
+	needsWorld = Needs{Mode: exec.ModeOf(screen.World)}
 	// Respawn answers the death screen; Relog walks the pause and main menus. Both
 	// act where the world-bound activities must not, so neither is mode-gated.
 	needsAnyMode = Needs{Mode: exec.AnyMode, Cursor: exec.CursorAny}
@@ -112,14 +130,15 @@ func Registry(legs []Leg, road []data.Position) *Roster {
 	adv := NewAdvance(legs)
 	fight := NewFight()
 	fight.March = adv.MarchGoal // P-5.8: the door mouth is shot open
-	svc := func(a Activity) Life { return &Legacy{A: a, N: needsService} }
+	svc := func(a Activity, claims screen.Panel) Life { return &Legacy{A: a, N: needsService(claims)} }
 	world := func(a Activity) Life { return &Legacy{A: a, N: needsWorld} }
 	free := func(a Activity) Life { return &Legacy{A: a, N: needsAnyMode} }
 	r := &Roster{Advance: adv, Fight: fight, Acts: []Life{
 		world(&Breakout{}), world(&Stand{}), world(&Flee{March: adv.MarchGoal}), world(NewDodge()),
 		free(&Respawn{}), free(NewRelog()), world(NewReclaim()), world(fight),
-		world(NewLoot()), world(NewImbibe()), svc(NewFence()), svc(NewRestock()), svc(NewRepair()),
-		svc(NewHeal()), svc(NewIdentify()), svc(NewEquip()), svc(NewSpend()), world(adv),
+		world(NewLoot()), world(NewImbibe()), svc(NewFence(), claimsVendor), svc(NewRestock(), claimsVendor),
+		svc(NewRepair(), claimsVendor), svc(NewHeal(), claimsVendor), svc(NewIdentify(), claimsBag),
+		svc(NewEquip(), claimsBag), svc(NewSpend(), claimsSpend), world(adv),
 		world(NewWithdraw()), world(&Return{}), world(&Travel{Road: road}), world(&Explore{Frontier: adv.FrontierFor}),
 	}}
 	r.byName = make(map[string]Life, len(r.Acts))
