@@ -598,6 +598,12 @@ func ServicesPendingWhy(s *percept.Snapshot) string {
 	// drop, and every junk cell sold is room.
 	// R27: haul's return leg left before the stash ran, so every tier-S drop
 	// cost a town trip that emptied nothing. Keepers waiting = an errand.
+	// R31: a keeper lifted mid-stash left the bag, the docket read clear, and
+	// the march preempted Stash with the item on the cursor. A cursor item in
+	// town is always an errand.
+	if s.Me.InTown && s.Me.CursorItem {
+		return "cursor"
+	}
 	if stashWorks.Load() && len(stashable(s, loot.Active())) > 0 {
 		return "stash"
 	}

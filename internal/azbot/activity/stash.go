@@ -287,7 +287,7 @@ func (st *Stash) Step(ctx *Ctx) Status {
 			l.to(stPlace, "keeper on the cursor")
 			return l.running()
 		}
-		// SHIFT+CLICK TRANSFER (owner, 2026-09-24: "it can shift click so things
+		// CTRL+CLICK TRANSFER (owner, 2026-09-24: "it can shift click so things
 		// transfer"): one click moves the bag item into the OPEN tab — no cursor,
 		// no free-cell guessing. Runes, gems and the mod's rows get their own tabs.
 		if st.target != 0 && st.shifting {
@@ -295,10 +295,14 @@ func (st *Stash) Step(ctx *Ctx) Status {
 				return l.wait(100 * time.Millisecond)
 			}
 			st.shifting = false
-			if !inBag(ctx, st.target) {
+			if s.Me.CursorItem {
+				l.to(stPlace, "the transfer lifted it: place by sight")
+				return l.running()
+			}
+			if !inBag(ctx, st.target) { // memory cannot see the mod's Shared pages 4-5: leaving the bag is the proof
 				st.moved++
 				ctx.Led.Append(verbs.Outcome{Verb: "stash", Holder: st.Name(), Result: verbs.ResDone,
-					Evidence: fmt.Sprintf("shift-stashed unit %d (%dx%d) from bag (%d,%d) to the %s tab", int(st.target), st.tgtW, st.tgtH, st.tgtGX, st.tgtGY, stashTabName[st.tab])})
+					Evidence: fmt.Sprintf("ctrl-stashed unit %d (%dx%d) from bag (%d,%d) to the %s tab", int(st.target), st.tgtW, st.tgtH, st.tgtGX, st.tgtGY, stashTabName[st.tab])})
 				st.target = 0
 				return l.running()
 			}
@@ -343,7 +347,11 @@ func (st *Stash) Step(ctx *Ctx) Status {
 		if st.noShift {
 			ctx.M.RealMenuClick(cx, cy) // lift; stPlace sets it down by sight
 		} else {
-			ctx.M.RealMenuShiftClick(cx, cy)
+			// CTRL+CLICK = TRANSFER with the stash open (click drill, R31: Shift did
+			// nothing; Ctrl moved a grand charm to Shared page 5). With NO panel open
+			// the same gesture DROPS the item ("Ctrl + Left Click to Drop"): only ever
+			// here, with the stash seen open (the open check above).
+			ctx.M.RealMenuCtrlClick(cx, cy)
 			st.shifting = true
 		}
 		st.clickT = time.Now()
