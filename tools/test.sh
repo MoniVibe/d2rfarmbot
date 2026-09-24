@@ -9,7 +9,7 @@ go test ./internal/azbot/nav/... ./internal/azbot/arbiter/... ./internal/azbot/p
   ./internal/azbot/watchdog/... ./internal/azbot/unstick/... ./internal/azbot/hud/... \
   ./cmd/strikereplay/... ./internal/azbot/combat/learn/... ./internal/azbot/combat/policy/... ./internal/azbot/coverage/... ./internal/azbot/loot/... ./internal/azbot/mapfuse/...
 wine cmd /c exit >/dev/null 2>&1 || true # first wine start creates its prefix; don't let it fail a test
-GOOS=windows go test -exec wine ./internal/azbot/... ./internal/game/
+GOOS=windows go test -exec wine ./internal/azbot/... ./internal/game/ ./cmd/azbot/
 GOOS=windows go build -o /dev/null ./cmd/azbot ./cmd/stridecal ./cmd/shot
 GOOS=windows go vet ./internal/azbot/... ./cmd/azbot
 echo "ALL GREEN"
