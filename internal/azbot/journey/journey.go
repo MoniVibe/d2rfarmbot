@@ -57,6 +57,35 @@ func (s JState) String() string {
 type Status struct {
 	State JState
 	Note  string
+	// Issued: this Step sent input (a stride went out). Out is that stride's
+	// outcome — information only; the follower's stall clock judges blockage.
+	Issued bool
+	Out    verbs.Outcome
+}
+
+// Legs is the body a journey walks with: where it stands, and one planned
+// stride. The game's body is GameLegs; tests walk a fake one.
+type Legs interface {
+	Here() (data.Position, bool)
+	Stride(to data.Position, hold time.Duration, minGain int, holder string) verbs.Outcome
+}
+
+// GameLegs is the live body: the perceptor's position and one verbs.Stride at
+// a target the planner already checked for sight.
+type GameLegs struct {
+	M   *motor.Motor
+	GR  *game.MemoryReader
+	P   *percept.Perceptor
+	Led *verbs.Ledger
+}
+
+func (g GameLegs) Here() (data.Position, bool) {
+	s := g.P.Capture()
+	return s.Me.Pos, s.Valid
+}
+
+func (g GameLegs) Stride(to data.Position, hold time.Duration, minGain int, holder string) verbs.Outcome {
+	return verbs.Stride{To: to, Hold: hold, MinGain: minGain, Planned: true}.Do(g.M, g.GR, g.P, g.Led, holder)
 }
 
 // Object bubbles: the route keeps ~3 tiles off live objects when there is room,
@@ -73,6 +102,17 @@ const (
 type Journey struct {
 	Goal   data.Position
 	Arrive int // arrival radius; default 5
+	// MaxHold caps one pulse (0 = the follower's own pulse). Budget caps the
+	// planner's node expansions (0 = nav's default) — a hurried mover (flee)
+	// plans small and falls back rather than stall a survival reaction.
+	MaxHold time.Duration
+	Budget  int
+	// MinHold lengthens every pulse to at least this (0 = the follower's own):
+	// an escape commits to its carrot — the stride still ends within 2 tiles
+	// of it (Stride's arrived-early), so a long hold never flies past it.
+	MinHold time.Duration
+	// NoAdopt: keep the grid the route was planned on (ReplanOnWall off).
+	NoAdopt bool
 
 	gr      *game.MemoryReader
 	holder  string
@@ -105,9 +145,13 @@ func NavGrid(g *game.Grid) *nav.Grid { return navGrid(g) }
 // Conversions are memoized per source grid: the executive regrids every few
 // seconds and every journey of that period shares one nav grid (the clearance
 // field over a whole level is the expensive part).
+// Two slots: a caller walking a grid it kept (Advance's leg grid) beside the
+// executive's current one must not rebuild the clearance field every tick.
 var memo struct {
 	src, relaxSrc *game.Grid
 	ng, relaxed   *nav.Grid
+	src2          *game.Grid
+	ng2           *nav.Grid
 }
 
 // navGrid adapts the (fused) game grid to the nav core: walls block; unknown and
@@ -116,7 +160,13 @@ func navGrid(g *game.Grid) *nav.Grid {
 	if g == memo.src && memo.ng != nil {
 		return memo.ng
 	}
+	if g == memo.src2 && memo.ng2 != nil {
+		memo.src, memo.src2 = memo.src2, memo.src
+		memo.ng, memo.ng2 = memo.ng2, memo.ng
+		return memo.ng
+	}
 	ng := buildNav(g, false)
+	memo.src2, memo.ng2 = memo.src, memo.ng
 	memo.src, memo.ng = g, ng
 	return ng
 }
@@ -222,12 +272,14 @@ func (j *Journey) State() nav.State { return j.f.State() }
 
 func (j *Journey) plan(me data.Position, now time.Time) (bool, string) {
 	g := j.grid
-	pl := g.Plan(me, j.Goal, nav.Options{Obstacles: j.obs})
-	if !pl.Found && j.src != nil && hasPriorWalls(j.src) {
+	opt := nav.Options{Obstacles: j.obs, MaxExpand: j.Budget}
+	pl := g.Plan(me, j.Goal, opt)
+	if !pl.Found && j.src != nil && j.Budget == 0 && hasPriorWalls(j.src) {
 		// Every route crosses a trusted prior's wall: plan again with those walls
-		// as expensive guesses. Observed walls stay hard.
+		// as expensive guesses. Observed walls stay hard. (A budgeted planner is
+		// in a hurry: it falls back instead of paying for a second search.)
 		g = relaxedNavGrid(j.src)
-		if rp := g.Plan(me, j.Goal, nav.Options{Obstacles: j.obs}); rp.Found {
+		if rp := g.Plan(me, j.Goal, opt); rp.Found {
 			pl = rp
 			j.note("planner: trusted prior walled every route — planned through its walls as guesses")
 		}
@@ -273,14 +325,70 @@ func (j *Journey) adopt(g *game.Grid) (data.Position, bool) {
 	return at, hit
 }
 
+// Regoal moves the goal without resetting the follower's progress and stall
+// memory (a moving target: the monster walked, the item was nudged). A goal
+// that moved 2+ tiles arms a replan; a smaller drift keeps the route.
+func (j *Journey) Regoal(goal data.Position) {
+	if goal == j.Goal {
+		return
+	}
+	if chebyshev(goal, j.Goal) >= 2 {
+		j.replan = true
+	}
+	j.Goal = goal
+}
+
+// Invalidate arms a replan from wherever the body stands next (someone else
+// moved it: a click walk, a leap). Stall and escalation memory survive.
+func (j *Journey) Invalidate() { j.replan = true }
+
+// Frame reports whether g covers the same world rectangle as the grid this
+// journey plans on (a different frame is a different area).
+func (j *Journey) Frame(g *game.Grid) bool {
+	return g != nil && j.src != nil && g.OffsetX == j.src.OffsetX && g.OffsetY == j.src.OffsetY &&
+		g.Width == j.src.Width && g.Height == j.src.Height
+}
+
+// Route returns the committed route from me, planning first when there is
+// none (or a replan is armed). ok=false carries the planner's reason.
+func (j *Journey) Route(me data.Position, led *verbs.Ledger) ([]data.Position, bool, string) {
+	j.led = led
+	j.adoptSource()
+	if j.f.State() == nav.Failed {
+		return nil, false, "follower failed here"
+	}
+	// The route is read from its start: one planned from elsewhere (she walked
+	// on since) is re-planned from here.
+	if pts := j.f.Path(); j.replan || len(pts) == 0 || j.f.State() == nav.NoPlan || chebyshev(pts[0], me) > 3 {
+		j.replan = false
+		if ok, why := j.plan(me, time.Now()); !ok {
+			return nil, false, why
+		}
+	}
+	return j.f.Path(), true, ""
+}
+
+func (j *Journey) adoptSource() {
+	if Source == nil || j.NoAdopt {
+		return
+	}
+	if at, hit := j.adopt(Source()); hit {
+		j.note(fmt.Sprintf("map: new wall on the route at (%d,%d) — replanning", at.X, at.Y))
+	}
+}
+
 // Step advances the journey by ONE bounded stride. The caller holds a RoleSteer lease.
 func (j *Journey) Step(m *motor.Motor, p *percept.Perceptor, led *verbs.Ledger) Status {
-	s := p.Capture()
-	if !s.Valid {
+	return j.StepLegs(GameLegs{M: m, GR: j.gr, P: p, Led: led}, led)
+}
+
+// StepLegs is Step over any body (the seam MoveTo and the tests walk).
+func (j *Journey) StepLegs(legs Legs, led *verbs.Ledger) Status {
+	me, valid := legs.Here()
+	if !valid {
 		return Status{State: Moving, Note: "perception gap"}
 	}
 	j.led = led
-	me := s.Me.Pos
 	d := chebyshev(me, j.Goal)
 	if d <= j.Arrive {
 		return Status{State: Arrived}
@@ -296,11 +404,7 @@ func (j *Journey) Step(m *motor.Motor, p *percept.Perceptor, led *verbs.Ledger) 
 		return Status{State: Stalled, Note: fmt.Sprintf("no approach in %s at (%d,%d) best=%d", approachBackstop, me.X, me.Y, j.bestDist)}
 	}
 	j.f.ArriveR = float64(max(j.Arrive, 1))
-	if Source != nil {
-		if at, hit := j.adopt(Source()); hit {
-			j.note(fmt.Sprintf("map: new wall on the route at (%d,%d) — replanning", at.X, at.Y))
-		}
-	}
+	j.adoptSource()
 	if j.replan && j.f.State() != nav.Failed {
 		j.replan = false
 		if ok, why := j.plan(me, now); !ok {
@@ -323,9 +427,9 @@ func (j *Journey) Step(m *motor.Motor, p *percept.Perceptor, led *verbs.Ledger) 
 			if j.snapped {
 				return Status{State: Arrived, Note: fmt.Sprintf("goal walled; at nearest walkable (%d,%d)", cmd.Target.X, cmd.Target.Y)}
 			}
-			return j.stride(m, p, led, cmd.Target, 300, "final approach")
+			return j.stride(legs, cmd.Target, 300, "final approach")
 		case nav.Move:
-			return j.stride(m, p, led, cmd.Target, cmd.HoldMs, cmd.Reason)
+			return j.stride(legs, cmd.Target, cmd.HoldMs, cmd.Reason)
 		}
 	}
 	return Status{State: Moving, Note: "replan did not settle"}
@@ -337,7 +441,7 @@ func (j *Journey) Step(m *motor.Motor, p *percept.Perceptor, led *verbs.Ledger) 
 // MinGain 1: a 150ms pulse covers ~1-2 tiles. A blocked stride is information only —
 // the follower's along-path stall clock judges real blockage (the old replan-on-block
 // reset that clock every time, so "stuck" never fired from the same spot).
-func (j *Journey) stride(m *motor.Motor, p *percept.Perceptor, led *verbs.Ledger, to data.Position, holdMs int, why string) Status {
+func (j *Journey) stride(legs Legs, to data.Position, holdMs int, why string) Status {
 	if to == (data.Position{}) {
 		return Status{State: Moving, Note: "refused: unset target"} // never walk toward the world origin
 	}
@@ -345,10 +449,16 @@ func (j *Journey) stride(m *motor.Motor, p *percept.Perceptor, led *verbs.Ledger
 	if hold <= 0 {
 		hold = 600 * time.Millisecond
 	}
+	if hold < j.MinHold {
+		hold = j.MinHold
+	}
+	if j.MaxHold > 0 && hold > j.MaxHold {
+		hold = j.MaxHold
+	}
 	holder := j.holder
 	if j.f.State() == nav.Escaping {
 		holder += "/escape"
 	}
-	verbs.Stride{To: to, Hold: hold, MinGain: 1, Planned: true}.Do(m, j.gr, p, led, holder)
-	return Status{State: Moving, Note: why}
+	o := legs.Stride(to, hold, 1, holder)
+	return Status{State: Moving, Note: why, Issued: true, Out: o}
 }
