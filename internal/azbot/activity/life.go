@@ -132,6 +132,7 @@ type Roster struct {
 	Advance *Advance
 	Fight   *Fight
 	Unstick *Unstick // carries out the watchdog's prescriptions
+	Recall  *Recall  // the session's wind-down town road (exec.WindTown)
 	byName  map[string]Life
 }
 
@@ -146,9 +147,10 @@ func Registry(legs []Leg, road []data.Position) *Roster {
 	world := func(a Activity) Life { return &Legacy{A: a, N: needsWorld} }
 	free := func(a Activity) Life { return &Legacy{A: a, N: needsAnyMode} }
 	unst := NewUnstick()
-	r := &Roster{Advance: adv, Fight: fight, Unstick: unst, Acts: []Life{
+	recall := NewRecall()
+	r := &Roster{Advance: adv, Fight: fight, Unstick: unst, Recall: recall, Acts: []Life{
 		world(&Breakout{}), world(&Stand{}), world(&Flee{March: adv.MarchGoal}), world(NewDodge()),
-		free(&Respawn{}), unst, world(NewReclaim()), world(fight),
+		free(&Respawn{}), unst, world(recall), world(NewReclaim()), world(fight),
 		world(NewLoot()), world(NewImbibe()), NewFence(), NewRestock(),
 		NewRepair(), NewHeal(), NewIdentify(),
 		NewEquip(), NewSpend(), world(adv),

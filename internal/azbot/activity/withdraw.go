@@ -46,7 +46,12 @@ func (w *Withdraw) Demand(s *percept.Snapshot) *arbiter.Demand {
 		Commit:  arbiter.Commitment{MinHold: 3 * time.Second}}
 }
 
-func (w *Withdraw) Step(ctx *Ctx) Verdict {
+func (w *Withdraw) Step(ctx *Ctx) Verdict { return w.ride(ctx, w.Name()) }
+
+// ride is THE town road by portal — shared by Withdraw and Recall so the one
+// proven ritual (use a live door, else cast; three dud casts = an empty tome)
+// is written once. who names the ledger holder.
+func (w *Withdraw) ride(ctx *Ctx, who string) Verdict {
 	s := ctx.Snap
 	if !s.Valid {
 		return Running
@@ -70,9 +75,9 @@ func (w *Withdraw) Step(ctx *Ctx) Verdict {
 	if bd < 1<<30 {
 		if bd > 20 {
 			verbs.Stride{To: best.Pos, Hold: 1200 * time.Millisecond, MinGain: 1}.
-				Do(ctx.M, ctx.GR, ctx.P, ctx.Led, w.Name())
+				Do(ctx.M, ctx.GR, ctx.P, ctx.Led, who)
 		} else {
-			verbs.EnterPortal{Target: best.ID, TargetPos: best.Pos}.Do(ctx.M, ctx.GR, ctx.P, ctx.Led, w.Name())
+			verbs.EnterPortal{Target: best.ID, TargetPos: best.Pos}.Do(ctx.M, ctx.GR, ctx.P, ctx.Led, who)
 		}
 		return Running
 	}
@@ -93,8 +98,41 @@ func (w *Withdraw) Step(ctx *Ctx) Verdict {
 			w.coolAt = time.Now().Add(60 * time.Second)
 			return Abandoned
 		}
-		verbs.CastSelf{Key: ctx.Cap.TownTP.Key}.Do(ctx.M, ctx.GR, ctx.P, ctx.Led, w.Name())
+		verbs.CastSelf{Key: ctx.Cap.TownTP.Key}.Do(ctx.M, ctx.GR, ctx.P, ctx.Led, who)
 		w.castAt = time.Now()
 	}
 	return Running
 }
+
+// Recall is the session's wind-down demand (exec.Session WindDown, relay R4:
+// the run's timer once exited mid-fight and left him undriven). While the
+// executive says the run is ending and the field is still hot, Recall rides
+// Withdraw's town road at class Recover: over Fight (the road home beats one
+// more kill), under Survive (Breakout, Stand, Flee and Dodge keep him alive,
+// and the sentinel keeps drinking). Urgency sits over Reclaim and under
+// Unstick, whose prescriptions may themselves be a portal home. No tome or an
+// empty one: Recall abandons and cools like Withdraw — the session's quiet
+// field or its cap ends the run instead.
+type Recall struct {
+	want bool
+	w    Withdraw
+}
+
+func NewRecall() *Recall { return &Recall{} }
+
+func (r *Recall) Name() string { return "recall" }
+
+// Want is set by the executive every tick: true while the session asks for
+// the town road (exec.WindTown).
+func (r *Recall) Want(on bool) { r.want = on }
+
+func (r *Recall) Demand(s *percept.Snapshot) *arbiter.Demand {
+	if !r.want || !s.Valid || s.Me.InTown || s.Me.HPPct <= 0 || time.Now().Before(r.w.coolAt) {
+		return nil
+	}
+	return &arbiter.Demand{Who: r.Name(), Class: arbiter.ClassRecover,
+		Urgency: 0.91, // over Reclaim (0.9), under Unstick (0.92) and Respawn (1.0)
+		Commit:  arbiter.Commitment{MinHold: 3 * time.Second}}
+}
+
+func (r *Recall) Step(ctx *Ctx) Verdict { return r.w.ride(ctx, r.Name()) }

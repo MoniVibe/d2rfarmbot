@@ -23,6 +23,8 @@ type world struct {
 	pause   bool         // the pause menu is drawn
 	panels  screen.Panel // anything else on screen
 	refuse  bool         // the motor finds no foreground
+	town    bool         // WindDown: the character stands in town
+	hot     bool         // WindDown: a living monster within WindRadius
 
 	onEsc   func(w *world)
 	onClick func(w *world, p screen.Point)
@@ -32,7 +34,11 @@ type world struct {
 	lines []string
 	acts  []string
 	ends  []RelogEnd
-	owned int // ticks the session held
+	owned int      // ticks the session held
+	winds []string // WindDown: "<act>@<seconds since newWorld>" for every act but town
+	towns int      // WindDown: ticks that asked for the town road
+	says  []string // hold reminders
+	t0    time.Time
 }
 
 type event struct {
@@ -46,6 +52,7 @@ func newWorld(t *testing.T) *world {
 	w.ses = NewSession()
 	w.ses.Trace = func(l string) { w.lines = append(w.lines, l) }
 	w.run(time.Second) // Attaching → InGame
+	w.t0 = w.now
 	return w
 }
 
@@ -85,9 +92,20 @@ func (w *world) tick() SessionOut {
 	}
 	w.later = keep
 	w.ses.Tick++
-	out := w.ses.Step(SessionIn{Now: w.now, Engaged: w.engaged, Focused: w.focused, Valid: w.valid, Seed: w.seed, Seen: w.seen()})
+	out := w.ses.Step(SessionIn{Now: w.now, Engaged: w.engaged, Focused: w.focused, Valid: w.valid, Seed: w.seed, Seen: w.seen(),
+		InTown: w.valid && w.town, Hot: w.valid && w.hot})
 	if out.Owns {
 		w.owned++
+	}
+	switch out.Wind {
+	case WindNone:
+	case WindTown:
+		w.towns++
+	default:
+		w.winds = append(w.winds, fmt.Sprintf("%s@%.1f", out.Wind, w.now.Sub(w.t0).Seconds()))
+	}
+	if out.Say != "" {
+		w.says = append(w.says, out.Say)
 	}
 	if out.Ended != nil {
 		w.ends = append(w.ends, *out.Ended)
@@ -482,7 +500,7 @@ func TestSessionPlayRefusedRetries(t *testing.T) {
 }
 
 func TestSessionStrings(t *testing.T) {
-	for st := Attaching; st <= Disengaged; st++ {
+	for st := Attaching; st <= Stopped; st++ {
 		if st.String() == "?" {
 			t.Fatalf("state %d unnamed", st)
 		}
