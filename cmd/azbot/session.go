@@ -127,3 +127,24 @@ func (d *sessionDriver) step(tick uint64, s *percept.Snapshot) bool {
 	}
 	return out.Owns
 }
+
+// armWatch is the self-model's armed-flip detector: it remembers the armed
+// state the last calibration ran under. The startup calibration (start(),
+// before the loop) has no snapshot, so the first observation SEEDS it rather
+// than reading the zero value's false→true as a flip (relay R10: the whole
+// calibration block ran twice at startup — 08:45:15, then 08:45:17 "self-model
+// event — recalibrating armed=true revived=false").
+type armWatch struct{ was, seeded bool }
+
+// seed records the armed state a calibration just ran under.
+func (a *armWatch) seed(armed bool) { a.was, a.seeded = armed, true }
+
+// flipped reports an armed flip since the last calibration. Unseeded, the
+// observation seeds and is no flip.
+func (a *armWatch) flipped(armed bool) bool {
+	if !a.seeded {
+		a.seed(armed)
+		return false
+	}
+	return armed != a.was
+}

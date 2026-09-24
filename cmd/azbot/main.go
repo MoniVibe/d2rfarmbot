@@ -2237,7 +2237,7 @@ func main() {
 		flightAt = time.Now()
 	}
 	var ring []*percept.Snapshot
-	wasArmed := false
+	var arms armWatch // the armed state the last calibration ran under
 	wasDead := false
 	// The watchdog is pure: it observes and prescribes (stuck, orbit, thrash, the
 	// deadman box, the pacer); the executive benches, and Unstick performs.
@@ -2421,7 +2421,7 @@ func main() {
 			neverEngaged = false
 			logger.Warn("ENGAGED: first engagement of a -disengaged run — startup hygiene and calibration now")
 			start()
-			wasArmed = s.Me.Armed // calibrated just now: not an armed-flip event
+			arms.seed(s.Me.Armed) // calibrated just now: not an armed-flip event
 			wd.Reset()
 			continue
 		}
@@ -2529,12 +2529,12 @@ func main() {
 				logger.Warn("BLACK BOX dumped", "path", bbPath, "frames", len(ring))
 			}
 		}
-		if (s.Me.Armed != wasArmed || (wasDead && !deadNow)) && !deadNow {
+		if (arms.flipped(s.Me.Armed) || (wasDead && !deadNow)) && !deadNow {
 			logger.Info("executive: self-model event — recalibrating", "armed", s.Me.Armed, "revived", wasDead)
 			cap = calibrate()
 			activity.SetBrawler(cap.Reach == nil && cap.Throw == nil)
 			fight.Recalibrated() // the audit follows the hands (P-7.1)
-			wasArmed = s.Me.Armed
+			arms.seed(s.Me.Armed)
 		}
 		wasDead = deadNow
 
