@@ -1,0 +1,9 @@
+world_town: (captured before; MenuOpen false)
+inventory: ui: MenuOpen(0xF4)=false QuitMenu=false
+charsheet: ui: MenuOpen(0xF4)=false QuitMenu=false
+skilltree: ui: MenuOpen(0xF4)=false QuitMenu=false
+inv_and_sheet: ui: MenuOpen(0xF4)=false QuitMenu=false
+questlog: ui: MenuOpen(0xF4)=false QuitMenu=false
+automap_overlay: ui: MenuOpen(0xF4)=false QuitMenu=false
+chat: ui: MenuOpen(0xF4)=false QuitMenu=false
+skill_picker: ui: MenuOpen(0xF4)=false QuitMenu=false
