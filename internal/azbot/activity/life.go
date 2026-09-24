@@ -151,7 +151,7 @@ func Registry(legs []Leg, road []data.Position) *Roster {
 	r := &Roster{Advance: adv, Fight: fight, Unstick: unst, Recall: recall, Acts: []Life{
 		world(&Breakout{}), world(&Stand{}), world(&Flee{March: adv.MarchGoal}), world(NewDodge()),
 		free(&Respawn{}), unst, world(recall), world(NewReclaim()), world(fight),
-		world(NewLoot()), world(NewImbibe()), NewFence(), NewRestock(),
+		NewDiscard(), world(NewLoot()), world(NewImbibe()), world(NewHaul()), NewFence(), NewRestock(),
 		NewRepair(), NewHeal(), NewIdentify(),
 		NewEquip(), NewSpend(), world(adv),
 		world(NewWithdraw()), world(&Return{}), world(&Travel{Road: road}), world(&Explore{Frontier: adv.FrontierFor, Bias: adv.ExploreBias}),

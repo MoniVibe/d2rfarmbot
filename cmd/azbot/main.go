@@ -1860,6 +1860,9 @@ func main() {
 		}
 	}
 	activity.PhaseSink = func(ln string) { emit(trace.Phase(ln, curTick.Load())) }
+	// The loot brain: config/loot.yaml, verb=lootpick decisions, the loot
+	// census, and the item catalog (memory + logs/loot_catalog.jsonl).
+	activity.WireLoot(mem, func(msg string, args ...any) { logger.Info(msg, args...) })
 	// WARNING 6 (the 12:00 and 12:12 lessons): a swap can inherit ANY panel —
 	// the vendor window (readable) or the plain bag (byte-blind, photographed
 	// eating six straight talks). The successor heals itself blind: in town,

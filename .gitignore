@@ -11,6 +11,7 @@
 !/config/template
 !/config/koolo.yaml.dist
 !/config/Settings.json
+!/config/loot.yaml
 
 # --- farmbot ---
 # Build artifacts. farmbot.exe was tracked for months despite HANDOFF saying it never should be.

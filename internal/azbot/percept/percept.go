@@ -19,6 +19,7 @@ import (
 	"github.com/hectorgimenez/d2go/pkg/data/npc"
 	"github.com/hectorgimenez/d2go/pkg/data/object"
 	"github.com/hectorgimenez/d2go/pkg/data/stat"
+	"github.com/hectorgimenez/koolo/internal/azbot/loot"
 	"github.com/hectorgimenez/koolo/internal/game"
 )
 
@@ -143,6 +144,22 @@ type ItemRef struct {
 	// Potion: "health"/"mana"/"unknown" by the belt classifier (a ground 603 is the
 	// mod's red potion — vendors and drops share the scrambled "SmallCharm" row).
 	Potion string
+	// Class: the item's ROW number (the type, not the unit) in the mod's own
+	// numbering — what the loot value model (package loot) classifies. Names
+	// are scrambled on this mod; the row is not.
+	Class int
+}
+
+// BagItem is one item in the bag: identity, grid cell, and what the loot
+// policy needs to value it (the swap's victim list, the catalog's bag rows).
+type BagItem struct {
+	Unit    data.UnitID
+	ID      int
+	Name    string
+	GX, GY  int
+	Qual    int
+	Ident   bool
+	Upgrade bool // on the Equip docket
 }
 
 // PortalRef is a live portal object: identity AND position. Entering a portal means
@@ -204,6 +221,7 @@ type Snapshot struct {
 	Junk     []InvItem    // sellable inventory items, grid slots (the Fence's list)
 	Unid     []InvItem    // unidentified magic+ items, grid slots (Identify's list)
 	Upgrades []InvItem    // identified upgrades for worn slots (Equip's list)
+	Bag      []BagItem    // everything in the bag (the loot policy's view)
 	// RiteNearby: a fresh (Selectable) shrine or well within 25 — Imbibe's
 	// cheap demand signal (P-5R); the Step re-verifies before moving.
 	RiteNearby bool
@@ -434,7 +452,7 @@ func (p *Perceptor) Capture() *Snapshot {
 	}
 	for _, it := range d.Inventory.ByLocation(item.LocationGround) {
 		s.Items = append(s.Items, ItemRef{ID: it.UnitID, Pos: it.Position, Name: string(it.Name), Quality: int(it.Quality),
-			Potion: PotionKind(it, true)})
+			Potion: PotionKind(it, true), Class: int(it.ID)})
 	}
 	// P-5R roadside rites: a cheap nearby-rite flag for the Imbibe demand —
 	// the Step re-verifies against the live object list before a single step.
@@ -631,21 +649,30 @@ func (p *Perceptor) Capture() *Snapshot {
 		}
 		return fitsSlot(it)
 	}
-	occupied := 0
+	// THE BAG IS 10x8 ON THIS MOD (the Fence's measured grid; the R2 bag
+	// capture): the old 40-cell frame read "full" in 67% of recorded frames
+	// and every unique waited on InvFree>=2. Occupancy is the UNION of the
+	// footprints clipped to the grid — footprints from the loot model, which
+	// undoes the mod's +15 misc shift (the d2go row for the cube, 564, is a
+	// 1x1 topaz).
+	bag := d.Inventory.ByLocation(item.LocationInventory)
+	occupied := loot.Occupied(len(bag), func(i int) (int, int, int) {
+		return int(bag[i].ID), bag[i].Position.X, bag[i].Position.Y
+	})
+	bagPct := occupied * 100 / loot.BagCells
+	policy := loot.Active()
 	potSpares := map[potionKind]int{} // bag potions per kind — the reserve audit (P-4.5)
-	for _, it := range d.Inventory.ByLocation(item.LocationInventory) {
+	for _, it := range bag {
 		id := int(it.ID)
-		if w, h := it.Desc().InventoryWidth, it.Desc().InventoryHeight; w > 0 && h > 0 {
-			occupied += w * h
-		} else {
-			occupied++ // unknown footprint: count one cell rather than none
-		}
-		if isUpgrade(it) {
+		up := isUpgrade(it)
+		s.Bag = append(s.Bag, BagItem{Unit: it.UnitID, ID: id, Name: string(it.Name), GX: it.Position.X, GY: it.Position.Y,
+			Qual: int(it.Quality), Ident: it.Identified, Upgrade: up})
+		if up {
 			s.Upgrades = append(s.Upgrades, InvItem{ID: id, GX: it.Position.X, GY: it.Position.Y, Qual: int(it.Quality), IsBow: it.Desc().Type == "bow"})
 			continue // an upgrade is never merchandise
 		}
 		switch {
-		case id == 533 || id == 534 || id == 549: // TP/ID tomes + the HORADRIC CUBE
+		case id == 533 || id == 534 || id == 549 || loot.Lifeline(id): // TP/ID tomes + the HORADRIC CUBE (mod 564)
 			if id == 533 || id == 534 { // tome charge counts: the rituals' fuel gauges
 				n := 0
 				if q, ok := it.FindStat(stat.Quantity, 0); ok {
@@ -680,8 +707,20 @@ func (p *Perceptor) Capture() *Snapshot {
 			// ran: the owner's unique bow could never be identified.)
 			s.Unid = append(s.Unid, InvItem{ID: id, GX: it.Position.X, GY: it.Position.Y, Qual: int(it.Quality)})
 			continue
-		case int(it.Quality) >= 6: // identified rare+: keepers (equip/stash decide)
+		case policy.Keep(id, int(it.Quality)):
+			// THE LOOT POLICY'S KEEPERS (runes, gems, jewels, charms, the mod's
+			// unknown rows, anything config/loot.yaml tags S/A): never merchandise.
+			// The recorded sell list carried a magic charm (618), an Eld rune (626)
+			// and the cube itself (564).
 			continue
+		case int(it.Quality) >= 6:
+			// Identified rare+: keepers (equip/stash decide) — until the bag passes
+			// the policy's sell line, when a rare that is not an upgrade has shown
+			// its hand and becomes Fence stock (no proven stash routine exists).
+			if !policy.SellGrade(loot.Carried{Item: loot.Item{ID: id, Name: string(it.Name), Quality: int(it.Quality)},
+				Identified: true}, bagPct) {
+				continue
+			}
 		case int(it.Quality) >= 4:
 			// Identified magic she could actually draw (bow/javelin/quiver types) is
 			// held for the equip flow; identified magic she cannot use is MERCHANDISE.
@@ -691,7 +730,7 @@ func (p *Perceptor) Capture() *Snapshot {
 		}
 		s.Junk = append(s.Junk, InvItem{ID: id, GX: it.Position.X, GY: it.Position.Y, Qual: int(it.Quality)})
 	}
-	s.Me.InvFree = 40 - occupied // vanilla 10x4 frame; a modded larger bag reads conservative
+	s.Me.InvFree = loot.BagCells - occupied
 	if s.Me.InvFree < 0 {
 		s.Me.InvFree = 0
 	}

@@ -1,0 +1,73 @@
+# azbot loot policy — yours to edit. Read at startup (restart azbot to apply).
+# A typo is refused loudly (the log says "loot config ... refused") and the
+# built-in defaults (identical to this file as shipped) serve instead.
+#
+# TIERS
+#   S  always take. If the bag is full she drops the worst carried junk for it,
+#      or (nothing to drop) portals to town, sells junk at the Fence, and walks
+#      back through the portal to pick it up.
+#   A  take if there is room. With a full bag it may replace a WORSE carried
+#      item — but never while she is marching (trying to progress).
+#   B  sell-grade: left on the ground (see space.pick_tier_b); sold if carried.
+#   C  junk: never picked; sold if carried.
+#
+# HOW THIS MOD NUMBERS ITEMS
+#   The mod inserted 15 rows ahead of the vanilla misc section, so every misc
+#   item reads 15 higher than vanilla and the names in the bot's tables are
+#   wrong ("SmallCharm" is a red potion, "LumRune" is an Eld rune, "Fang" is
+#   gold). The bot undoes the shift; `codes:` below use the VANILLA codes.
+#   Rows past 673 are the mod's own items (orbs, currencies...). Until you tag
+#   them they default to tier A (unknown_mod_item) so nothing new is ignored.
+#
+# FINDING IDS TO TAG
+#   logs/loot_catalog.jsonl gets one line per new (id, quality) the bot sees,
+#   with its tier and why. Lines with a "tag_hint" are the ones worth a look.
+#   The log also says, per decision:
+#     verb=lootpick item=<id> name=<name> q=<quality> tier=<S|A|B|C> why=<...>
+
+# Default tier per class of item.
+tiers:
+  unique: S
+  set: S
+  rare: A
+  crafted: A
+  magic_jewelry: A        # magic rings and amulets
+  magic_gear: B           # magic weapons/armor: Fence fodder
+  plain_gear: C           # normal / superior / low-quality bases
+  rune: S
+  gem: S                  # gems and skulls, chipped included
+  jewel: S
+  charm: S                # small/large/grand charms (they work from the bag)
+  gold: A                 # needs no bag room
+  potion: A               # only while the belt has a free slot AND bottle looting is on
+  quest: S                # uber keys, essences, organs, tokens
+  ammo: C                 # arrows/bolts (rare/unique ammo still follow rare/unique)
+  scroll: C               # loose TP/ID scrolls (the tomes are refilled in town)
+  misc: C                 # keys, torches, elixirs...
+  unknown_mod_item: A     # rows past the vanilla table: the mod's own items
+  quality_contradiction: A  # e.g. a "rune" row showing magic quality: the table is wrong about it
+
+# Explicit tags. First match wins: ids, then codes, then names.
+# ids: the row number the game reports (the catalog's "id").
+ids:
+  # 746: S    # seen in the bag in relay R4 (unknown mod row) — tag once you know
+  # 748: S    # ditto
+# codes: vanilla item codes after the shift is undone
+#   r01..r33 runes · cm1/cm2/cm3 charms · jew jewel · gld gold · amu/rin jewelry
+#   hp1..hp5 / mp1..mp5 / rvs / rvl potions · aqv/cqv arrows/bolts
+codes:
+  # r01: B    # El runes are everywhere — demote them if they crowd the bag
+  # aqv: B
+# names: substrings of the bot's (scrambled) table name. Only trustworthy for
+# rows the mod did NOT renumber (gear); prefer ids for everything else.
+names:
+  # "orb": S
+
+space:
+  pick_tier_b: false      # true: take tier B when half the bag is free and she is not marching
+  swap_for_a: true        # a tier A drop may replace a worse carried item (not while marching)
+  swap_for_s: true        # a tier S drop may replace a worse carried item
+  town_trip_for_s: true   # a tier S drop may send her to town and back (needs a proven TP binding)
+  sell_rares_pct: 70      # bag this full (%): identified rares that are not upgrades go to the Fence
+
+census_every: 3m          # how often the "loot census" line is logged

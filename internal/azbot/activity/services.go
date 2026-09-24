@@ -18,6 +18,7 @@ import (
 	"github.com/hectorgimenez/d2go/pkg/data/stat"
 	"github.com/hectorgimenez/koolo/internal/azbot/arbiter"
 	"github.com/hectorgimenez/koolo/internal/azbot/journey"
+	"github.com/hectorgimenez/koolo/internal/azbot/loot"
 	"github.com/hectorgimenez/koolo/internal/azbot/memory"
 	"github.com/hectorgimenez/koolo/internal/azbot/percept"
 	"github.com/hectorgimenez/koolo/internal/azbot/phase"
@@ -527,7 +528,9 @@ func ServicesPending(s *percept.Snapshot) bool {
 		}
 	}
 	// The Fence's docket: broke with junk to sell, or a heavy bag either way.
-	if s.Me.JunkCount > 0 && (s.Me.Gold < 500 || s.Me.JunkCount >= 4) {
+	// ...or a loot room trip (Haul): she came home to make room for a tier S
+	// drop, and every junk cell sold is room.
+	if s.Me.JunkCount > 0 && (s.Me.Gold < 500 || s.Me.JunkCount >= 4 || theLoot.hauling()) {
 		return true
 	}
 	return false
@@ -1047,7 +1050,7 @@ func (fc *Fence) demand(s *percept.Snapshot) *arbiter.Demand {
 	if !s.Valid || !s.Me.InTown || s.Me.JunkCount == 0 || time.Now().Before(fc.coolAt) {
 		return nil
 	}
-	if s.Me.Gold >= 500 && s.Me.JunkCount < 4 {
+	if s.Me.Gold >= 500 && s.Me.JunkCount < 4 && !theLoot.hauling() {
 		return nil // solvent and light: selling can wait for a fuller bag
 	}
 	return &arbiter.Demand{Who: fc.Name(), Class: arbiter.ClassService,
@@ -1205,7 +1208,9 @@ func (fc *Fence) Step(ctx *Ctx) Status {
 			continue
 		}
 		id := int(inv.ID)
-		if id == 533 || id == 534 || id == 549 || inv.Desc().Type == item.TypeQuest {
+		// loot.Lifeline adds the mod's numbering: the cube is row 564 here (the
+		// recorded sell list carried it), and quest rows sit 15 past vanilla.
+		if id == 533 || id == 534 || id == 549 || inv.Desc().Type == item.TypeQuest || loot.Lifeline(id) {
 			ev := fmt.Sprintf("cell (%d,%d) holds a LIFELINE (id %d, type %s) — sell refused", it.GX, it.GY, id, inv.Desc().Type)
 			ctx.Led.Append(verbs.Outcome{Verb: "fence", Holder: fc.Name(), Result: verbs.ResRefused, Evidence: ev})
 			return e.finish(ctx, phase.Abandoned, phase.Precondition, ev)

@@ -6,6 +6,7 @@ import (
 
 	"github.com/hectorgimenez/d2go/pkg/data"
 	"github.com/hectorgimenez/d2go/pkg/data/item"
+	"github.com/hectorgimenez/d2go/pkg/data/stat"
 	"github.com/hectorgimenez/koolo/internal/azbot/motor"
 	"github.com/hectorgimenez/koolo/internal/azbot/percept"
 	"github.com/hectorgimenez/koolo/internal/game"
@@ -140,6 +141,21 @@ func (pk Pickup) Do(m *motor.Motor, gr *game.MemoryReader, p *percept.Perceptor,
 		return n
 	}
 	beforeTargetInInventory := inventoryCount(d, targetSig)
+	// A pickup that lands on a STACK (this mod stacks runes: the bag shows
+	// "ELD 2") or in the purse (gold) adds no new unit — the stack's quantity
+	// or the gold total is its evidence instead.
+	stackOrGold := func(dd game.Data) int {
+		n := dd.PlayerUnit.TotalPlayerGold()
+		for _, it := range dd.Inventory.ByLocation(item.LocationInventory) {
+			if it.ID == targetSig.id {
+				if q, ok := it.FindStat(stat.Quantity, 0); ok {
+					n += q.Value
+				}
+			}
+		}
+		return n
+	}
+	beforeStack := stackOrGold(d)
 	// P-6.2: evidence names its item — "why did she pick THAT up" must be
 	// answerable from the ledger (the owner asked and the log had no answer).
 	for _, it := range d.Inventory.ByLocation(item.LocationGround) {
@@ -195,7 +211,7 @@ func (pk Pickup) Do(m *motor.Motor, gr *game.MemoryReader, p *percept.Perceptor,
 			time.Sleep(150 * time.Millisecond)
 			if groundGone() {
 				after := inventoryCount(gr.GetData(), targetSig)
-				if after <= beforeTargetInInventory {
+				if after <= beforeTargetInInventory && stackOrGold(gr.GetData()) <= beforeStack {
 					o.Result = ResWhiff
 					o.Evidence = "background click removed target from ground but target was not added to inventory; probable misclick"
 					led.Append(o)

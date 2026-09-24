@@ -2165,41 +2165,24 @@ func NewLoot() *Loot { return &Loot{failures: map[data.UnitID]int{}, ban: map[da
 
 func (l *Loot) Name() string { return "loot" }
 
-// wanted scores a ground item for THIS character's needs (the self-model speaking):
-// weapons dominate while weaponless; a bowzon running dry hungers for arrows;
-// potions and gold always matter a little. SPACE GATES THE WANT: a full bag turns
-// every gear pickup into a 3-fail ban cycle (the owner watched it) — gold always
-// fits, potions ride the belt, gear needs real cells.
 // LootPotions gates bottle pickup (2026-09-23: OFF — with D2R behind another window
 // item hover is dead (25/25 probes hovered nothing at d=3), every pickup whiffed and
-// looting ate the run. Re-enable when pickup works unfocused.)
+// looting ate the run. Re-enable when pickup works unfocused.) Kept OFF on
+// 2026-09-24: the relay runs (R1/R4, before and after the hover-only probe)
+// landed 0 of 101 pickup attempts, and bottles are the commonest drop by far
+// (3,602 of ~14,600 ground units) — they would dominate every pile the probe
+// sweeps and every approach. The loot policy still plans bottles (tier
+// "potion", belt room only) for the day a relay shows pickups landing.
 var LootPotions = false
 
+// wanted scores a ground item: the loot value model's plan (package loot,
+// config/loot.yaml — lootpolicy.go). A TAKE scores its value (tier S ≈ 0.9,
+// A ≈ 0.65); a SWAP scores only the approach (Discard makes the room at her
+// feet); a haul, a skip, a discarded unit score nothing. The old rule was
+// "strictly uniques, nothing else" with a 40-cell bag reading full in 67% of
+// the recorded frames — the owner: "it skips cool inventory stuff".
 func (l *Loot) wanted(s *percept.Snapshot, it percept.ItemRef) float64 {
-	// STRICTLY UNIQUES, NOTHING ELSE (the owner, 04:0x night 2: "id prefer it
-	// strictly picked uniques, and nothing else" — tightening 13:08's
-	// uniques-only). The old naked-rearm exception fired on TRANSIENT
-	// Armed=false frames (swap moments, ghost reads) and grabbed white
-	// weapons — the very "random stuff" the owner watched. Rearm, quiver,
-	// and gold cases all retired; the corpse reclaim owns gear recovery.
-	if it.Quality >= 7 && s.Me.InvFree >= 2 {
-		return 0.85
-	}
-	// POTIONS FILL THE BELT (2026-09-23, Dry Hills: 97 drops on the floor, several
-	// red and blue bottles within 4 tiles, belt at 3/8, and uniques-only walked
-	// past every one). A bottle rides the belt, never the bag — wanted only while
-	// the belt has a free slot. Scored under uniques so a unique still wins.
-	if LootPotions && s.Me.BeltUsed < s.Me.BeltSlots {
-		switch it.Potion {
-		case "health":
-			return 0.8
-		case "mana":
-			if s.Me.BeltMana < 2 {
-				return 0.75
-			}
-		}
-	}
-	return 0
+	return theLoot.want(s, it)
 }
 
 // lootBlockedByHostile is the single safety gate shared by Demand and Step. A
@@ -2225,8 +2208,8 @@ func (l *Loot) acceptFor(s *percept.Snapshot, now time.Time) func(data.Item) boo
 			return false
 		}
 		ref := percept.ItemRef{ID: it.UnitID, Pos: it.Position, Name: string(it.Name),
-			Quality: int(it.Quality), Potion: percept.PotionKind(it, true)}
-		return l.wanted(s, ref) > 0
+			Quality: int(it.Quality), Potion: percept.PotionKind(it, true), Class: int(it.ID)}
+		return theLoot.takeable(s, ref) // a click lands only on a TAKE (room for it)
 	}
 }
 
@@ -2270,6 +2253,9 @@ func (l *Loot) pick(s *percept.Snapshot) (percept.ItemRef, float64, bool) {
 }
 
 func (l *Loot) Demand(s *percept.Snapshot) *arbiter.Demand {
+	// Once per tick, before any gate: plan, log, census and catalog every item
+	// in reach, and pick the pending room-making plan (Discard, Haul).
+	theLoot.observe(s)
 	if !s.Valid || s.Me.HPPct < 40 {
 		return nil
 	}
@@ -2279,7 +2265,7 @@ func (l *Loot) Demand(s *percept.Snapshot) *arbiter.Demand {
 		return nil
 	}
 	if _, score, ok := l.pick(s); ok {
-		// Strict-unique filtering happens in wanted; every accepted drop stays in
+		// The loot policy's tiering happens in wanted; every accepted drop stays in
 		// ClassLoot so Fight remains the only owner of combat time.
 		return &arbiter.Demand{Who: l.Name(), Class: arbiter.ClassLoot, Urgency: score,
 			Commit: arbiter.Commitment{MinHold: 2 * time.Second, SwitchMargin: 0.3}}
@@ -2336,12 +2322,22 @@ func (l *Loot) Step(ctx *Ctx) Verdict {
 		}
 		return Running
 	}
+	// At hand, only a TAKE is clicked (a SWAP target waits for Discard's room).
+	if !theLoot.takeable(s, it) {
+		l.j, l.target = nil, 0
+		return Done
+	}
+	// The policy approved it (any tier it TAKEs), so the verb's uniques-only
+	// guard is lifted; the live quality must still match the snapshot's.
 	o := verbs.Pickup{Target: it.ID, TargetPos: it.Pos, TargetQuality: it.Quality,
-		AllowBelow: it.Potion == "health" || it.Potion == "mana",
+		AllowBelow: true,
 		Accept:     l.acceptFor(s, time.Now())}.Do(ctx.M, ctx.GR, ctx.P, ctx.Led, l.Name())
 	// Whatever the pickup did to her position is ours: the approach clock
 	// starts over from wherever she stands now.
 	l.prog.restart(time.Now())
+	if o.Result == verbs.ResDone {
+		theLoot.picked(it, o.Evidence)
+	}
 	if o.Result != verbs.ResDone {
 		l.failures[it.ID]++
 		if l.failures[it.ID] >= 3 {
