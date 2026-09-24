@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/hectorgimenez/d2go/pkg/data"
@@ -366,6 +367,7 @@ func (m *lootMind) picked(it percept.ItemRef, evidence string) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	m.loadLocked()
+	lootLanded.Store(time.Now().UnixNano())
 	t, ok := m.lastTier[it.ID]
 	if !ok {
 		t = m.cfg.Evaluate(refItem(it)).Tier
@@ -443,4 +445,18 @@ func (m *lootMind) hauling() bool {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	return m.pending != nil && m.pending.Act == loot.Haul && m.pending.Town
+}
+
+// lootLanded: when a pickup last LANDED (ground-gone), for the watchdog.
+var lootLanded atomic.Int64
+
+// lootProductiveFor: a landed pickup this recent keeps a pile walk from being
+// judged an orbit (the watchdog's own window is 20s).
+const lootProductiveFor = 12 * time.Second
+
+// LootProductive: Loot landed a pickup within lootProductiveFor of now. Only a
+// landing counts — a deaf click on the same unit is not progress.
+func LootProductive(now time.Time) bool {
+	at := lootLanded.Load()
+	return at != 0 && now.Sub(time.Unix(0, at)) < lootProductiveFor
 }

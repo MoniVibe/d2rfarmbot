@@ -2660,6 +2660,7 @@ func main() {
 		if v := wd.Check(watchdog.Context{
 			Holder:       holderName,
 			StationaryOK: watchdog.StationaryOK(holderName, s.Me.Pos, enemyAt),
+			Productive:   holderName == "loot" && activity.LootProductive(time.Now()),
 			CrossingHot:  activity.CrossingHot(),
 			CanPortal:    !s.Me.InTown && s.Me.HPPct > 0 && cap.TownTP != nil,
 			InService:    inService,

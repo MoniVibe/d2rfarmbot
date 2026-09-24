@@ -119,6 +119,11 @@ type Context struct {
 	// StationaryOK: standing still IS the work right now (a volley, a melee
 	// stand). Suppresses Stuck/Orbit, never Thrash. See StationaryOK.
 	StationaryOK bool
+	// Productive: the holder landed real progress inside the window (Loot: a
+	// pickup). R37 00:14: a five-drop pile, three picked in 16s, judged an orbit
+	// (path 80, net 11) and Loot benched — the orb and a unique were left behind.
+	// Suppresses Stuck/Orbit, never Thrash.
+	Productive bool
 	// CrossingHot: the march holds a door (P-5.10). The watchdog prescribes no
 	// footwork of its own there — the escape fling was the door pendulum — but
 	// the pocket breaker still counts toward a portal on a long leash.
@@ -356,7 +361,7 @@ func (w *Watchdog) Check(c Context) Verdict {
 	w.checkAt = now
 
 	holder := c.Holder
-	if holder != "" && !c.StationaryOK && holder == w.holder && now.Sub(w.holderAt) > tenureMin {
+	if holder != "" && !c.StationaryOK && !c.Productive && holder == w.holder && now.Sub(w.holderAt) > tenureMin {
 		if v, ok := w.pocket(c, now); ok {
 			return v
 		}

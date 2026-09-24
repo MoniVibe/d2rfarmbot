@@ -366,3 +366,22 @@ func TestServiceAndCursorItemNeverConvictedOfStillness(t *testing.T) {
 		t.Fatalf("control: want stuck, got %+v", vs)
 	}
 }
+
+// R37: a pile walk with pickups landing is not an orbit.
+func TestProductiveExemption(t *testing.T) {
+	w, clk := newDog()
+	vs := run(w, clk, 25*time.Second, tick, func(i int) (Sample, Context) {
+		x := i % 20
+		if x > 10 {
+			x = 20 - x
+		}
+		c := field("loot")
+		c.Productive = true
+		return sample(pos(100+x, 100), "loot"), c
+	})
+	for _, v := range vs {
+		if v.Pathology == Orbit || v.Pathology == Stuck {
+			t.Fatalf("a productive loot pile walk was convicted: %+v", v)
+		}
+	}
+}
