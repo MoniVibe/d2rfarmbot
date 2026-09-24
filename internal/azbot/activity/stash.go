@@ -37,16 +37,16 @@ import (
 // Stash-panel geometry in screenshot px at the 1050-px reference (measured on the
 // R2 capture, 1920x1050): a 16x13 grid, column 0 center x=183, row 0 center y=129.
 const (
-	stashCols      = 16
-	stashRows      = 13
-	stashCell0X    = 183.0
-	stashCell0Y    = 129.0
-	stashPitchX    = 47.5
-	stashPitchY    = 47.7
-	stashNextPgX   = 615.0 // the page arrow right of "Page n / 5"
-	stashNextPgY   = 752.0
-	stashMaxPages  = 5
-	stashEmptyMax  = 22 // every sampled channel at or below this = an empty cell
+	stashCols     = 16
+	stashRows     = 13
+	stashCell0X   = 183.0
+	stashCell0Y   = 129.0
+	stashPitchX   = 47.5
+	stashPitchY   = 47.7
+	stashNextPgX  = 615.0 // the page arrow right of "Page n / 5"
+	stashNextPgY  = 752.0
+	stashMaxPages = 5
+	stashEmptyMax = 22 // every sampled channel at or below this = an empty cell
 )
 
 // stashWorks: the live belief that the stash ritual moves items on this mod. Two
@@ -141,6 +141,13 @@ func (st *Stash) demand(s *percept.Snapshot, now time.Time) *arbiter.Demand {
 	if servicesCooled() || !s.Valid || !s.Me.InTown || !stashWorks.Load() || now.Before(st.coolAt) {
 		return nil
 	}
+	// R28: a 2x3 keeper (a unique bow) rode the cursor in town with no 2x3 hole
+	// in the bag — the gate never drops a keeper, Equip could not park it: a
+	// wedge. A keeper with no bag room belongs in the stash: Stash takes it.
+	if s.Me.CursorItem {
+		return &arbiter.Demand{Who: st.Name(), Class: arbiter.ClassService, Urgency: 0.86,
+			Commit: arbiter.Commitment{MinHold: 5 * time.Second}}
+	}
 	if len(stashable(s, loot.Active())) == 0 {
 		return nil
 	}
@@ -199,7 +206,8 @@ func (st *Stash) Step(ctx *Ctx) Status {
 	switch l.ph.Phase() {
 	case stClean:
 		if s.Me.CursorItem {
-			return l.wait(150 * time.Millisecond) // someone else's cursor item: wait for its park
+			l.to(stWalk, "a cursor item to stash: straight to the chest")
+			return l.running()
 		}
 		if len(stashable(s, loot.Active())) == 0 {
 			return l.finish(ctx, phase.Done, phase.Completed, fmt.Sprintf("nothing to stash (moved %d)", st.moved))
@@ -244,6 +252,11 @@ func (st *Stash) Step(ctx *Ctx) Status {
 			return l.running()
 		}
 		if s.Me.CursorItem {
+			if cur := ctx.GR.GetData().Inventory.ByLocation(item.LocationCursor); len(cur) > 0 && cur[0].UnitID != st.target {
+				st.target = cur[0].UnitID // adopted: an item already riding the cursor
+				st.tgtW, st.tgtH = footprint(cur[0])
+				st.tgtGX, st.tgtGY, st.pages = -1, -1, 0
+			}
 			l.to(stPlace, "keeper on the cursor")
 			return l.running()
 		}
@@ -280,8 +293,10 @@ func (st *Stash) Step(ctx *Ctx) Status {
 		if !ok {
 			if st.pages >= stashMaxPages {
 				// Every page full: set it back where it came from and stop.
-				cx, cy := invCellPx(ctx, st.tgtGX, st.tgtGY)
-				ctx.M.RealMenuClick(cx, cy)
+				if st.tgtGX >= 0 {
+					cx, cy := invCellPx(ctx, st.tgtGX, st.tgtGY)
+					ctx.M.RealMenuClick(cx, cy)
+				}
 				st.clickT = time.Now()
 				return l.finish(ctx, phase.Abandoned, phase.Refused, fmt.Sprintf("stash full on %d pages — keeper put back", st.pages))
 			}
