@@ -182,10 +182,16 @@ func Observe(img image.Image, h Hints) Reading {
 					r.Evidence[p] += "; memory 0xF4 agrees"
 				}
 			}
-		} else {
+		} else if !haveShot {
 			r.Panels |= NPCMenu
 			r.Unsure &^= NPCMenu
 			r.Evidence[NPCMenu] = "memory 0xF4 (NPC menu or dialog)"
+		} else {
+			// With a frame in hand, sight owns the NPC menu (5 positions measured):
+			// 0xF4 LATCHES after an errand — R4 carried ui=npcmenu through a whole
+			// Dry Hills fight — and a latched byte asserting a menu makes the
+			// janitor ESC at nothing, raising the pause menu.
+			r.Evidence[NPCMenu] = "memory 0xF4 set but no menu on screen (latched byte ignored)"
 		}
 	}
 	if h.NPCShop && r.Panels&Shop == 0 {

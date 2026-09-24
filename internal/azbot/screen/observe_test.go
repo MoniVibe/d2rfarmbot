@@ -85,16 +85,20 @@ func TestObserveUnsureOnlyWithoutCapture(t *testing.T) {
 }
 
 func TestObserveMemoryHints(t *testing.T) {
-	// 0xF4 is proven for NPC menus: it adds a menu sight does not show (a
-	// capture taken a frame early)...
+	// 0xF4 LATCHES after an errand (relay R4: ui=npcmenu through a whole field
+	// fight). With a frame, sight owns the menu: a latched byte adds nothing...
 	h := world
 	h.MenuByte = true
 	r := Observe(load(t, "town_clear"), h)
-	if !r.Panels.Has(NPCMenu) || r.Sight.Has(NPCMenu) || r.Unsure&NPCMenu != 0 {
-		t.Errorf("town_clear+0xF4: %s sight=%s", r, r.Sight)
+	if r.Panels.Has(NPCMenu) || r.Panels.Blocking() {
+		t.Errorf("town_clear+latched 0xF4 must read clear: %s", r)
 	}
-	if !strings.Contains(r.Evidence[NPCMenu], "0xF4") {
+	if !strings.Contains(r.Evidence[NPCMenu], "latched") {
 		t.Errorf("evidence %q", r.Evidence[NPCMenu])
+	}
+	// ...without a frame it is still the only NPC-menu witness.
+	if r := Observe(nil, h); !r.Panels.Has(NPCMenu) {
+		t.Errorf("no frame+0xF4: %s", r)
 	}
 	// ...and only agrees where sight already holds the menu or the speech.
 	r = Observe(load(t, "npc_menu"), h)

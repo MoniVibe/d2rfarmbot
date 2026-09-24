@@ -22,11 +22,12 @@ func TestCloseStepCaptures(t *testing.T) {
 			t.Errorf("%s: %s, want %s at (%d,%d) for %s", file, a, want.Kind, want.X, want.Y, want.Panel)
 		}
 	}
-	// 0xF4 is the proven NPC-menu channel: ESC is lawful there even unseen.
+	// A latched 0xF4 over a clear frame must never earn an ESC: that ESC is
+	// what raises the pause menu out of nothing.
 	h := world
 	h.MenuByte = true
-	if a := CloseStep(Observe(load(t, "town_clear"), h)); a.Kind != ActKey || a.VK != VKEscape || a.Panel != NPCMenu {
-		t.Errorf("town_clear+0xF4: %s", a)
+	if a := CloseStep(Observe(load(t, "town_clear"), h)); a.Kind != ActNone {
+		t.Errorf("town_clear+latched 0xF4: %s, want none", a)
 	}
 }
 
