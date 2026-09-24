@@ -49,10 +49,11 @@ type gatekeeper struct {
 	// invKey/bagAt: a held item with the bag shut gets the bag OPENED (R24: a
 	// potion the fence left on the cursor waited forever for a parker that never
 	// bid). The open bag then makes the Park rule place it in a free cell.
-	invKey   uint16
-	invPhase inventory.Phase // the last logged inventory state
-	invStuck inventory.Stuck
-	bagAt    time.Time
+	invKey     uint16
+	invPhase   inventory.Phase // the last logged inventory state
+	invStuck   inventory.Stuck
+	invCloseAt time.Time
+	bagAt      time.Time
 }
 
 // handBackRest: how long a holder is benched to hand a held cursor item back.
@@ -383,6 +384,15 @@ func (g *gatekeeper) invObserve(now time.Time, s *percept.Snapshot, who string) 
 	if ph != g.invPhase {
 		g.logger.Info("inventory state", "state", ph.String(), "holder", who)
 		g.invPhase = ph
+	}
+	// RxClosePanel, carried out (R34: the janitor's close click on a lone bag
+	// "changed nothing" and its detector was quarantined as a phantom, so the
+	// bag stood open): the inventory key toggles the bag shut, at most every 3s.
+	if st == inventory.StuckPanelIdle && ph == inventory.BagOpen && g.invKey != 0 && now.Sub(g.invCloseAt) > 3*time.Second {
+		g.invCloseAt = now
+		if g.m.RealKey(g.invKey) {
+			g.logger.Info("inventory: idle bag closed with the inventory key")
+		}
 	}
 	if st != g.invStuck {
 		if st != inventory.StuckNone {
