@@ -41,9 +41,9 @@ var escAllowed = map[string]struct {
 	// only (with the janitor on it disowns the NPC menu instead).
 	"internal/azbot/activity/pause.go": {1, "safeEsc, janitor OFF"},
 
-	// TODO(step 7, services onto contract v2): Equip/Spend closePanel ESCs,
-	// janitor-OFF path only.
-	"internal/azbot/activity/services.go": {2, "Equip/Spend closePanel, janitor OFF"},
+	// Step 7 retired Equip/Spend closePanel (services.go): Identify, Equip and
+	// Spend close their own panels by sight via screen.CloseStep
+	// (servicelife.go tidy), which holds no ESC literal.
 
 	// cmd/azbot/main.go, janitor-OFF legacy executive and manual harnesses
 	// (step 9 deleted the watchdog ESC probe pair):

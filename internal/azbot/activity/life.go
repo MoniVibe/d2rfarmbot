@@ -55,9 +55,6 @@ func (l *Legacy) Suspend(ctx *Ctx, _ phase.Reason) {
 	if ctx != nil && ctx.M != nil {
 		ctx.M.MoveStop()
 	}
-	if s, ok := l.A.(suspender); ok {
-		s.suspended()
-	}
 }
 
 // Judgeable is an activity that consumes a watchdog verdict against it (Advance
@@ -73,11 +70,6 @@ func (l *Legacy) Judged(ctx *Ctx, v watchdog.Verdict) {
 		j.Judged(ctx, v)
 	}
 }
-
-// suspender: a legacy activity that forgets panel beliefs on preemption. Only
-// meaningful with the janitor ON (a suspended holder's panels are foreign and
-// get closed); each implementation is a no-op when JanitorOn is false.
-type suspender interface{ suspended() }
 
 func (l *Legacy) Step(ctx *Ctx) Status {
 	v := l.A.Step(ctx)
@@ -118,6 +110,8 @@ const (
 		screen.RightPanel | screen.LeftPanel
 )
 
+// needsService: a town service acts in the world, owns the cursor (bag work,
+// parking) and claims exactly what its current phase opens.
 func needsService(claims screen.Panel) Needs {
 	return Needs{Mode: exec.ModeOf(screen.World), Claims: claims, Cursor: exec.CursorOwn}
 }
@@ -154,8 +148,8 @@ func Registry(legs []Leg, road []data.Position) *Roster {
 		world(&Breakout{}), world(&Stand{}), world(&Flee{March: adv.MarchGoal}), world(NewDodge()),
 		free(&Respawn{}), free(NewRelog()), unst, world(NewReclaim()), world(fight),
 		world(NewLoot()), world(NewImbibe()), svc(NewFence(), claimsVendor), svc(NewRestock(), claimsVendor),
-		svc(NewRepair(), claimsVendor), svc(NewHeal(), claimsVendor), svc(NewIdentify(), claimsBag),
-		svc(NewEquip(), claimsBag), svc(NewSpend(), claimsSpend), world(adv),
+		svc(NewRepair(), claimsVendor), svc(NewHeal(), claimsVendor), NewIdentify(),
+		NewEquip(), NewSpend(), world(adv),
 		world(NewWithdraw()), world(&Return{}), world(&Travel{Road: road}), world(&Explore{Frontier: adv.FrontierFor}),
 	}}
 	r.byName = make(map[string]Life, len(r.Acts))

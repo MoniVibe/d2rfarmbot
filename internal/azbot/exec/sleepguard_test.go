@@ -28,9 +28,9 @@ var sleepAllowed = map[string]int{
 	"imbibe.go":     1,
 	"pause.go":      3,
 	"reclaim.go":    1,
-	"relog.go":      5, // TODO(step 8): Session Relogging phases
-	"selftest.go":   2, // the manual -selftest harness
-	"services.go":   23,
+	"relog.go":      5,  // TODO(step 8): Session Relogging phases
+	"selftest.go":   2,  // the manual -selftest harness
+	"services.go":   11, // step 7: Identify/Equip/Spend moved out, sleep-free
 	"shopgrid.go":   2,
 }
 
