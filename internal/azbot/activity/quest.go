@@ -92,18 +92,21 @@ func (a *Advance) questHold(ctx *Ctx) bool {
 		return false
 	}
 	d := ctx.GR.GetData()
+	if seed := uint(ctx.GR.MapSeed()); seed != a.questSeed {
+		a.questSeed = seed
+	}
+	if a.questSince == nil {
+		a.questSince, a.questDone = map[string]time.Time{}, map[string]bool{}
+	}
 	q, chest, seen, pending := questState(d.Data, s.Me.Area)
 	key := fmt.Sprintf("%d.%d", ctx.GR.MapSeed(), int(s.Me.Area))
 	if !pending {
-		if _, was := a.questSince[key]; was && !a.questDone[key] {
-			a.questDone[key] = true
+		if _, isQuest := questLegs[s.Me.Area]; isQuest && !a.questDone[key] {
+			a.questDone[key] = true // also stops Demand's quest bid for this area
 			ctx.Led.Append(verbs.Outcome{Verb: "quest", Holder: a.Name(), Result: verbs.ResDone,
 				Evidence: fmt.Sprintf("%s leg complete in area %d (held=%v chestSeen=%v)", q.label, int(s.Me.Area), questItemHeld(d.Data, q.item), seen)})
 		}
 		return false
-	}
-	if a.questSince == nil {
-		a.questSince, a.questDone = map[string]time.Time{}, map[string]bool{}
 	}
 	since, ok := a.questSince[key]
 	if !ok {
@@ -167,4 +170,13 @@ func (a *Advance) logQuestCap(ctx *Ctx) {
 	ctx.Led.Append(verbs.Outcome{Verb: "quest", Holder: a.Name(), Result: verbs.ResDone,
 		Evidence: fmt.Sprintf("cap=%d (area %d) frontier=%d held: cube=%v staff=%v", a.questCap, int(leg), a.frontier,
 			questItemHeld(d.Data, "box"), questItemHeld(d.Data, "msf"))})
+}
+
+// questWanted: Demand's cheap check (no game data) — this area has a quest leg
+// not yet ended on the current seed. Step's questHold decides the rest.
+func (a *Advance) questWanted(ar area.ID) bool {
+	if _, ok := questLegs[ar]; !ok {
+		return false
+	}
+	return !a.questDone[fmt.Sprintf("%d.%d", a.questSeed, int(ar))]
 }

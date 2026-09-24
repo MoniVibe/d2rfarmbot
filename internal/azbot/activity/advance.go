@@ -159,6 +159,7 @@ type Advance struct {
 	// quest legs (quest.go): per seed.area, when the hold began and whether it ended.
 	questSince map[string]time.Time
 	questDone  map[string]bool
+	questSeed  uint // map seed the quest maps belong to (set in Step)
 	questCap   int // first unfinished quest leg index at or behind the frontier; -1 none (refreshed each Step)
 	Itinerary   []Leg
 	campaignAct int // saved frontier namespace; prevents Act 1 indices leaking into Act 2
@@ -352,6 +353,12 @@ func (a *Advance) place(ar area.ID) int {
 func (a *Advance) Demand(s *percept.Snapshot) *arbiter.Demand {
 	if !s.Valid || len(a.Itinerary) < 2 {
 		return nil
+	}
+	// A quest area with its quest unfinished: bid, so Step runs the quest hook
+	// (R17: the capped march "reached" Maggot Lair 3 and never bid again).
+	if !s.Me.InTown && s.Me.HPPct >= 50 && a.questWanted(s.Me.Area) {
+		return &arbiter.Demand{Who: a.Name(), Class: arbiter.ClassTravel, Urgency: 0.4,
+			Commit: arbiter.Commitment{MinHold: 2 * time.Second}}
 	}
 	// A naked amazon with a corpse out there has ONE job and it is not marching —
 	// the recovery activities own her until the gear is back (run 24's near-miss).

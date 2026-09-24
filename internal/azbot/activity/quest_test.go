@@ -49,3 +49,17 @@ func TestQuestCapTargetsTheQuestLeg(t *testing.T) {
 		t.Fatalf("capped march must target the quest leg itself, targets %v", got)
 	}
 }
+
+func TestAdvanceBidsInUnfinishedQuestArea(t *testing.T) {
+	a := NewAdvance(Act2Itinerary())
+	s := townSnap()
+	s.Me.InTown = false
+	s.Me.Area = area.MaggotLairLevel3
+	if d := a.Demand(s); d == nil {
+		t.Fatal("standing in Maggot Lair 3 with the Staff leg unfinished: Advance must bid (R17)")
+	}
+	a.questDone = map[string]bool{"0.64": true}
+	if a.questWanted(area.MaggotLairLevel3) {
+		t.Fatal("a finished quest leg stops the quest bid")
+	}
+}
