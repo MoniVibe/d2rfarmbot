@@ -52,6 +52,14 @@ func TestGateLine(t *testing.T) {
 	eq(t, Gate("", "clear", "", 6), `T L=gate hold=- why="clear" act="-" tick=6`)
 }
 
+func TestSessionLine(t *testing.T) {
+	got := Session("InGame", "Relogging/OpenPause", "relog: corpse far", 7)
+	want := `T L=session from=InGame to=Relogging/OpenPause why="relog: corpse far" tick=7`
+	if got != want {
+		t.Fatalf("got  %s\nwant %s", got, want)
+	}
+}
+
 func TestPhase(t *testing.T) {
 	var got string
 	p := &phase.Phaser[testPhase]{Act: "fence", Log: func(l string) { got = Phase(l, 12) }}

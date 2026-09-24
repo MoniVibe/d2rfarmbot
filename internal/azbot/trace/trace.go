@@ -10,6 +10,7 @@
 //	T L=nav act=advance from=following to=stuck why="no gain 1.5s" tick=48213
 //	T L=life act=fight ev=end why="abandoned/no-target: withdrawn while suspended" tick=48213
 //	T L=gate hold=fight why="foreign: right-panel" act="click 1788,18" tick=48213
+//	T L=session from=InGame to=Relogging/OpenPause why="relog: corpse far, naked in town" tick=48213
 //	T L=watchdog verdict=stuck remedy=unstick-stride culprit=advance evidence="holder=advance pinned in 0x0 box for 19s run=1" tick=48213
 //	S 15:04:05 #48213 ses=InGame mode=World ui=- cur=- hold=fight held=7.2s gate=- phase=- hp=64 mp=30 pos=5012,4431 en=5
 package trace
@@ -73,6 +74,12 @@ func Gate(hold, why, act string, tick uint64) string {
 func Watchdog(verdict, remedy, culprit, evidence string, tick uint64) string {
 	return fmt.Sprintf("T L=watchdog verdict=%s remedy=%s culprit=%s evidence=%q tick=%d",
 		verdict, remedy, dash(culprit), evidence, tick)
+}
+
+// Session is a layer-0 transition (exec.Session): InGame, Relogging/<phase>,
+// Attaching, Disengaged.
+func Session(from, to, why string, tick uint64) string {
+	return fmt.Sprintf("T L=session from=%s to=%s why=%q tick=%d", dash(from), dash(to), why, tick)
 }
 
 // Phase re-heads a phase.Phaser log line ("phase act=... from=... to=...").
