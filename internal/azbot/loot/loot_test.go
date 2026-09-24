@@ -378,10 +378,28 @@ func TestDefaultIsUniquesAndSpecialOnly(t *testing.T) {
 	if d.Unique != TierS || d.Quest != TierS || d.UnknownModItem != TierS {
 		t.Fatalf("uniques, quest items and mod rows must be S: %+v", d)
 	}
-	for name, tr := range map[string]Tier{"set": d.Set, "rare": d.Rare, "rune": d.Rune, "gem": d.Gem,
-		"charm": d.Charm, "gold": d.Gold, "potion": d.Potion, "magic_jewelry": d.MagicJewelry} {
+	if d.Rune != TierS || d.Gem != TierS || d.Charm != TierS {
+		t.Fatalf("runes, gems and charms must be S: %+v", d)
+	}
+	for name, tr := range map[string]Tier{"set": d.Set, "rare": d.Rare,
+		"gold": d.Gold, "potion": d.Potion, "magic_jewelry": d.MagicJewelry} {
 		if tr != TierC {
 			t.Errorf("%s must be C under the ruling, got %v", name, tr)
 		}
+	}
+}
+
+func TestUniqueCharmCarriedOnceIsSkipped(t *testing.T) {
+	c := Default()
+	charm := Item{ID: 620, Quality: QUnique}
+	if v := c.Evaluate(charm); v.Class.Kind != KindCharm {
+		t.Skipf("id 620 is not a charm row here (%v)", v.Class.Kind)
+	}
+	sit := Situation{Free: 20, Bag: []Carried{{Item: charm}}}
+	if p := c.Plan(charm, sit); p.Act != Skip || !strings.Contains(p.Why, "already carried") {
+		t.Fatalf("second unique charm: %+v", p)
+	}
+	if p := c.Plan(charm, Situation{Free: 20}); p.Act == Skip {
+		t.Fatalf("first unique charm must be taken: %+v", p)
 	}
 }

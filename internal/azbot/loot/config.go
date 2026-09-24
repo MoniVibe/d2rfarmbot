@@ -96,12 +96,13 @@ func Default() *Config {
 	return &Config{
 		Defaults: Defaults{
 			// OWNER RULING (2026-09-24, watching relay R13): "for now pick up
-			// only uniques and special items (orbs)" — the wide net looped on
+			// only uniques and special items (orbs)", then "pick runes, gems
+			// and charms" — the wide net looped on
 			// piles. Special = quest items and the mod's own rows (orbs,
 			// currencies). Widen here once pickups are proven reliable.
 			Unique: TierS, Set: TierC, Rare: TierC, Crafted: TierC,
 			MagicJewelry: TierC, MagicGear: TierC, PlainGear: TierC,
-			Rune: TierC, Gem: TierC, Jewel: TierC, Charm: TierC,
+			Rune: TierS, Gem: TierS, Jewel: TierC, Charm: TierS,
 			Gold: TierC, Potion: TierC, Quest: TierS, Ammo: TierC,
 			Scroll: TierC, Misc: TierC,
 			UnknownModItem: TierS, QualityContradiction: TierC,

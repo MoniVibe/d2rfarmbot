@@ -26,8 +26,8 @@
 #     verb=lootpick item=<id> name=<name> q=<quality> tier=<S|A|B|C> why=<...>
 
 # Default tier per class of item.
-# OWNER RULING (2026-09-24): for now ONLY uniques and special items (quest items,
-# the mod's own rows = orbs/currencies) are picked up. Everything else is C.
+# OWNER RULING (2026-09-24): for now ONLY uniques, runes, gems, charms and special
+# items (quest items, the mod's own rows = orbs/currencies) are picked up. Everything else is C.
 # Raise tiers here once pickups are proven reliable.
 tiers:
   unique: S
@@ -37,10 +37,10 @@ tiers:
   magic_jewelry: C        # magic rings and amulets
   magic_gear: C           # magic weapons/armor
   plain_gear: C           # normal / superior / low-quality bases
-  rune: C
-  gem: C                  # gems and skulls, chipped included
+  rune: S
+  gem: S                  # gems and skulls, chipped included
   jewel: C
-  charm: C                # small/large/grand charms
+  charm: S                # small/large/grand charms (a unique charm already carried is skipped: one per character)
   gold: C
   potion: C               # bottles off for now (the belt is restocked in town)
   quest: S                # uber keys, essences, organs, tokens

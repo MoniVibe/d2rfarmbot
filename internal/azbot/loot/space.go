@@ -72,6 +72,16 @@ func (c *Config) Plan(it Item, sit Situation) Plan {
 		}
 		p.Need = 0
 	}
+	// A unique charm can be carried once per character: the game refuses a
+	// second of the same kind, and a refused pickup would be retried forever.
+	if v.Class.Kind == KindCharm && it.Quality == QUnique {
+		for _, c := range sit.Bag {
+			if c.Item.ID == it.ID && c.Item.Quality == QUnique {
+				p.Why = "unique charm of this kind already carried (one per character)"
+				return p
+			}
+		}
+	}
 	switch v.Tier {
 	case TierC:
 		p.Why = "junk (tier C)"
