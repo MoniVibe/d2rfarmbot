@@ -18,7 +18,7 @@
 # perception, screen shadow, trace/state lines and the flight recorder run, but
 # NO input is sent - no injector stubs, no calibration keys, no startup hygiene -
 # until the owner presses F10 (the kill-switch) to engage. For hands-on censuses.
-param([Parameter(Mandatory)][string]$Tag, [int]$Seconds = 7200, [string]$Goal = "campaign", [switch]$Force, [switch]$Classic, [switch]$Janitor, [switch]$Disengaged)
+param([Parameter(Mandatory)][string]$Tag, [int]$Seconds = 7200, [string]$Goal = "campaign", [switch]$Force, [switch]$Classic, [switch]$Janitor, [switch]$Disengaged, [string]$Extra = "")
 Set-Location (Split-Path $PSScriptRoot -Parent)
 # NEVER stop the bot outside town (2026-09-23: a restart mid-fight left Fableboi
 # standing undriven in a pack; he died). Allowed: in town, or NO living monster within
@@ -48,6 +48,8 @@ Remove-Item logs\stop.now -ErrorAction SilentlyContinue
 $log = "logs\run_$(Get-Date -Format yyyy-MM-dd)$Tag.out"
 $azArgs = "-goal $Goal -seconds $Seconds"
 if ($Disengaged) { $azArgs += " -disengaged" }
+# -Extra passes raw azbot flags through, e.g. -Extra "-leftskill=on".
+if ($Extra) { $azArgs += " $Extra" }
 Start-Process -FilePath .\build\azbot.exe -ArgumentList $azArgs `
   -RedirectStandardOutput $log -RedirectStandardError "$log.err" -WindowStyle Hidden
 if ($Disengaged) { "launched DISENGAGED -> $log (press F10 in game to engage)" } else { "launched -> $log" }
