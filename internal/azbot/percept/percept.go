@@ -232,6 +232,8 @@ type Snapshot struct {
 	// RiteNearby: a fresh (Selectable) shrine or well within 25 — Imbibe's
 	// cheap demand signal (P-5R); the Step re-verifies before moving.
 	RiteNearby bool
+	// Doors: closed (selectable) doors within 20 — Door opens the one he is stuck at.
+	Doors []PortalRef
 }
 
 // The roadside-rite tables live HERE (activity imports percept, never the
@@ -467,6 +469,14 @@ func (p *Perceptor) Capture() *Snapshot {
 	}
 	// P-5R roadside rites: a cheap nearby-rite flag for the Imbibe demand —
 	// the Step re-verifies against the live object list before a single step.
+	for _, ob := range d.Objects {
+		if ob.ID != 0 && ob.Selectable && ob.IsDoor() {
+			dx, dy := ob.Position.X-d.PlayerUnit.Position.X, ob.Position.Y-d.PlayerUnit.Position.Y
+			if dx >= -20 && dx <= 20 && dy >= -20 && dy <= 20 {
+				s.Doors = append(s.Doors, PortalRef{ID: ob.ID, Pos: ob.Position})
+			}
+		}
+	}
 	for _, ob := range d.Objects {
 		if ob.ID != 0 && ob.Selectable && IsRite(ob) {
 			dx, dy := ob.Position.X-d.PlayerUnit.Position.X, ob.Position.Y-d.PlayerUnit.Position.Y

@@ -416,6 +416,10 @@ type posAt struct {
 type Stand struct {
 	ring         []posAt
 	lastStrikeAt time.Time
+	// stalemate watch (R36: 11 minutes swinging at idle monsters behind a closed door)
+	holdAt  time.Time
+	holdHP  int
+	holdAt0 data.Position
 }
 
 func (st *Stand) Name() string { return "stand" }
@@ -492,6 +496,24 @@ func (st *Stand) Step(ctx *Ctx) Verdict {
 	}
 	if bd > 14 {
 		return Done // the ground opened — the ordinary doctrine resumes
+	}
+	// STALEMATE: 15s held, no blood lost, not a step taken — the teeth cannot reach
+	// him and he cannot reach them (a closed door, a ledge). Those monsters read
+	// as unreachable for a minute: the march (and Door) take over.
+	if st.holdAt.IsZero() || chebyshev(s.Me.Pos, st.holdAt0) > 3 || s.Me.HPPct < st.holdHP-5 {
+		st.holdAt, st.holdHP, st.holdAt0 = time.Now(), s.Me.HPPct, s.Me.Pos
+	} else if time.Since(st.holdAt) > 15*time.Second {
+		var ids []data.UnitID
+		for _, e := range s.Enemies {
+			if chebyshev(s.Me.Pos, e.Pos) <= 12 {
+				ids = append(ids, e.ID)
+			}
+		}
+		MarkUnreachable(ids, time.Minute)
+		ctx.Led.Append(verbs.Outcome{Verb: "stand", Holder: st.Name(), Result: verbs.ResRefused,
+			Evidence: fmt.Sprintf("stalemate: 15s held with no blood lost and no ground taken — %d monsters marked unreachable for 1m", len(ids))})
+		st.holdAt = time.Time{}
+		return Done
 	}
 	// MAXIMUM KILLING: the skill per P-1.13 (above the 10% swallow), the
 	// contact strike otherwise, the bare fist as the last resort.
@@ -2355,7 +2377,7 @@ func (x *Explore) Step(ctx *Ctx) Verdict {
 // key lane — no cursor), then verify life returned. Its Done is the executive's cue to
 // recalibrate capability (a corpse holds the weapons; selections change).
 type Respawn struct {
-	since time.Time // when this death's respawn began (the fallback ESC clock)
+	since     time.Time // when this death's respawn began (the fallback ESC clock)
 	pressedAt time.Time
 }
 
