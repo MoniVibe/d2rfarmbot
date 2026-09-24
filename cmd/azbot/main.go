@@ -228,9 +228,17 @@ func main() {
 	exitXY := flag.String("exitxy", "", "relogtest: override the pause menu's Save and Exit button, screenshot x,y (default 958,822 on the 1920x1050 client)")
 	playXY := flag.String("playxy", "", "relogtest: override the character screen's Play button, screenshot x,y (default 922,822)")
 	janitorF := flag.Bool("janitor", false, "v2 step 6: the executive GATES every Step on the screen oracle and a janitor closes foreign panels by sight (replaces the pause sentry, startup hygiene, cursor-drop ESC, watchdog ESC probe and the services' blind ESCs). Also AZBOT_JANITOR=1")
+	combatLearnF := flag.String("combatlearn", "on", "DYNAMIC STRIKE (the owner, 2026-09-24: Leap Attack's AoE vs Carnage's single target): on = choose by the learned kills/sec − HP − mana utility per (skill, cluster, distance) bucket, persisted per character+skill set | off = deterministic priors, no exploration (telemetry still measured and stored)")
+	exploreF := flag.Float64("explore", 0.1, "DYNAMIC STRIKE exploration ε at zero samples (decays with the bucket's sample count; never below 50% life); 0 = never explore")
 	logger := slog.New(slog.NewTextHandler(os.Stdout, nil))
 
 	flag.Parse()
+	switch strings.ToLower(*combatLearnF) {
+	case "off", "false", "0", "none":
+		activity.SetCombatLearn(false, 0)
+	default:
+		activity.SetCombatLearn(true, *exploreF)
+	}
 
 	// ---- OFFLINE REPLAY: no attach, no injector, no game — pure decision review ----
 	if *replayF != "" {

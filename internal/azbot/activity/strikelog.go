@@ -7,6 +7,7 @@ import (
 	"github.com/hectorgimenez/d2go/pkg/data"
 	"github.com/hectorgimenez/d2go/pkg/data/mode"
 	"github.com/hectorgimenez/koolo/internal/azbot/combat"
+	"github.com/hectorgimenez/koolo/internal/azbot/combat/learn"
 	"github.com/hectorgimenez/koolo/internal/azbot/combat/policy"
 	"github.com/hectorgimenez/koolo/internal/azbot/verbs"
 )
@@ -14,7 +15,12 @@ import (
 // STRIKE TELEMETRY (the owner's 2026-09-24 Carnage build, first live run):
 // one ledger outcome per strike —
 //
-//	verb=strike  ev="skill=<name> mouse=left|right target=<id> d=<dist> result=hit|whiff|deaf"
+//	verb=strike  ev="skill=<name> mouse=left|right target=<id> d=<dist> result=hit|whiff|deaf|overkill [telemetry]"
+//
+// An issued strike's line is written when its 1.5s telemetry window closes
+// (strikelearn.go) and carries the splash account after the verdict:
+// aim=(x,y) n1..n6 hits= kills= hitd= killd= hpLoss= mp= next=. A whiff is
+// written at once, without telemetry.
 //
 // and one per target lock when it ends —
 //
@@ -41,6 +47,9 @@ type strikeRec struct {
 	at       time.Time
 	lastMode uint32 // the target's Mode last seen (edge detection)
 	left     bool   // a primary-left strike: feeds the left audit
+	// tel: the strike's telemetry window (strikelearn.go); its close writes
+	// the strike line together with this verdict. nil: a whiff, written at once.
+	tel *learn.Strike
 }
 
 // fightTally is the running account of one target lock.
@@ -78,6 +87,12 @@ func handOf(c *combat.Capability, key byte) (name, mouse string, leftPrimary boo
 // noteStrike records one strike attempt. issued=false is a whiff (resolved at
 // once); an issued strike waits in f.open for resolveStrikes.
 func (f *Fight) noteStrike(ctx *Ctx, target data.UnitID, key byte, issued bool) {
+	f.noteStrikeAt(ctx, target, key, issued, nil)
+}
+
+// noteStrikeAt is noteStrike with the strike's impact point (a leap's ground
+// aim; nil = the target's position).
+func (f *Fight) noteStrikeAt(ctx *Ctx, target data.UnitID, key byte, issued bool, aim *data.Position) {
 	name, mouse, left := handOf(ctx.Cap, key)
 	r := strikeRec{target: target, lock: f.tally.target, skill: name, mouse: mouse, d: -1, at: time.Now(), left: left}
 	if s := ctx.Snap; s != nil {
@@ -95,6 +110,7 @@ func (f *Fight) noteStrike(ctx *Ctx, target data.UnitID, key byte, issued bool) 
 		f.closeStrike(ctx, r, "whiff")
 		return
 	}
+	f.telemetryBegin(ctx, &r, key, aim)
 	f.open = append(f.open, r)
 	if len(f.open) > 8 { // never an unbounded queue: the oldest is out of its window anyway
 		f.closeStrike(ctx, f.open[0], "deaf")
@@ -104,6 +120,7 @@ func (f *Fight) noteStrike(ctx *Ctx, target data.UnitID, key byte, issued bool) 
 
 // resolveStrikes judges the open strikes against this tick's snapshot.
 func (f *Fight) resolveStrikes(ctx *Ctx, now time.Time) {
+	defer f.telemetryObserve(ctx, now) // the verdicts first, then the windows
 	if len(f.open) == 0 {
 		if len(f.deathTaken) > 64 {
 			f.deathTaken = nil
@@ -176,9 +193,16 @@ func (f *Fight) closeStrike(ctx *Ctx, r strikeRec, res string) {
 	case "deaf":
 		result = verbs.ResDeaf
 	}
-	ctx.Led.Append(verbs.Outcome{Verb: "strike", Holder: f.Name(), Target: fmt.Sprintf("unit=%d", r.target),
-		Result: result, Evidence: fmt.Sprintf("skill=%s mouse=%s target=%d d=%d result=%s",
-			r.skill, r.mouse, int(r.target), r.d, res)})
+	if r.tel != nil {
+		// The telemetry window writes the line (with the splash account)
+		// once both it and this verdict are in.
+		r.tel.Verdict = res
+		f.emitStrike(ctx, r.tel)
+	} else {
+		ctx.Led.Append(verbs.Outcome{Verb: "strike", Holder: f.Name(), Target: fmt.Sprintf("unit=%d", r.target),
+			Result: result, Evidence: fmt.Sprintf("skill=%s mouse=%s target=%d d=%d result=%s",
+				r.skill, r.mouse, int(r.target), r.d, res)})
+	}
 	if res == "hit" && r.lock != 0 && r.lock == f.tally.target {
 		f.tally.hits++
 	}

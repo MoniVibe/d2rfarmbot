@@ -42,8 +42,17 @@ func TestMeleeAttackKeyPrefersLeapAttackAndFallsBackToDoubleSwing(t *testing.T) 
 	ctx := &Ctx{Cap: &combat.Capability{LeapAttack: leap, DoubleSwing: double, Combat: leap}}
 	s := &percept.Snapshot{Valid: true}
 	s.Me.MaxMana, s.Me.MPPct = 40, 50
-	if got := meleeAttackKey(ctx, s, 6); got != leap.Key {
-		t.Fatalf("healthy ranged contact key = %#x, want Leap Attack %#x", got, leap.Key)
+	s.Me.Pos = data.Position{X: 100, Y: 100}
+	// A pack at leap range is the leap's (the AoE); a lone body is walked.
+	for i, o := range [][2]int{{0, 0}, {1, 0}, {0, 1}, {-1, 0}, {0, -1}} {
+		s.Enemies = append(s.Enemies, percept.EnemyRef{ID: data.UnitID(10 + i), Pos: data.Position{X: 106 + o[0], Y: 100 + o[1]}})
+	}
+	if got := meleeAttackKey(ctx, s, 5); got != leap.Key {
+		t.Fatalf("healthy, pack at leap range: key = %#x, want Leap Attack %#x", got, leap.Key)
+	}
+	s.Enemies = nil
+	if got := meleeAttackKey(ctx, s, 6); got != double.Key {
+		t.Fatalf("healthy, lone target at 6: key = %#x, want Double Swing %#x (walk in)", got, double.Key)
 	}
 	s.Me.MPPct = 15
 	if got := meleeAttackKey(ctx, s, 6); got != double.Key {

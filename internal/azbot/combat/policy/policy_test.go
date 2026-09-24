@@ -3,6 +3,8 @@ package policy
 import (
 	"testing"
 	"time"
+
+	"github.com/hectorgimenez/koolo/internal/azbot/combat/learn"
 )
 
 // carnage is Fableboi's 2026-09-24 kit: Carnage on the left, Leap Attack and
@@ -21,58 +23,58 @@ func TestChoose(t *testing.T) {
 	}{
 		{"left in reach, full pool: carnage, no key swap", func() Inputs { in := carnage(); in.Dist = 2; return in }, Left},
 		{"left point-blank, dry pool: still carnage", func() Inputs { in := carnage(); in.Dist = 1; in.MPPct = 3; in.LeapReady = false; return in }, Left},
-		{"left, target beyond reach, leap ready: leap closes the gap", func() Inputs { in := carnage(); in.Dist = 7; return in }, Leap},
-		{"left, beyond reach, leap unaffordable, hover ok: aimed left pursues", func() Inputs {
+		// A LONE target beyond reach: the single-target skill walks in —
+		// a leap's splash buys nothing on one body (R9: 66% deaf leaps).
+		{"lone target at 7, hover ok: aimed left pursues", func() Inputs { in := carnage(); in.Dist = 7; return in }, Left},
+		{"lone target at 7, hover dark: approach, never a blind left", func() Inputs {
 			in := carnage()
-			in.Dist, in.LeapReady = 7, false
-			return in
-		}, Left},
-		{"left, beyond reach, movement leap hungry: no combat leap", func() Inputs {
-			in := carnage()
-			in.Dist, in.LeapBlocked = 7, true
-			return in
-		}, Left},
-		{"left, beyond reach, no leap, hover dark: approach, never a blind left", func() Inputs {
-			in := carnage()
-			in.Dist, in.LeapProven, in.HoverOK = 6, false, false
+			in.Dist, in.HoverOK = 7, false
 			return in
 		}, Approach},
 		{"left, in reach, hover dark: shift-left carnage", func() Inputs { in := carnage(); in.Dist, in.HoverOK = 3, false; return in }, Left},
 		{"left benched, in reach: double swing fallback", func() Inputs { in := carnage(); in.Dist, in.LeftBenched = 2, true; return in }, Swing},
-		{"left benched, far: leap", func() Inputs { in := carnage(); in.Dist, in.LeftBenched = 6, true; return in }, Leap},
 		{"left benched, dry, leap-combat gated: basic", func() Inputs {
 			in := carnage()
 			in.Dist, in.LeftBenched, in.MPPct, in.LeapReady = 2, true, 5, false
 			return in
 		}, Basic},
-		// The pre-Carnage order is untouched without a proven left skill.
-		{"legacy: far, leap ready", func() Inputs { in := carnage(); in.LeftProven, in.Dist = false, 6; return in }, Leap},
 		{"legacy: close, swing", func() Inputs { in := carnage(); in.LeftProven, in.Dist = false, 2; return in }, Swing},
 		{"legacy: owner-declared combat key", func() Inputs {
 			return Inputs{CombatProven: true, Dist: 2, MPPct: 50}
 		}, Combat},
 		{"legacy: nothing proven", func() Inputs { return Inputs{Dist: 2} }, Basic},
-		// THE LEAP GATES (relay R9).
-		{"short gap d=4, hover ok: the aimed left closes it, no leap", func() Inputs { in := carnage(); in.Dist = 4; return in }, Left},
-		{"short gap d=5, hover dark: walk it, no leap", func() Inputs { in := carnage(); in.Dist, in.HoverOK = 5, false; return in }, Approach},
-		{"gap at LeapMinGap: leap", func() Inputs { in := carnage(); in.Dist = LeapMinGap; return in }, Leap},
-		{"leap cooling: no chained leap", func() Inputs { in := carnage(); in.Dist, in.LeapCooling, in.HoverOK = 8, true, false; return in }, Approach},
-		{"inside a pack: no leap out of it", func() Inputs { in := carnage(); in.Dist, in.PackNear = 8, PackHold; return in }, Left},
-		{"thin company: leap", func() Inputs { in := carnage(); in.Dist, in.PackNear = 8, PackHold-1; return in }, Leap},
-		{"walled line: no leap into the wall", func() Inputs { in := carnage(); in.Dist, in.LineWalled, in.HoverOK = 9, true, false; return in }, Approach},
-		{"legacy short gap: swing, not leap", func() Inputs { in := carnage(); in.LeftProven, in.Dist = false, 5; return in }, Swing},
-		{"legacy cooling: swing, not leap", func() Inputs { in := carnage(); in.LeftProven, in.Dist, in.LeapCooling = false, 9, true; return in }, Swing},
 		{"legacy leap-combat, gated: basic, never the rejected leap", func() Inputs {
 			in := carnage()
-			in.LeftProven, in.SwingProven, in.Dist = false, false, 5
+			in.LeftProven, in.SwingProven, in.Dist, in.LeapCooling = false, false, 5, true
 			return in
 		}, Basic},
+		// THE AoE (the owner): a pack at a leap's distance is a leap.
+		{"pack of 6 at 5 tiles: leap", func() Inputs { return pack(carnage(), 5, 6) }, Leap},
+		{"pack of 6 at 5, leap cooling: carnage", func() Inputs { in := pack(carnage(), 5, 6); in.LeapCooling = true; return in }, Left},
+		{"pack of 6 at 5, movement leap hungry: carnage", func() Inputs { in := pack(carnage(), 5, 6); in.LeapBlocked = true; return in }, Left},
+		{"pack of 6 at 5, legacy (no left): leap", func() Inputs { in := pack(carnage(), 5, 6); in.LeftProven = false; return in }, Leap},
 	}
 	for _, c := range cases {
 		if got := Choose(c.in()); got != c.want {
 			t.Errorf("%s: got %v, want %v", c.name, got, c.want)
 		}
 	}
+}
+
+// pack puts n enemies in a tight blob (all within 1 tile of its center)
+// centered d tiles east of the player at the origin; the target is the
+// blob's nearest body.
+func pack(in Inputs, d, n int) Inputs {
+	offs := [][2]int{{0, 0}, {1, 0}, {0, 1}, {-1, 0}, {0, -1}, {1, 1}, {-1, -1}, {1, -1}, {-1, 1}}
+	in.Me = learn.Pt{}
+	in.Enemies = nil
+	for i := 0; i < n; i++ {
+		o := offs[i%len(offs)]
+		in.Enemies = append(in.Enemies, learn.Pt{X: d + o[0], Y: o[1]})
+	}
+	in.Target = learn.Pt{X: d - 1}
+	in.Dist = d - 1
+	return in
 }
 
 func TestMouse(t *testing.T) {
@@ -89,16 +91,18 @@ func TestLeapVetoReasons(t *testing.T) {
 	if v := LeapVeto(in); v != "" {
 		t.Fatalf("clear leap vetoed: %q", v)
 	}
+	in.Dist = 1 // reach and gap are no longer vetoes: the utility decides
+	if v := LeapVeto(in); v != "" {
+		t.Fatalf("in-reach leap vetoed: %q", v)
+	}
 	for _, c := range []struct {
 		mut  func(*Inputs)
 		want string
 	}{
-		{func(i *Inputs) { i.Dist = MeleeReach }, "in reach"},
-		{func(i *Inputs) { i.Dist = LeapMinGap - 1 }, "short gap: walk it"},
+		{func(i *Inputs) { i.LeapProven = false }, "no proven Leap Attack"},
+		{func(i *Inputs) { i.LeapBlocked = true }, "blocked (movement leap hunger or context)"},
 		{func(i *Inputs) { i.LeapReady = false }, "mana"},
 		{func(i *Inputs) { i.LeapCooling = true }, "cooldown"},
-		{func(i *Inputs) { i.PackNear = PackHold }, "inside a pack"},
-		{func(i *Inputs) { i.LineWalled = true }, "walled line"},
 	} {
 		x := in
 		c.mut(&x)

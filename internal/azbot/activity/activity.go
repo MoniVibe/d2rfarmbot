@@ -15,6 +15,7 @@ import (
 	"github.com/hectorgimenez/d2go/pkg/data/skill"
 	"github.com/hectorgimenez/koolo/internal/azbot/arbiter"
 	"github.com/hectorgimenez/koolo/internal/azbot/combat"
+	"github.com/hectorgimenez/koolo/internal/azbot/combat/learn"
 	"github.com/hectorgimenez/koolo/internal/azbot/combat/policy"
 	"github.com/hectorgimenez/koolo/internal/azbot/exec"
 	"github.com/hectorgimenez/koolo/internal/azbot/journey"
@@ -150,63 +151,6 @@ func noteLeap(ctx *Ctx, key byte) {
 	if key != 0 && ctx != nil && ctx.Cap != nil && ctx.Cap.LeapAttack != nil && key == ctx.Cap.LeapAttack.Key {
 		leapClock.Fired(time.Now())
 	}
-}
-
-// packNear counts the sighted enemies within policy.PackRadius of us — the
-// pack we already stand in (a leap out of it is vetoed).
-func packNear(s *percept.Snapshot) int {
-	n := 0
-	for _, e := range s.Enemies {
-		if sighted(s, e) && chebyshev(s.Me.Pos, e.Pos) <= policy.PackRadius {
-			n++
-		}
-	}
-	return n
-}
-
-// meleeStrike runs the pure strike policy on the proven capability and maps
-// the answer onto a key: 0 for the left hand (and the plain attack), the
-// proven right binding's key otherwise. to is the struck position when the
-// caller knows it (nil: unknown) — a leap along a walled line is vetoed.
-func meleeStrike(ctx *Ctx, s *percept.Snapshot, dist int, to *data.Position, hoverOK, leapOK bool) (policy.Kind, byte) {
-	if ctx == nil || ctx.Cap == nil || s == nil {
-		return policy.Basic, 0
-	}
-	walled := false
-	if to != nil && ctx.Grid != nil && dist > policy.MeleeReach {
-		walled = !losClear(ctx.Grid, s.Me.Pos, *to)
-	}
-	c := ctx.Cap
-	combatIsLeap := c.Combat != nil && c.LeapAttack != nil && c.Combat.Skill == c.LeapAttack.Skill
-	combat := c.Combat
-	if combat == nil {
-		combat = c.Contact
-	}
-	k := policy.Choose(policy.Inputs{
-		LeftProven:   c.Left.Primary(),
-		LeftBenched:  leftAudit.Benched(time.Now()),
-		LeapProven:   c.LeapAttack != nil,
-		SwingProven:  c.DoubleSwing != nil,
-		CombatProven: combat != nil,
-		CombatIsLeap: combatIsLeap,
-		Dist:         dist,
-		MPPct:        s.Me.MPPct,
-		LeapReady:    leapAttackReady(s),
-		LeapBlocked:  !leapOK || time.Now().Before(vaultHungerUntil),
-		HoverOK:      hoverOK,
-		LeapCooling:  leapClock.Cooling(time.Now()),
-		PackNear:     packNear(s),
-		LineWalled:   walled,
-	})
-	switch k {
-	case policy.Leap:
-		return k, c.LeapAttack.Key
-	case policy.Swing:
-		return k, c.DoubleSwing.Key
-	case policy.Combat:
-		return k, combat.Key
-	}
-	return k, 0
 }
 
 func leapAttackReady(s *percept.Snapshot) bool {
@@ -1410,6 +1354,9 @@ type Fight struct {
 	open       []strikeRec
 	tally      fightTally
 	deathTaken map[data.UnitID]bool
+	// telPrefix: telemetry windows still to write their strike line
+	// (strikelearn.go emitStrike), with the line's head.
+	telPrefix map[*learn.Strike]string
 	// March is Advance's live door hint. P-5.8: within 12 of the march door the
 	// REACH TOOL holds — the clinch swap is suppressed and the volley fires
 	// point-blank; the funnel rewards the pierce, not the poke.
@@ -1777,12 +1724,13 @@ func (f *Fight) Step(ctx *Ctx) Verdict {
 		// before it; Leap Attack only closes a gap beyond reach; Double Swing
 		// carries while the left audit benches a silent left skill. Without a
 		// left skill the pre-Carnage order (Leap, Double Swing, plain) stands.
-		// rk is the IN-REACH strike (ring, clinch); the pursuit key is chosen
-		// below, once the lock has settled.
-		_, rk := meleeStrike(ctx, s, contact, &contactPos, false, true)
-		if time.Now().Before(vaultHungerUntil) {
-			rk = 0 // the pool is spoken for: the movement leap eats first
-		}
+		// rd/rk is the IN-REACH strike (ring, clinch) — policy.Decide: Carnage
+		// on the nearest body, or a Leap Attack into the densest landing when
+		// the pack makes the splash pay (the owner: "Leap Attack does AoE so
+		// it clears swarms more easily"). The pursuit decision is made below,
+		// once the lock has settled. The movement leap's hunger still eats first.
+		rd, rk := meleeDecide(ctx, s, contact, &contactPos, false, true, true)
+		rk = hungerOverride(ctx, &rd, rk)
 		// A dry bow set is no bow at all: while Arrows==0 the javelins ARE the build —
 		// chase and stab instead of kiting toward a weapon that whiffs at air.
 		// A char with NO bow at all is definitionally dry (04:07: the barbarian
@@ -1797,7 +1745,7 @@ func (f *Fight) Step(ctx *Ctx) Verdict {
 		if !dryBow && s.Me.HasBow {
 			f.trySwap(ctx)
 			if contact <= 4 {
-				f.strike(ctx, f.nearestID(s), contactPos, rk)
+				f.fire(ctx, f.nearestID(s), contactPos, rk, &rd)
 			}
 			return Running
 		}
@@ -1856,7 +1804,7 @@ func (f *Fight) Step(ctx *Ctx) Verdict {
 			// the ring; ordinary rings get the sweepless positional swings.
 			// With the left skill primary rk is 0: SHIFT+left, Carnage in
 			// place — walk-proof without a hover confirmation.
-			f.strike(ctx, f.nearestID(s), contactPos, rk)
+			f.fire(ctx, f.nearestID(s), contactPos, rk, &rd)
 			return Running
 		}
 		// THE LEAP IS NOT A WEAPON (the owner, 04:5x night 2: "its leaping
@@ -1893,11 +1841,17 @@ func (f *Fight) Step(ctx *Ctx) Verdict {
 		// swing at air (SHIFT), so close on foot and swing in reach.
 		d = chebyshev(s.Me.Pos, f.targetPos)
 		hoverOK := ctx.M.HoverReady() && !time.Now().Before(f.hoverBlindUntil)
-		ck, mk := meleeStrike(ctx, s, d, &f.targetPos, hoverOK, contact > 3)
-		if time.Now().Before(vaultHungerUntil) && mk != 0 {
-			ck, mk = policy.Basic, 0 // the pool is spoken for: the movement leap eats first
+		dec, mk := meleeDecide(ctx, s, d, &f.targetPos, hoverOK, contact > 3, true)
+		mk = hungerOverride(ctx, &dec, mk) // the pool is spoken for: the movement leap eats first
+		ck := dec.Kind
+		if ck == policy.Leap {
+			// A pursuit leap lands on GROUND — the point covering the most
+			// bodies within the splash — never a hover sweep for one unit.
+			f.fire(ctx, f.target, f.targetPos, mk, &dec)
+			return Running
 		}
 		if ck == policy.Approach {
+			f.logChoice(ctx, &dec)
 			f.approach(ctx)
 			return Running
 		}
@@ -1906,7 +1860,7 @@ func (f *Fight) Step(ctx *Ctx) Verdict {
 		// same 350ms cadence that provably kills (gold rose all through the
 		// 02:27 whiff storm; the volleys were doing all the work anyway).
 		if time.Now().Before(f.hoverBlindUntil) {
-			f.strike(ctx, f.target, f.targetPos, mk)
+			f.fire(ctx, f.target, f.targetPos, mk, &dec)
 			return Running
 		}
 		// BACKGROUND COMBAT: D2R's hover oracle is focus-gated, but the posted
@@ -1917,7 +1871,7 @@ func (f *Fight) Step(ctx *Ctx) Verdict {
 		if !ctx.M.HoverReady() {
 			f.hoverWhiffRun = 0
 			f.noEvid = 0
-			f.strike(ctx, f.target, f.targetPos, mk)
+			f.fire(ctx, f.target, f.targetPos, mk, &dec)
 			return Running
 		}
 		var accept map[data.UnitID]bool
@@ -1938,6 +1892,7 @@ func (f *Fight) Step(ctx *Ctx) Verdict {
 				}
 			}
 		}
+		f.logChoice(ctx, &dec)
 		o := verbs.HoverStrike{Target: f.target, TargetPos: f.targetPos, SelectKey: mk, Volley: true, Accept: accept}.
 			Do(ctx.M, ctx.GR, ctx.P, ctx.Led, f.Name())
 		if o.Result == verbs.ResWhiff {
@@ -2027,10 +1982,20 @@ func (f *Fight) Step(ctx *Ctx) Verdict {
 // there (Carnage, 2026-09-24) with no key press and no chance of a move order.
 // Reports whether a click went out (false: no clickable world on the ray).
 func volleyAt(ctx *Ctx, pos data.Position, key byte, skipSelect bool) bool {
+	return volleyAtDY(ctx, pos, key, skipSelect, game.UnitAimDY()) // at the body, not the feet
+}
+
+// groundAt is volleyAt at the GROUND point itself (no body-height lift): a
+// Leap Attack lands where the cursor is, so its aim is a tile, not a sprite.
+func groundAt(ctx *Ctx, pos data.Position, key byte, skipSelect bool) bool {
+	return volleyAtDY(ctx, pos, key, skipSelect, 0)
+}
+
+func volleyAtDY(ctx *Ctx, pos data.Position, key byte, skipSelect bool, dy int) bool {
 	d := ctx.GR.GetData()
 	me := d.PlayerUnit.Position
 	bx := int(float32((pos.X-me.X)-(pos.Y-me.Y))*19.8) + ctx.GR.GameAreaSizeX/2
-	by := int(float32((pos.X-me.X)+(pos.Y-me.Y))*9.9) + ctx.GR.GameAreaSizeY/2 + game.UnitAimDY() // at the body, not the feet
+	by := int(float32((pos.X-me.X)+(pos.Y-me.Y))*9.9) + ctx.GR.GameAreaSizeY/2 + dy
 	// Clamp onto clickable WORLD along the ray from her — the arrow flies the
 	// line anyway. The old per-axis clamp neither kept the direction nor knew
 	// the HUD: a target south of the screen became a shift/right-click at 20px
@@ -2090,6 +2055,35 @@ func (f *Fight) strike(ctx *Ctx, target data.UnitID, pos data.Position, key byte
 		f.blacklist[target] = time.Now().Add(30 * time.Second)
 		f.target, f.j, f.noEvid, f.volleys = 0, nil, 0, 0
 	}
+}
+
+// fire is strike carrying the decision that chose it: paced like strike, the
+// decision written only when the strike actually goes out, and a Leap
+// Attack clicked at its GROUND landing (policy.PickLeapAim) instead of at a
+// body — its telemetry window watches the splash around that point.
+func (f *Fight) fire(ctx *Ctx, target data.UnitID, pos data.Position, key byte, dec *policy.Decision) {
+	if time.Since(f.lastStrikeAt) < 350*time.Millisecond {
+		return // the animation is still playing; clicking now buys nothing
+	}
+	f.logChoice(ctx, dec)
+	if dec == nil || dec.Kind != policy.Leap || key == 0 {
+		f.strike(ctx, target, pos, key)
+		return
+	}
+	aim := data.Position{X: dec.Aim.X, Y: dec.Aim.Y}
+	// The verdict's unit: the body nearest the landing.
+	if s := ctx.Snap; s != nil {
+		best := 1 << 30
+		for _, e := range s.Enemies {
+			if dd := chebyshev(aim, e.Pos); dd < best {
+				best, target = dd, e.ID
+			}
+		}
+	}
+	skip := key == f.lastKey && time.Since(f.lastStrikeAt) < 2*time.Second
+	issued := groundAt(ctx, aim, key, skip)
+	f.noteStrikeAt(ctx, target, key, issued, &aim)
+	f.lastKey, f.lastStrikeAt = key, time.Now()
 }
 
 // trySwap presses the weapon-swap key (rate-limited); verification is the next

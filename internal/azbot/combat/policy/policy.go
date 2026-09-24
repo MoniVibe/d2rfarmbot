@@ -4,13 +4,18 @@
 // the answer is a role the caller maps onto a key and a mouse button.
 //
 // The owner's 2026-09-24 build (Fableboi, Barbarian ~26): the mod's Carnage is
-// mapped to the LEFT mouse button and is the primary strike. Leap Attack (a
-// right skill) is kept only as a gap-closer beyond melee reach; Double Swing
-// (right) is the fallback when the left strike keeps producing no evidence.
-// Without a proven left skill the pre-Carnage order stands unchanged.
+// mapped to the LEFT mouse button. Leap Attack (a right skill, AoE on this
+// mod) competes with it on a learned utility — kills/sec minus HP and mana
+// costs, per situation bucket (decide.go, combat/learn); Double Swing
+// (right) is the melee fallback when the left strike keeps producing no
+// evidence. Without a proven left skill Double Swing is the melee option.
 package policy
 
-import "time"
+import (
+	"time"
+
+	"github.com/hectorgimenez/koolo/internal/azbot/combat/learn"
+)
 
 // MeleeReach is the contact distance (Chebyshev tiles) inside which a swing
 // lands without closing — the activity's contactRange. Relay R9 kept it: the
@@ -19,27 +24,18 @@ import "time"
 // nothing supports a longer reach, and a SHIFT+left at d=4 is a swing at air.
 const MeleeReach = 3
 
-// THE LEAP GATES (relay R9, 2026-09-24: Leap Attack 132 strikes vs the primary
-// Concentrate/Carnage 84; 84 of the 132 leaps were at d=4-5 — one or two tiles
-// beyond reach — 83 were followed straight by ANOTHER leap at a target still
-// beyond reach (median 0.87s apart), 43 were fired from inside a pack of 3+
-// within 5 tiles, 66% resolved deaf, and 43 of the 53 locks that ended without
-// a kill had seen nothing but leaps). Leap Attack stays the gap-closer, but
-// only for a real gap, one at a time, and never out of a pack we already stand
-// in: short gaps are closed on foot (the pack walks into Carnage's reach anyway).
+// THE LEAP IS A CHOICE, NOT A GATE (the owner, 2026-09-24: "Carnage is fine,
+// but be more dynamic on how it approaches mobs. Leap Attack does AoE so it
+// clears swarms more easily; Carnage is more single target. We can math this
+// out if we gather enough telemetry"). The R9 gates (gap >=6, never out of a
+// pack of 3+) contradicted the AoE: a pack is exactly where a leap pays. The
+// choice is now Decide's utility over the learned estimator (decide.go);
+// only the HARD feasibility gates stay here.
 const (
-	// LeapMinGap: the smallest gap (Chebyshev tiles) worth a leap. A 4-5 tile
-	// gap is a step or two — walk it (or let the aimed left strike's attack
-	// command close it) and swing.
-	LeapMinGap = 6
 	// LeapCooldown: after a leap, no second leap for this long — the landing
-	// is followed by swings, not by a chain of leaps after moving targets.
+	// is followed by swings, not by a chain of leaps after moving targets
+	// (R9: 83 of 132 leaps were chained, median 0.87s apart).
 	LeapCooldown = 2 * time.Second
-	// PackRadius / PackHold: PackHold or more sighted enemies within
-	// PackRadius of us is a pack we are already in — they come to us; a leap
-	// out of it only trades the reach we have for a landing among others.
-	PackRadius = 5
-	PackHold   = 3
 )
 
 // Kind is the strike the policy chose.
@@ -101,80 +97,48 @@ type Inputs struct {
 	LeapProven  bool // Leap Attack right binding
 	SwingProven bool // Double Swing right binding
 	// CombatProven: a generic right combat binding exists; CombatIsLeap marks
-	// the case where that binding IS Leap Attack (then it obeys the leap gates).
+	// the case where that binding IS Leap Attack (then it is the leap option).
 	CombatProven bool
 	CombatIsLeap bool
 	Dist         int  // Chebyshev tiles to the nearest thing we would strike
 	MPPct        int  // mana percent
+	HPPct        int  // life percent (0 = unknown: no exploration)
 	LeapReady    bool // the pool can afford a Leap Attack (caller's mana gate)
 	LeapBlocked  bool // the pool is spoken for (movement leap hunger) or context forbids
 	HoverOK      bool // a hover-confirmed aimed strike is possible this tick
-	// The leap gates' inputs (zero values = no veto beyond reach and gap).
-	LeapCooling bool // a Leap Attack fired less than LeapCooldown ago (LeapClock)
-	PackNear    int  // sighted enemies within PackRadius of us
-	LineWalled  bool // the straight line to the target crosses unwalkable ground
+	LeapCooling  bool // a Leap Attack fired less than LeapCooldown ago (LeapClock)
+	LineWalled   bool // the straight line to Target crosses unwalkable ground
+	// Geometry (zero Me and Target with Dist > 0: the target is Dist tiles east).
+	Me      learn.Pt
+	Target  learn.Pt   // the melee option's impact point (the struck monster)
+	Enemies []learn.Pt // live, sighted enemies: leap aim candidates and cluster counts
+	// Walled reports a leap line me->p crossing unwalkable ground; Hazard a
+	// landing point known to be dangerous. nil = unknown (never vetoes).
+	Walled func(from, to learn.Pt) bool
+	Hazard func(p learn.Pt) bool
 }
 
-// LeapVeto reports why a Leap Attack may NOT fire this tick ("" = it may).
-// It is the single definition of the leap gates: Choose obeys it.
+// LeapVeto reports why a Leap Attack may NOT fire this tick ("" = it may,
+// if Decide also finds a landing). The hard gates only: proven, not spoken
+// for, affordable, not cooling. Range, cluster and walls are the landing
+// search's business (PickLeapAim); whether it PAYS is the utility's.
 func LeapVeto(in Inputs) string {
 	switch {
 	case !in.LeapProven:
 		return "no proven Leap Attack"
-	case in.Dist <= MeleeReach:
-		return "in reach"
-	case in.Dist < LeapMinGap:
-		return "short gap: walk it"
 	case in.LeapBlocked:
 		return "blocked (movement leap hunger or context)"
 	case !in.LeapReady:
 		return "mana"
 	case in.LeapCooling:
 		return "cooldown"
-	case in.PackNear >= PackHold:
-		return "inside a pack"
-	case in.LineWalled:
-		return "walled line"
 	}
 	return ""
 }
 
-// Choose is the strike policy.
-//
-//   - Left proven and not benched: Carnage is the primary strike at any range
-//     it can land — in reach always; beyond reach only when the aimed (hover)
-//     strike can confirm the monster, because the game's own attack command
-//     then closes and swings. Beyond reach, a Leap Attack that passes every
-//     leap gate (LeapVeto) closes the gap first. With neither, Approach.
-//   - Otherwise (no left skill, or benched): the pre-Carnage order — Leap
-//     (gated) beyond reach, Double Swing above 10% mana, the generic binding,
-//     basic.
-func Choose(in Inputs) Kind {
-	far := in.Dist > MeleeReach
-	leapOK := LeapVeto(in) == ""
-	if in.LeftProven && !in.LeftBenched {
-		if leapOK {
-			return Leap
-		}
-		if far && !in.HoverOK {
-			return Approach
-		}
-		return Left
-	}
-	if leapOK {
-		return Leap
-	}
-	if in.SwingProven && in.MPPct > 10 {
-		return Swing
-	}
-	if in.CombatProven {
-		if in.CombatIsLeap && !leapOK {
-			return Basic // never re-issue Leap Attack the gates just rejected
-		}
-		return Combat
-	}
-	return Basic
-}
+// Choose is the strike policy with deterministic priors (no learning, no
+// exploration): Decide(in, nil, Config{}, 1).Kind.
+func Choose(in Inputs) Kind { return Decide(in, nil, Config{}, 1).Kind }
 
 // LeapClock is the leap cooldown's memory: when the last Leap Attack went out.
 type LeapClock struct{ last time.Time }

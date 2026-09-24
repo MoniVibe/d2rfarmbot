@@ -35,9 +35,19 @@ func TestMeleeStrikeLeftPrimary(t *testing.T) {
 	if key := meleeAttackKey(ctx, s, 1); key != 0 {
 		t.Fatalf("blind point-blank strike key = %#x, want 0 (SHIFT+left)", key)
 	}
-	if k, key := meleeStrike(ctx, s, 6, nil, true, true); k != policy.Leap || key != 0x74 {
-		t.Fatalf("beyond reach: got %v key %#x, want the Leap Attack gap-closer", k, key)
+	// A lone body beyond reach is Carnage's (the aimed left pursues); a
+	// pack there is the leap's.
+	if k, key := meleeStrike(ctx, s, 6, nil, true, true); k != policy.Left || key != 0 {
+		t.Fatalf("lone target beyond reach: got %v key %#x, want the aimed left", k, key)
 	}
+	s.Me.Pos = data.Position{X: 100, Y: 100}
+	for i, o := range [][2]int{{0, 0}, {1, 0}, {0, 1}, {-1, 0}, {0, -1}, {1, 1}} {
+		s.Enemies = append(s.Enemies, percept.EnemyRef{ID: data.UnitID(30 + i), Pos: data.Position{X: 105 + o[0], Y: 100 + o[1]}})
+	}
+	if k, key := meleeStrike(ctx, s, 4, nil, true, true); k != policy.Leap || key != 0x74 {
+		t.Fatalf("pack of 6 at 5 tiles: got %v key %#x, want the Leap Attack", k, key)
+	}
+	s.Enemies = nil
 	if k, _ := meleeStrike(ctx, s, 6, nil, false, false); k != policy.Approach {
 		t.Fatalf("beyond reach, hover dark, leap forbidden: got %v, want Approach", k)
 	}
@@ -63,7 +73,8 @@ func strikeLines(led *verbs.Ledger, verb string) []string {
 }
 
 func TestStrikeTelemetry(t *testing.T) {
-	defer func() { leftAudit = policy.LeftAudit{} }()
+	defer func() { leftAudit, learner = policy.LeftAudit{}, nil }()
+	learner = nil
 	led := verbs.NewLedger(256)
 	s := &percept.Snapshot{Valid: true}
 	s.Me.Pos = data.Position{X: 100, Y: 100}
@@ -77,22 +88,32 @@ func TestStrikeTelemetry(t *testing.T) {
 	// Strike 1: the target ENTERS GettingHit — a hit.
 	f.noteStrike(ctx, 7, 0, true)
 	s.Enemies[0].Mode = uint32(mode.NpcGettingHit)
-	f.resolveStrikes(ctx, time.Now())
+	f.resolveStrikes(ctx, time.Now().Add(200*time.Millisecond)) // past learn.Latency
 	// Strike 2: the same flinch never credits twice; the window runs out — deaf.
 	f.noteStrike(ctx, 7, 0, true)
 	f.resolveStrikes(ctx, time.Now())
-	f.resolveStrikes(ctx, time.Now().Add(2*strikeEvidenceWindow))
+	f.resolveStrikes(ctx, time.Now().Add(strikeEvidenceWindow+100*time.Millisecond))
 	// Strike 3: a right-hand Double Swing that never reached a monster — whiff.
 	f.noteStrike(ctx, 7, 0x72, false)
+	// The telemetry windows close: the issued strikes' lines are written.
+	f.resolveStrikes(ctx, time.Now().Add(3*time.Second))
 
 	got := strikeLines(led, "strike")
 	want := []string{
-		"skill=skill#999 mouse=left target=7 d=2 result=hit",
-		"skill=skill#999 mouse=left target=7 d=2 result=deaf",
-		"skill=Double Swing mouse=right target=7 d=2 result=whiff",
+		"skill=Double Swing mouse=right target=7 d=2 result=whiff", // a whiff is written at once
+		"skill=skill#999 mouse=left target=7 d=2 result=hit aim=(102,101) n1=1 n2=1 n3=1 ",
+		"skill=skill#999 mouse=left target=7 d=2 result=deaf aim=(102,101) n1=1 ",
 	}
-	if strings.Join(got, "|") != strings.Join(want, "|") {
-		t.Fatalf("strike lines:\n got %q\nwant %q", got, want)
+	if len(got) != len(want) {
+		t.Fatalf("strike lines: %q", got)
+	}
+	for i := range want {
+		if !strings.HasPrefix(got[i], want[i]) {
+			t.Fatalf("strike line %d:\n got %q\nwant prefix %q", i, got[i], want[i])
+		}
+	}
+	if !strings.Contains(got[1], " hits=1 ") || !strings.Contains(got[1], " hpLoss=0 mp=0 next=") {
+		t.Fatalf("telemetry fields: %q", got[1])
 	}
 
 	f.target = 0
@@ -123,38 +144,95 @@ func TestSilentLeftStrikesBenchCarnage(t *testing.T) {
 	}
 }
 
-// Relay R9's leap gates at the activity seam: a short gap is walked, a leap
-// cools the next one, and a pack we stand in vetoes the leap.
+// The leap's hard gates at the activity seam: a lone target's short gap is
+// walked, a pack is leapt, a leap cools the next one, a wall vetoes it.
 func TestMeleeStrikeLeapGates(t *testing.T) {
 	defer func() { leftAudit, leapClock = policy.LeftAudit{}, policy.LeapClock{} }()
 	ctx := &Ctx{Cap: fableboi()}
 	s := &percept.Snapshot{Valid: true}
 	s.Me.Pos = data.Position{X: 100, Y: 100}
-	s.Me.MaxMana, s.Me.MPPct = 40, 80
+	s.Me.MaxMana, s.Me.MPPct, s.Me.HPPct = 40, 80, 100
 
 	if k, _ := meleeStrike(ctx, s, 5, nil, false, true); k != policy.Approach {
-		t.Fatalf("d=5, hover dark: got %v, want Approach (walk the short gap)", k)
+		t.Fatalf("lone d=5, hover dark: got %v, want Approach (walk the short gap)", k)
 	}
-	if k, _ := meleeStrike(ctx, s, 8, nil, false, true); k != policy.Leap {
-		t.Fatalf("d=8: got %v, want the Leap gap-closer", k)
+	for i, o := range [][2]int{{0, 0}, {1, 0}, {0, 1}, {-1, 0}, {0, -1}, {1, 1}, {-1, -1}} {
+		s.Enemies = append(s.Enemies, percept.EnemyRef{ID: data.UnitID(20 + i), Pos: data.Position{X: 106 + o[0], Y: 100 + o[1]}})
+	}
+	d, key := meleeDecide(ctx, s, 5, nil, false, true, false)
+	if d.Kind != policy.Leap || key != 0x74 || d.Leap.Cover != 7 {
+		t.Fatalf("a pack of 7 at 6 tiles: got %v cover=%d; %s", d.Kind, d.Leap.Cover, d.Line())
 	}
 	noteLeap(ctx, 0x74)
-	if k, _ := meleeStrike(ctx, s, 8, nil, false, true); k != policy.Approach {
-		t.Fatalf("leap cooling: got %v, want Approach", k)
+	if k, _ := meleeStrike(ctx, s, 5, nil, false, true); k == policy.Leap {
+		t.Fatal("leap cooling: a second leap fired")
 	}
 	leapClock = policy.LeapClock{}
-	for i := 0; i < policy.PackHold; i++ {
-		s.Enemies = append(s.Enemies, percept.EnemyRef{ID: data.UnitID(20 + i), Pos: data.Position{X: 104, Y: 100 + i}})
+	s.Me.MPPct = 5
+	if k, _ := meleeStrike(ctx, s, 5, nil, false, true); k == policy.Leap {
+		t.Fatal("dry pool: leapt anyway")
 	}
-	if k, _ := meleeStrike(ctx, s, 8, nil, false, true); k != policy.Approach {
-		t.Fatalf("inside a pack: got %v, want Approach (no leap out of it)", k)
+}
+
+// Every issued leap opens a telemetry window at its GROUND aim; the
+// engagement summary and the AoE line close the pack.
+func TestLeapTelemetryAndEngagement(t *testing.T) {
+	defer func() { leftAudit, leapClock, learner = policy.LeftAudit{}, policy.LeapClock{}, nil }()
+	learner = nil
+	led := verbs.NewLedger(256)
+	s := &percept.Snapshot{Valid: true}
+	s.Me.Pos = data.Position{X: 100, Y: 100}
+	s.Me.HPPct, s.Me.MPPct = 100, 200
+	for i, o := range [][2]int{{0, 0}, {1, 0}, {0, 1}, {3, 0}} {
+		s.Enemies = append(s.Enemies, percept.EnemyRef{ID: data.UnitID(40 + i), Pos: data.Position{X: 105 + o[0], Y: 100 + o[1]},
+			Mode: uint32(mode.NpcStandingStill)})
+	}
+	ctx := &Ctx{Cap: fableboi(), Led: led, Snap: s}
+	f := NewFight()
+	aim := data.Position{X: 105, Y: 100}
+	f.noteStrikeAt(ctx, 40, 0x74, true, &aim)
+	if learner == nil || learner.T.Open() != 1 {
+		t.Fatal("an issued leap must open a telemetry window")
+	}
+	t1 := time.Now().Add(300 * time.Millisecond)
+	s.Enemies[1].Mode = uint32(mode.NpcGettingHit)
+	s.Enemies = append(s.Enemies[:2:2], s.Enemies[3]) // 42 died on the landing tile's ring (no corpse read: vanished within 3)
+	s.Me.MPPct = 175
+	f.resolveStrikes(ctx, t1)
+	// The pack is gone: quiet → the engagement ends.
+	s.Enemies = nil
+	f.resolveStrikes(ctx, t1.Add(200*time.Millisecond))
+	f.resolveStrikes(ctx, t1.Add(1200*time.Millisecond))
+	lines := strikeLines(led, "strike")
+	if len(lines) != 1 || !strings.HasPrefix(lines[0], "skill=Leap Attack mouse=right target=40 d=5 result=") ||
+		!strings.Contains(lines[0], "aim=(105,100) n1=3 ") || !strings.Contains(lines[0], " mp=25 ") {
+		t.Fatalf("leap line: %q", lines)
+	}
+	var sum, aoe string
+	for _, l := range strikeLines(led, "fight") {
+		if strings.HasPrefix(l, "engage summary:") {
+			sum = l
+		}
+		if strings.HasPrefix(l, "leap aoe:") {
+			aoe = l
+		}
+	}
+	if !strings.HasPrefix(sum, "engage summary: size=4 cleared=") || !strings.Contains(sum, " leaps=1 carnage=0 ") {
+		t.Fatalf("engagement summary: %q", sum)
+	}
+	if !strings.HasPrefix(aoe, "leap aoe: r_est=3 measured=false prior=3 d0=") {
+		t.Fatalf("aoe line: %q", aoe)
+	}
+	if learner.M.Count("leap", 2, 1) != 1 { // 4 bodies within 3 of the landing: the 4-6 bucket
+		t.Fatalf("the leap sample must be learned: %s", learner.M.Table())
 	}
 }
 
 // A body another strike already killed answers the next swing with
 // "overkill" — never "deaf", never a strike against the left audit.
 func TestOverkillIsNotSilence(t *testing.T) {
-	defer func() { leftAudit = policy.LeftAudit{} }()
+	defer func() { leftAudit, learner = policy.LeftAudit{}, nil }()
+	learner = nil
 	led := verbs.NewLedger(256)
 	s := &percept.Snapshot{Valid: true}
 	s.Me.Pos = data.Position{X: 100, Y: 100}
@@ -166,14 +244,19 @@ func TestOverkillIsNotSilence(t *testing.T) {
 	f.noteStrike(ctx, 7, 0, true)
 	f.noteStrike(ctx, 7, 0, true)
 	s.Enemies = nil // one swing killed it: gone from the live list
-	f.resolveStrikes(ctx, time.Now())
+	f.resolveStrikes(ctx, time.Now().Add(200*time.Millisecond))
+	f.resolveStrikes(ctx, time.Now().Add(1600*time.Millisecond)) // the telemetry windows close
 	got := strikeLines(led, "strike")
 	want := []string{
-		"skill=skill#999 mouse=left target=7 d=2 result=hit",
-		"skill=skill#999 mouse=left target=7 d=2 result=overkill",
+		"skill=skill#999 mouse=left target=7 d=2 result=hit ",
+		"skill=skill#999 mouse=left target=7 d=2 result=overkill ",
 	}
-	if strings.Join(got, "|") != strings.Join(want, "|") {
-		t.Fatalf("strike lines:\n got %q\nwant %q", got, want)
+	if len(got) != 2 || !strings.HasPrefix(got[0], want[0]) || !strings.HasPrefix(got[1], want[1]) {
+		t.Fatalf("strike lines:\n got %q\nwant prefixes %q", got, want)
+	}
+	// The kill is credited once: to the newest swing old enough to have landed it.
+	if !strings.Contains(got[1], " kills=1 ") || !strings.Contains(got[0], " kills=0 ") {
+		t.Fatalf("kill credit: %q", got)
 	}
 	if leftAudit.Deaf != 0 {
 		t.Fatalf("overkill fed the left audit: deaf run %d", leftAudit.Deaf)
