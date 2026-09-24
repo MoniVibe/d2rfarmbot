@@ -2355,6 +2355,7 @@ func (x *Explore) Step(ctx *Ctx) Verdict {
 // key lane — no cursor), then verify life returned. Its Done is the executive's cue to
 // recalibrate capability (a corpse holds the weapons; selections change).
 type Respawn struct {
+	since time.Time // when this death's respawn began (the fallback ESC clock)
 	pressedAt time.Time
 }
 
@@ -2374,9 +2375,16 @@ func (r *Respawn) Demand(s *percept.Snapshot) *arbiter.Demand {
 func (r *Respawn) Step(ctx *Ctx) Verdict {
 	s := ctx.Snap
 	if s.Valid && s.Me.HPPct > 0 && s.Me.Mode != mode.Death && s.Me.Mode != mode.Dead {
+		r.since = time.Time{}
 		return Done // alive again
 	}
-	if JanitorOn && (ctx.Screen == nil || ctx.Screen.Mode != screen.Dead) {
+	if r.since.IsZero() {
+		r.since = time.Now()
+	}
+	// R22: the death screen read Mode=Unknown and this waited 57 minutes on
+	// "Press ESC to continue". After 8s the ESC goes anyway: on a live world it
+	// only raises the pause menu (the world freezes; the janitor closes it).
+	if JanitorOn && (ctx.Screen == nil || ctx.Screen.Mode != screen.Dead) && time.Since(r.since) < 8*time.Second {
 		// v2: the respawn ESC fires only on a death screen the screen oracle
 		// believes (docs/AZBOT_V2.md: "kept, only when Mode=Dead"); a blind
 		// ESC on a live world raises the pause menu.
