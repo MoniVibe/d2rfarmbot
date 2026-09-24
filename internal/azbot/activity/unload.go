@@ -4,6 +4,7 @@ import (
 	"time"
 
 	"github.com/hectorgimenez/koolo/internal/azbot/arbiter"
+	"github.com/hectorgimenez/koolo/internal/azbot/inventory"
 	"github.com/hectorgimenez/koolo/internal/azbot/percept"
 )
 
@@ -30,8 +31,15 @@ func bagFull(s *percept.Snapshot) bool {
 	return s.Valid && s.Me.InvFree < unloadFree && s.Me.JunkCount+s.Me.StashCount > 0
 }
 
+// gearFailing: a broken piece (its bonuses stop counting) or one nearly so is a
+// trip home for the smith (owner: "inventory should know that half its items are
+// broken").
+func gearFailing(s *percept.Snapshot) bool {
+	return s.Valid && (s.Me.BrokenGear > 0 || s.Me.MinDurPct < inventory.FieldRepairPct) && s.Me.Gold >= 10
+}
+
 func (u *Unload) Demand(s *percept.Snapshot) *arbiter.Demand {
-	if !s.Valid || s.Me.InTown || s.Me.HPPct <= 0 || !bagFull(s) {
+	if !s.Valid || s.Me.InTown || s.Me.HPPct <= 0 || !(bagFull(s) || gearFailing(s)) {
 		return nil
 	}
 	if !townPortalBound && !liveDoor(s) {

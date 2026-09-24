@@ -17,6 +17,7 @@ import (
 	"github.com/hectorgimenez/d2go/pkg/data/npc"
 	"github.com/hectorgimenez/d2go/pkg/data/stat"
 	"github.com/hectorgimenez/koolo/internal/azbot/arbiter"
+	"github.com/hectorgimenez/koolo/internal/azbot/inventory"
 	"github.com/hectorgimenez/koolo/internal/azbot/loot"
 	"github.com/hectorgimenez/koolo/internal/azbot/memory"
 	"github.com/hectorgimenez/koolo/internal/azbot/moveto"
@@ -585,7 +586,7 @@ func ServicesPendingWhy(s *percept.Snapshot) string {
 	if s.Me.TPScrolls >= 0 && s.Me.TPScrolls <= 2 && scrollGap(s.Me.TPScrolls, s.Me.Gold) > 0 {
 		return "scrolls"
 	}
-	if s.Me.Gold >= 10 && s.Me.MinDurPct <= 25 {
+	if s.Me.Gold >= 10 && s.Me.MinDurPct < inventory.TownRepairPct {
 		return "repair"
 	}
 	if s.Me.Gold >= 100 && time.Now().After(potionCoolUntil) {
@@ -1598,11 +1599,12 @@ func (rp *Repair) demand(s *percept.Snapshot) *arbiter.Demand {
 	if servicesCooled() {
 		return nil
 	}
-	if !s.Valid || !s.Me.InTown || s.Me.Gold < 10 || s.Me.MinDurPct > 25 || time.Now().Before(rp.coolAt) {
+	// Owner: "repair obsessively" — every town visit with anything below 90%.
+	if !s.Valid || !s.Me.InTown || s.Me.Gold < 10 || s.Me.MinDurPct >= inventory.TownRepairPct || time.Now().Before(rp.coolAt) {
 		return nil
 	}
 	return &arbiter.Demand{Who: rp.Name(), Class: arbiter.ClassService,
-		Urgency: 0.5 + (25-float64(s.Me.MinDurPct))/50, // outranks a routine restock
+		Urgency: 0.5 + (90-float64(s.Me.MinDurPct))/180, // broken gear outranks the shopping
 		Commit:  arbiter.Commitment{MinHold: 5 * time.Second}}
 }
 
@@ -1665,6 +1667,6 @@ func (rp *Repair) Step(ctx *Ctx) Status {
 		}
 	}
 	rp.lastDur = s.Me.MinDurPct
-	ctx.M.UIClick(repairBtnX, repairBtnY)
+	ctx.M.RealMenuClick(repairBtnX, repairBtnY) // trade panels honor only real input (a posted UIClick never repaired)
 	return e.wait(500 * time.Millisecond)
 }

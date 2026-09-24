@@ -67,6 +67,8 @@ type PlayerState struct {
 	// MinDurPct: the worst equipped item's durability percent (100 when nothing
 	// tracks durability) — what the Repair service bids on.
 	MinDurPct int
+	// BrokenGear: equipped pieces at 0 durability (their bonuses stop counting).
+	BrokenGear int
 	// HasBow: a bow rides SOME set (active or secondary) — the march's swap-back
 	// (P-5.9) and the equip oracle's bow judgment key off this, never off which
 	// set happens to be in her hands this tick.
@@ -756,11 +758,22 @@ func (p *Perceptor) Capture() *Snapshot {
 		}
 	}
 	s.Me.MinDurPct = 100
+	s.Me.BrokenGear = 0
 	for _, eq := range d.Inventory.ByLocation(item.LocationEquipped) {
+		// A BROKEN piece has NO durability stat (d2go omits zero stats): the old
+		// okD requirement skipped every broken item — owner (R34): "half its items
+		// are broken" while MinDurPct read 37 and Repair never bid.
 		dur, okD := eq.FindStat(stat.Durability, 0)
 		mx, okM := eq.FindStat(stat.MaxDurability, 0)
-		if okD && okM && mx.Value > 0 {
-			pct := dur.Value * 100 / mx.Value
+		if okM && mx.Value > 0 {
+			cur := 0
+			if okD {
+				cur = dur.Value
+			}
+			if cur <= 0 {
+				s.Me.BrokenGear++
+			}
+			pct := cur * 100 / mx.Value
 			if pct < s.Me.MinDurPct {
 				s.Me.MinDurPct = pct
 			}
