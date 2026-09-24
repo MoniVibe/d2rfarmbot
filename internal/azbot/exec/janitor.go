@@ -165,8 +165,11 @@ func Gate(r screen.Reading, n HolderNeeds) GateResult {
 		return g
 	}
 	switch {
-	case n.Town:
-		g.CursorHold, g.Why = true, "foreign cursor item in town: HELD — never dropped; the bag is shut, awaiting its parker"
+	case n.Town && !n.CursorJunk:
+		// OWNER (2026-09-24, R24/R25: a potion rode the cursor in town for
+		// minutes while Equip's park kept missing): only KEEPERS are never dropped
+		// in town; junk or a non-keeper (a potion) is dropped like in the field.
+		g.CursorHold, g.Why = true, "foreign cursor keeper in town: HELD — never dropped; the bag is shut, awaiting its parker"
 	case !n.CursorJunk:
 		g.CursorHold, g.Why = true, "foreign cursor item not known junk: HELD — never dropped; the bag is shut, awaiting its parker"
 	default:

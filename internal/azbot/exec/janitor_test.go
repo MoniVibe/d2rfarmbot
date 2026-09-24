@@ -138,13 +138,16 @@ func TestGateCursor(t *testing.T) {
 	}
 	for name, n := range map[string]HolderNeeds{
 		"field, not known junk": worldOnly,
-		"town, known junk":      {Mode: ModeOf(screen.World), Town: true, CursorJunk: true},
 		"town":                  {Mode: ModeOf(screen.World), Town: true},
 	} {
 		g := Gate(r, n)
 		if g.Open || g.Drop || g.Acts() || !g.CursorHold || !g.Cursor || !strings.Contains(g.Why, "HELD") {
 			t.Fatalf("%s: a cursor item must be HELD, never dropped: %+v", name, g)
 		}
+	}
+	// OWNER 2026-09-24: junk (a potion) is dropped in town too; keepers stay held.
+	if g := Gate(r, HolderNeeds{Mode: ModeOf(screen.World), Town: true, CursorJunk: true}); !g.Drop {
+		t.Fatalf("town, junk on the cursor: must be dropped: %+v", g)
 	}
 	if g := Gate(r, HolderNeeds{Mode: AnyMode, CursorOwn: true}); !g.Open {
 		t.Fatalf("an owned cursor is not foreign: %+v", g)
