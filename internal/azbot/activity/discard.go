@@ -97,7 +97,7 @@ func (d *Discard) Demand(s *percept.Snapshot) *arbiter.Demand {
 		return &c
 	}
 	if !discardWorks.Load() || !s.Valid || s.Me.InTown || s.Me.HPPct < 50 || s.Me.CursorItem ||
-		time.Now().Before(d.coolAt) || lootBlockedByHostile(s) || s.Me.IDScrolls <= 0 {
+		time.Now().Before(d.coolAt) || lootBlockedByHostile(s) { // R32: the old ID-tome gate (IDScrolls<=0) disabled every drop once Cain took over identify — each tight bag became a town trip
 		return nil
 	}
 	if _, ok := theLoot.swapReady(s); !ok {
