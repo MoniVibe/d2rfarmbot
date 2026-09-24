@@ -1,0 +1,65 @@
+time=2026-09-23T14:37:42.635+03:00 level=INFO msg="azbot attaching" pid=14760
+time=2026-09-23T14:37:46.872+03:00 level=INFO msg="aim calibration loaded" kx=1.1125320679211068 ky=1.1293540875695656 ox=2.951161121414657 oy=-27.490030603728087
+time=2026-09-23T14:37:46.873+03:00 level=INFO msg="world scale" scale=1.25 client=1536x840 dpi=1.25
+time=2026-09-23T14:37:46.970+03:00 level=INFO msg="attach report" verdict="position=true stats=true uibytes=true mode=true"
+time=2026-09-23T14:37:51.167+03:00 level=INFO msg="sentinel live" killswitch=f10 drinkAt=60
+time=2026-09-23T14:37:51.170+03:00 level=INFO msg=director goal=campaign
+time=2026-09-23T14:37:54.878+03:00 level=INFO msg="map data fetched" seed=466817790 areas=136
+time=2026-09-23T14:37:55.201+03:00 level=INFO msg="capability: proven binding" key=f1 skill=220 skill_name="Book of Townportal"
+time=2026-09-23T14:37:55.415+03:00 level=INFO msg="capability: proven binding" key=f2 skill=218 skill_name="Book of Identify"
+time=2026-09-23T14:37:55.643+03:00 level=INFO msg="capability: proven binding" key=f3 skill=133 skill_name="Double Swing"
+time=2026-09-23T14:37:55.859+03:00 level=INFO msg="capability: key selected nothing (unbound or unusable)" key=f4
+time=2026-09-23T14:37:56.085+03:00 level=INFO msg="capability: proven binding" key=f5 skill=143 skill_name="Leap Attack"
+time=2026-09-23T14:37:56.275+03:00 level=INFO msg="capability: key selected nothing (unbound or unusable)" key=f6
+time=2026-09-23T14:37:56.520+03:00 level=INFO msg="capability: key selected nothing (unbound or unusable)" key=f7
+time=2026-09-23T14:37:56.714+03:00 level=INFO msg="capability: key selected nothing (unbound or unusable)" key=f8
+time=2026-09-23T14:37:56.714+03:00 level=INFO msg="capability: combat binding" skill=143 skill_name="Leap Attack" key=116
+time=2026-09-23T14:37:56.802+03:00 level=INFO msg="campaign itinerary selected" act=2 startArea=42 legs=24
+time=2026-09-23T14:37:56.803+03:00 level=INFO msg="flight recorder live" path=logs/flight_1790163476.jsonl
+time=2026-09-23T14:37:56.804+03:00 level=INFO msg="executive: game unfocused — playing on (posted input, your windows untouched)"
+time=2026-09-23T14:37:56.915+03:00 level=INFO msg="executive: grid re-aligned" area=42
+time=2026-09-23T14:37:56.917+03:00 level=INFO msg="executive: self-model event — recalibrating" armed=true revived=false
+time=2026-09-23T14:37:57.181+03:00 level=INFO msg="capability: proven binding" key=f1 skill=220 skill_name="Book of Townportal"
+time=2026-09-23T14:37:57.400+03:00 level=INFO msg="capability: proven binding" key=f2 skill=218 skill_name="Book of Identify"
+time=2026-09-23T14:37:57.618+03:00 level=INFO msg="capability: proven binding" key=f3 skill=133 skill_name="Double Swing"
+time=2026-09-23T14:37:57.825+03:00 level=INFO msg="capability: key selected nothing (unbound or unusable)" key=f4
+time=2026-09-23T14:37:58.035+03:00 level=INFO msg="capability: proven binding" key=f5 skill=143 skill_name="Leap Attack"
+time=2026-09-23T14:37:58.250+03:00 level=INFO msg="capability: key selected nothing (unbound or unusable)" key=f6
+time=2026-09-23T14:37:58.472+03:00 level=INFO msg="capability: key selected nothing (unbound or unusable)" key=f7
+time=2026-09-23T14:37:58.677+03:00 level=INFO msg="capability: key selected nothing (unbound or unusable)" key=f8
+time=2026-09-23T14:37:58.677+03:00 level=INFO msg="capability: combat binding" skill=143 skill_name="Leap Attack" key=116
+time=2026-09-23T14:37:58.803+03:00 level=INFO msg=grant to=loot class=loot urgency=0.80
+time=2026-09-23T14:38:01.442+03:00 level=INFO msg=outcome verb=pickup holder=loot tgt="item=3709 type=602 qual=2" result=whiff ev="no hover confirmation on item"
+time=2026-09-23T14:38:01.442+03:00 level=INFO msg=status pos=(5609,4721) area=42 hp=122 mp=247 maxmana=34 lvl=25 gold=72036 weapon=melee arrows=-1 holder=loot
+time=2026-09-23T14:38:03.955+03:00 level=INFO msg=outcome verb=pickup holder=loot tgt="item=3709 type=602 qual=2" result=whiff ev="no hover confirmation on item"
+time=2026-09-23T14:38:04.018+03:00 level=INFO msg=outcome verb=loot holder=loot tgt="" result=blocked ev="no progress to item 3709 in 4s (stuck at d=1) — banned 60s"
+time=2026-09-23T14:38:06.826+03:00 level=INFO msg=outcome verb=pickup holder=loot tgt="item=3478 type=603 qual=2" result=whiff ev="no hover confirmation on item"
+time=2026-09-23T14:38:08.711+03:00 level=INFO msg=outcome verb=loot holder=loot tgt="" result=blocked ev="no progress to item 3478 in 4s (stuck at d=7) — banned 60s"
+time=2026-09-23T14:38:11.132+03:00 level=INFO msg=outcome verb=pickup holder=loot tgt="item=3481 type=603 qual=2" result=whiff ev="no hover confirmation on item"
+time=2026-09-23T14:38:11.495+03:00 level=INFO msg=status pos=(5626,4706) area=42 hp=122 mp=247 maxmana=34 lvl=25 gold=72036 weapon=melee arrows=-1 holder=loot
+time=2026-09-23T14:38:13.124+03:00 level=INFO msg=outcome verb=loot holder=loot tgt="" result=blocked ev="no progress to item 3481 in 4s (stuck at d=13) — banned 60s"
+time=2026-09-23T14:38:15.538+03:00 level=INFO msg=outcome verb=pickup holder=loot tgt="item=3496 type=511 qual=3" result=whiff ev="no hover confirmation on item"
+time=2026-09-23T14:38:18.314+03:00 level=INFO msg=outcome verb=pickup holder=loot tgt="item=3496 type=511 qual=3" result=whiff ev="no hover confirmation on item"
+time=2026-09-23T14:38:20.705+03:00 level=INFO msg=outcome verb=loot holder=loot tgt="" result=blocked ev="no progress to item 3496 in 4s (stuck at d=6) — banned 60s"
+time=2026-09-23T14:38:23.090+03:00 level=INFO msg=outcome verb=pickup holder=loot tgt="item=3475 type=602 qual=2" result=whiff ev="no hover confirmation on item"
+time=2026-09-23T14:38:23.090+03:00 level=INFO msg=status pos=(5618,4715) area=42 hp=122 mp=247 maxmana=34 lvl=25 gold=72036 weapon=melee arrows=-1 holder=loot
+time=2026-09-23T14:38:25.540+03:00 level=INFO msg=outcome verb=pickup holder=loot tgt="item=3475 type=602 qual=2" result=whiff ev="no hover confirmation on item"
+time=2026-09-23T14:38:25.562+03:00 level=WARN msg=PATHOLOGY kind=orbit detail="holder=loot path=93 net=4 over 18s" cooling=loot for=6s
+time=2026-09-23T14:38:27.815+03:00 level=INFO msg=grant to=imbibe class=loot urgency=0.45
+time=2026-09-23T14:38:27.817+03:00 level=INFO msg=verdict activity=imbibe verdict=done
+time=2026-09-23T14:38:27.822+03:00 level=INFO msg=grant to=advance class=travel urgency=0.40
+time=2026-09-23T14:38:29.330+03:00 level=INFO msg=verdict activity=advance verdict=done
+time=2026-09-23T14:38:29.366+03:00 level=INFO msg=grant to=advance class=travel urgency=0.40
+time=2026-09-23T14:38:33.003+03:00 level=INFO msg=outcome verb=stride holder=advance tgt=(5632,4680) result=blocked ev="from=(5607,4705) to=(5607,4705) gain=0"
+time=2026-09-23T14:38:33.066+03:00 level=INFO msg=grant to=loot class=loot urgency=0.84
+time=2026-09-23T14:38:33.067+03:00 level=INFO msg=outcome verb=loot holder=loot tgt="" result=blocked ev="no progress to item 3475 in 4s (stuck at d=13) — banned 60s"
+time=2026-09-23T14:38:33.373+03:00 level=INFO msg=status pos=(5607,4705) area=42 hp=122 mp=247 maxmana=34 lvl=25 gold=72036 weapon=melee arrows=-1 holder=loot
+time=2026-09-23T14:38:35.865+03:00 level=INFO msg=outcome verb=pickup holder=loot tgt="item=3472 type=602 qual=2" result=whiff ev="no hover confirmation on item"
+time=2026-09-23T14:38:38.402+03:00 level=INFO msg=outcome verb=pickup holder=loot tgt="item=3472 type=602 qual=2" result=whiff ev="no hover confirmation on item"
+time=2026-09-23T14:38:38.408+03:00 level=INFO msg=outcome verb=loot holder=loot tgt="" result=blocked ev="no progress to item 3472 in 4s (stuck at d=3) — banned 60s"
+time=2026-09-23T14:38:41.092+03:00 level=INFO msg=outcome verb=pickup holder=loot tgt="item=3473 type=602 qual=2" result=deaf ev="item still on ground after click"
+time=2026-09-23T14:38:43.564+03:00 level=INFO msg=outcome verb=pickup holder=loot tgt="item=3473 type=602 qual=2" result=deaf ev="item still on ground after click"
+time=2026-09-23T14:38:43.564+03:00 level=INFO msg=status pos=(5609,4708) area=42 hp=122 mp=247 maxmana=34 lvl=25 gold=72036 weapon=melee arrows=-1 holder=loot
+time=2026-09-23T14:38:43.607+03:00 level=INFO msg=outcome verb=loot holder=loot tgt="" result=blocked ev="no progress to item 3473 in 4s (stuck at d=8) — banned 60s"
+time=2026-09-23T14:38:47.874+03:00 level=INFO msg=outcome verb=pickup holder=loot tgt="item=3492 type=603 qual=2" result=whiff ev="no hover confirmation on item"
+time=2026-09-23T14:38:49.481+03:00 level=WARN msg=PATHOLOGY kind=orbit detail="holder=loot path=80 net=10 over 18s" cooling=loot for=6s

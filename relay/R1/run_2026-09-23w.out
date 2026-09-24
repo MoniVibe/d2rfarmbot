@@ -1,0 +1,930 @@
+time=2026-09-23T14:58:55.617+03:00 level=INFO msg="azbot attaching" pid=14760
+time=2026-09-23T14:59:01.270+03:00 level=INFO msg="aim calibration loaded" kx=1.1125320679211068 ky=1.1293540875695656 ox=2.951161121414657 oy=-27.490030603728087
+time=2026-09-23T14:59:01.271+03:00 level=INFO msg="world scale" scale=1.25 client=1536x840 dpi=1.25
+time=2026-09-23T14:59:01.272+03:00 level=INFO msg="navigation mode" deliberate=true
+time=2026-09-23T14:59:01.354+03:00 level=INFO msg="attach report" verdict="position=true stats=true uibytes=true mode=true"
+time=2026-09-23T14:59:06.073+03:00 level=INFO msg="sentinel live" killswitch=f10 drinkAt=60
+time=2026-09-23T14:59:06.078+03:00 level=INFO msg=director goal=campaign
+time=2026-09-23T14:59:10.968+03:00 level=INFO msg="map data fetched" seed=466817790 areas=136
+time=2026-09-23T14:59:11.303+03:00 level=INFO msg="capability: proven binding" key=f1 skill=220 skill_name="Book of Townportal"
+time=2026-09-23T14:59:11.533+03:00 level=INFO msg="capability: proven binding" key=f2 skill=218 skill_name="Book of Identify"
+time=2026-09-23T14:59:11.759+03:00 level=INFO msg="capability: proven binding" key=f3 skill=133 skill_name="Double Swing"
+time=2026-09-23T14:59:11.960+03:00 level=INFO msg="capability: key selected nothing (unbound or unusable)" key=f4
+time=2026-09-23T14:59:12.158+03:00 level=INFO msg="capability: proven binding" key=f5 skill=143 skill_name="Leap Attack"
+time=2026-09-23T14:59:12.360+03:00 level=INFO msg="capability: key selected nothing (unbound or unusable)" key=f6
+time=2026-09-23T14:59:12.581+03:00 level=INFO msg="capability: key selected nothing (unbound or unusable)" key=f7
+time=2026-09-23T14:59:12.811+03:00 level=INFO msg="capability: key selected nothing (unbound or unusable)" key=f8
+time=2026-09-23T14:59:12.812+03:00 level=INFO msg="capability: combat binding" skill=143 skill_name="Leap Attack" key=116
+time=2026-09-23T14:59:12.909+03:00 level=INFO msg="campaign itinerary selected" act=2 startArea=42 legs=24
+time=2026-09-23T14:59:12.910+03:00 level=INFO msg="flight recorder live" path=logs/flight_1790164752.jsonl
+time=2026-09-23T14:59:12.911+03:00 level=INFO msg="executive: game unfocused — playing on (posted input, your windows untouched)"
+time=2026-09-23T14:59:13.044+03:00 level=INFO msg="executive: grid re-aligned" area=42
+time=2026-09-23T14:59:13.045+03:00 level=INFO msg="executive: self-model event — recalibrating" armed=true revived=false
+time=2026-09-23T14:59:13.258+03:00 level=INFO msg="capability: proven binding" key=f1 skill=220 skill_name="Book of Townportal"
+time=2026-09-23T14:59:13.444+03:00 level=INFO msg="capability: proven binding" key=f2 skill=218 skill_name="Book of Identify"
+time=2026-09-23T14:59:13.651+03:00 level=INFO msg="capability: proven binding" key=f3 skill=133 skill_name="Double Swing"
+time=2026-09-23T14:59:13.846+03:00 level=INFO msg="capability: key selected nothing (unbound or unusable)" key=f4
+time=2026-09-23T14:59:14.047+03:00 level=INFO msg="capability: proven binding" key=f5 skill=143 skill_name="Leap Attack"
+time=2026-09-23T14:59:14.280+03:00 level=INFO msg="capability: key selected nothing (unbound or unusable)" key=f6
+time=2026-09-23T14:59:14.464+03:00 level=INFO msg="capability: key selected nothing (unbound or unusable)" key=f7
+time=2026-09-23T14:59:14.673+03:00 level=INFO msg="capability: key selected nothing (unbound or unusable)" key=f8
+time=2026-09-23T14:59:14.673+03:00 level=INFO msg="capability: combat binding" skill=143 skill_name="Leap Attack" key=116
+time=2026-09-23T14:59:14.803+03:00 level=INFO msg=grant to=imbibe class=loot urgency=0.45
+time=2026-09-23T14:59:14.824+03:00 level=INFO msg=verdict activity=imbibe verdict=done
+time=2026-09-23T14:59:14.824+03:00 level=INFO msg=status pos=(5586,4707) area=42 hp=121 mp=248 maxmana=35 lvl=26 gold=79421 weapon=melee arrows=-1 holder=imbibe
+time=2026-09-23T14:59:14.873+03:00 level=INFO msg=grant to=advance class=travel urgency=0.40
+time=2026-09-23T14:59:16.873+03:00 level=INFO msg=verdict activity=advance verdict=done
+time=2026-09-23T14:59:16.910+03:00 level=INFO msg=grant to=advance class=travel urgency=0.40
+time=2026-09-23T14:59:16.914+03:00 level=INFO msg=outcome verb=intent holder=advance tgt="" result=done ev="commit adopt leg 6 (56) from 42"
+time=2026-09-23T14:59:20.709+03:00 level=INFO msg=outcome verb=nav holder=march tgt="" result=refused ev="me=(5638,4668) area=42 tgt=(15080,6580) way=(0,0)"
+time=2026-09-23T14:59:23.792+03:00 level=INFO msg=outcome verb=nav holder=march tgt="" result=refused ev="me=(5676,4685) area=42 tgt=(15080,6580) way=(0,0)"
+time=2026-09-23T14:59:25.054+03:00 level=INFO msg=status pos=(5679,4700) area=42 hp=121 mp=248 maxmana=35 lvl=26 gold=79421 weapon=melee arrows=-1 holder=advance
+time=2026-09-23T14:59:27.013+03:00 level=INFO msg=outcome verb=nav holder=march tgt="" result=refused ev="me=(5701,4715) area=42 tgt=(15080,6580) way=(0,0)"
+time=2026-09-23T14:59:32.907+03:00 level=INFO msg=grant to=fight class=fight urgency=0.98
+time=2026-09-23T14:59:35.063+03:00 level=INFO msg=status pos=(5755,4649) area=42 hp=121 mp=248 maxmana=35 lvl=26 gold=79421 weapon=melee arrows=-1 holder=fight
+time=2026-09-23T14:59:36.409+03:00 level=INFO msg=grant to=stand class=survive urgency=1.50
+time=2026-09-23T14:59:39.987+03:00 level=INFO msg=grant to=fight class=fight urgency=0.98
+time=2026-09-23T14:59:42.828+03:00 level=INFO msg=grant to=advance class=travel urgency=0.40
+time=2026-09-23T14:59:44.712+03:00 level=INFO msg=grant to=fight class=fight urgency=0.92
+time=2026-09-23T14:59:46.039+03:00 level=INFO msg=outcome verb=hoverstrike holder=fight tgt="unit=1557" result=whiff ev="no hover confirmation on target (aim=610,355 dTile=-4,4 seen=[1906/t1 1900/t1 1900/t1 1900/t1 1900/t1 1900/t1 1900/t1 1900/t1 1900/t1 1900/t1])"
+time=2026-09-23T14:59:46.277+03:00 level=INFO msg=status pos=(5762,4642) area=42 hp=118 mp=248 maxmana=35 lvl=26 gold=79625 weapon=melee arrows=-1 holder=fight
+time=2026-09-23T14:59:49.439+03:00 level=INFO msg=grant to=advance class=travel urgency=0.40
+time=2026-09-23T14:59:51.379+03:00 level=WARN msg=PATHOLOGY kind=thrash detail="7 handovers/30s among 3 holders" cooling=fight for=8s
+time=2026-09-23T14:59:51.419+03:00 level=INFO msg=grant to=advance class=travel urgency=0.40
+time=2026-09-23T14:59:56.867+03:00 level=INFO msg=status pos=(5763,4604) area=42 hp=112 mp=242 maxmana=35 lvl=26 gold=79625 weapon=melee arrows=-1 holder=advance
+time=2026-09-23T14:59:56.930+03:00 level=WARN msg=PATHOLOGY kind=thrash detail="8 handovers/30s among 3 holders" cooling=advance for=8s
+time=2026-09-23T14:59:56.931+03:00 level=INFO msg=outcome verb=escalate holder=advance tgt="" result=done ev="rung 0 (replan) for intent.56: watchdog thrash"
+time=2026-09-23T14:59:57.381+03:00 level=INFO msg=grant to=fight class=fight urgency=0.98
+time=2026-09-23T15:00:01.077+03:00 level=INFO msg=grant to=stand class=survive urgency=1.50
+time=2026-09-23T15:00:01.439+03:00 level=INFO msg=grant to=fight class=fight urgency=0.98
+time=2026-09-23T15:00:02.034+03:00 level=WARN msg=PATHOLOGY kind=thrash detail="11 handovers/30s among 3 holders" cooling=fight for=8s
+time=2026-09-23T15:00:02.066+03:00 level=INFO msg="status: idle" pos=(5754,4571) area=42 hp=113 lvl=26
+time=2026-09-23T15:00:02.985+03:00 level=INFO msg=grant to=fight class=fight urgency=0.98
+time=2026-09-23T15:00:04.960+03:00 level=INFO msg=grant to=stand class=survive urgency=1.50
+time=2026-09-23T15:00:05.280+03:00 level=INFO msg=grant to=advance class=travel urgency=0.40
+time=2026-09-23T15:00:07.228+03:00 level=WARN msg=PATHOLOGY kind=thrash detail="11 handovers/30s among 3 holders" cooling=advance for=8s
+time=2026-09-23T15:00:07.229+03:00 level=INFO msg=outcome verb=escalate holder=advance tgt="" result=done ev="rung 1 (alternate) for intent.56: watchdog thrash"
+time=2026-09-23T15:00:07.239+03:00 level=INFO msg="status: idle" pos=(5749,4573) area=42 hp=121 lvl=26
+time=2026-09-23T15:00:08.113+03:00 level=INFO msg=grant to=fight class=fight urgency=0.98
+time=2026-09-23T15:00:08.467+03:00 level=INFO msg=grant to=stand class=survive urgency=1.50
+time=2026-09-23T15:00:08.818+03:00 level=INFO msg=grant to=fight class=fight urgency=0.98
+time=2026-09-23T15:00:10.062+03:00 level=INFO msg=grant to=stand class=survive urgency=1.50
+time=2026-09-23T15:00:11.902+03:00 level=INFO msg=grant to=fight class=fight urgency=0.98
+time=2026-09-23T15:00:12.240+03:00 level=WARN msg=PATHOLOGY kind=thrash detail="15 handovers/30s among 3 holders" cooling=fight for=8s
+time=2026-09-23T15:00:12.265+03:00 level=INFO msg="status: idle" pos=(5752,4578) area=42 hp=119 lvl=26
+time=2026-09-23T15:00:13.400+03:00 level=INFO msg=grant to=fight class=fight urgency=0.98
+time=2026-09-23T15:00:15.720+03:00 level=INFO msg=grant to=advance class=travel urgency=0.40
+time=2026-09-23T15:00:17.732+03:00 level=WARN msg=PATHOLOGY kind=thrash detail="14 handovers/30s among 3 holders" cooling=advance for=8s
+time=2026-09-23T15:00:17.733+03:00 level=INFO msg=outcome verb=escalate holder=advance tgt="" result=done ev="rung 2 (portal) for intent.56: watchdog thrash"
+time=2026-09-23T15:00:17.751+03:00 level=INFO msg="status: idle" pos=(5762,4556) area=42 hp=117 lvl=26
+time=2026-09-23T15:00:18.396+03:00 level=INFO msg=grant to=fight class=fight urgency=0.98
+time=2026-09-23T15:00:22.740+03:00 level=WARN msg=PATHOLOGY kind=thrash detail="12 handovers/30s among 3 holders" cooling=fight for=8s
+time=2026-09-23T15:00:22.775+03:00 level=INFO msg="status: idle" pos=(5753,4563) area=42 hp=119 lvl=26
+time=2026-09-23T15:00:23.966+03:00 level=INFO msg=grant to=fight class=fight urgency=0.98
+time=2026-09-23T15:00:26.378+03:00 level=INFO msg=outcome verb=hoverstrike holder=fight tgt="unit=2461" result=whiff ev="no hover confirmation on target (aim=807,315 dTile=-2,-4 seen=[2466/t1 2466/t1 2466/t1 2466/t1 2466/t1 2466/t1 2466/t1 2466/t1 2466/t1 2466/t1])"
+time=2026-09-23T15:00:26.660+03:00 level=INFO msg=grant to=advance class=travel urgency=0.40
+time=2026-09-23T15:00:28.547+03:00 level=WARN msg=PATHOLOGY kind=thrash detail="12 handovers/30s among 3 holders" cooling=advance for=8s
+time=2026-09-23T15:00:28.548+03:00 level=INFO msg=outcome verb=escalate holder=advance tgt="" result=done ev="rung 3 (fail-leg) for intent.56: watchdog thrash"
+time=2026-09-23T15:00:28.566+03:00 level=INFO msg="status: idle" pos=(5759,4550) area=42 hp=120 lvl=26
+time=2026-09-23T15:00:28.784+03:00 level=INFO msg=grant to=fight class=fight urgency=0.84
+time=2026-09-23T15:00:30.298+03:00 level=INFO msg=outcome verb=hoverstrike holder=fight tgt="unit=2456" result=whiff ev="no hover confirmation on target (aim=590,443 dTile=-6,8 seen=[2378/t1 2458/t1 2458/t1 2458/t1 2458/t1 2458/t1 2458/t1 2458/t1 2458/t1 -])"
+time=2026-09-23T15:00:33.780+03:00 level=WARN msg=PATHOLOGY kind=thrash detail="11 handovers/30s among 3 holders" cooling=fight for=8s
+time=2026-09-23T15:00:33.797+03:00 level=INFO msg="status: idle" pos=(5756,4550) area=42 hp=121 lvl=26
+time=2026-09-23T15:00:34.663+03:00 level=INFO msg=grant to=imbibe class=loot urgency=0.45
+time=2026-09-23T15:00:34.672+03:00 level=INFO msg=verdict activity=imbibe verdict=done
+time=2026-09-23T15:00:34.763+03:00 level=INFO msg=grant to=advance class=travel urgency=0.40
+time=2026-09-23T15:00:38.499+03:00 level=INFO msg=outcome verb=stride holder=advance tgt=(5782,4524) result=blocked ev="from=(5757,4549) to=(5757,4549) gain=0 detour=+22°"
+time=2026-09-23T15:00:40.516+03:00 level=INFO msg=outcome verb=stride holder=advance tgt=(5792,4549) result=blocked ev="from=(5757,4549) to=(5757,4549) gain=0"
+time=2026-09-23T15:00:40.532+03:00 level=WARN msg=PATHOLOGY kind=thrash detail="7 handovers/30s among 3 holders" cooling=advance for=8s
+time=2026-09-23T15:00:40.533+03:00 level=INFO msg=outcome verb=escalate holder=advance tgt="" result=done ev="rung 3 (fail-leg) for intent.56: watchdog thrash"
+time=2026-09-23T15:00:40.570+03:00 level=INFO msg="status: idle" pos=(5757,4549) area=42 hp=121 lvl=26
+time=2026-09-23T15:00:45.542+03:00 level=WARN msg=PATHOLOGY kind=thrash detail="6 handovers/30s among 3 holders" cooling=advance for=8s
+time=2026-09-23T15:00:45.543+03:00 level=INFO msg=outcome verb=escalate holder=advance tgt="" result=done ev="rung 3 (fail-leg) for intent.56: watchdog thrash"
+time=2026-09-23T15:00:45.581+03:00 level=INFO msg="status: idle" pos=(5757,4549) area=42 hp=121 lvl=26
+time=2026-09-23T15:00:50.816+03:00 level=INFO msg="status: idle" pos=(5757,4549) area=42 hp=121 lvl=26
+time=2026-09-23T15:00:51.745+03:00 level=INFO msg=grant to=advance class=travel urgency=0.40
+time=2026-09-23T15:00:57.546+03:00 level=INFO msg=grant to=fight class=fight urgency=0.98
+time=2026-09-23T15:01:01.256+03:00 level=INFO msg=status pos=(5731,4611) area=42 hp=121 mp=220 maxmana=35 lvl=26 gold=79893 weapon=melee arrows=-1 holder=fight
+time=2026-09-23T15:01:02.713+03:00 level=INFO msg=outcome verb=hoverstrike holder=fight tgt="unit=1927" result=whiff ev="no hover confirmation on target (aim=827,383 dTile=1,9 seen=[1919/t1 819/t2 819/t2 819/t2 819/t2 819/t2 - 819/t2 819/t2 -])"
+time=2026-09-23T15:01:04.893+03:00 level=INFO msg=outcome verb=hoverstrike holder=fight tgt="unit=1924" result=whiff ev="no hover confirmation on target (aim=630,345 dTile=-5,2 seen=[1918/t1 - - 1918/t1 1918/t1 1918/t1 - - - -])"
+time=2026-09-23T15:01:07.528+03:00 level=INFO msg=outcome verb=hoverstrike holder=fight tgt="unit=1918" result=whiff ev="no hover confirmation on target (aim=749,443 dTile=6,1 seen=[- - - - - - - - - -])"
+time=2026-09-23T15:01:08.968+03:00 level=INFO msg=grant to=stand class=survive urgency=1.50
+time=2026-09-23T15:01:09.871+03:00 level=INFO msg=grant to=fight class=fight urgency=0.88
+time=2026-09-23T15:01:11.330+03:00 level=INFO msg=status pos=(5721,4606) area=42 hp=121 mp=248 maxmana=35 lvl=26 gold=79893 weapon=melee arrows=-1 holder=fight
+time=2026-09-23T15:01:12.071+03:00 level=INFO msg=grant to=advance class=travel urgency=0.40
+time=2026-09-23T15:01:14.045+03:00 level=INFO msg=grant to=fight class=fight urgency=0.90
+time=2026-09-23T15:01:15.532+03:00 level=INFO msg=outcome verb=hoverstrike holder=fight tgt="unit=1618" result=whiff ev="no hover confirmation on target (aim=1104,383 dTile=6,-3 seen=[- - - - - - - - - -])"
+time=2026-09-23T15:01:19.916+03:00 level=INFO msg=grant to=imbibe class=loot urgency=0.45
+time=2026-09-23T15:01:21.331+03:00 level=INFO msg=status pos=(5702,4626) area=42 hp=121 mp=202 maxmana=35 lvl=26 gold=79893 weapon=melee arrows=-1 holder=imbibe
+time=2026-09-23T15:01:21.908+03:00 level=INFO msg=verdict activity=imbibe verdict=done
+time=2026-09-23T15:01:21.925+03:00 level=INFO msg=grant to=advance class=travel urgency=0.40
+time=2026-09-23T15:01:32.971+03:00 level=INFO msg=status pos=(5628,4719) area=42 hp=121 mp=240 maxmana=35 lvl=26 gold=79893 weapon=melee arrows=-1 holder=advance
+time=2026-09-23T15:01:44.073+03:00 level=INFO msg=status pos=(5601,4720) area=42 hp=121 mp=248 maxmana=35 lvl=26 gold=79893 weapon=melee arrows=-1 holder=advance
+time=2026-09-23T15:01:55.351+03:00 level=INFO msg=status pos=(5491,4720) area=42 hp=121 mp=248 maxmana=35 lvl=26 gold=79893 weapon=melee arrows=-1 holder=advance
+time=2026-09-23T15:02:06.435+03:00 level=INFO msg=status pos=(5514,4719) area=42 hp=121 mp=248 maxmana=35 lvl=26 gold=79893 weapon=melee arrows=-1 holder=advance
+time=2026-09-23T15:02:10.181+03:00 level=WARN msg=PATHOLOGY kind=orbit detail="holder=advance path=212 net=7 over 18s" cooling=advance for=6s
+time=2026-09-23T15:02:10.182+03:00 level=INFO msg=outcome verb=escalate holder=advance tgt="" result=done ev="rung 3 (fail-leg) for intent.56: watchdog orbit"
+time=2026-09-23T15:02:11.630+03:00 level=INFO msg="status: idle" pos=(5493,4720) area=42 hp=121 lvl=26
+time=2026-09-23T15:02:14.354+03:00 level=INFO msg=grant to=advance class=travel urgency=0.40
+time=2026-09-23T15:02:16.244+03:00 level=INFO msg=grant to=imbibe class=loot urgency=0.45
+time=2026-09-23T15:02:16.246+03:00 level=INFO msg=verdict activity=imbibe verdict=done
+time=2026-09-23T15:02:16.251+03:00 level=INFO msg=grant to=advance class=travel urgency=0.40
+time=2026-09-23T15:02:21.727+03:00 level=INFO msg=status pos=(5457,4704) area=42 hp=121 mp=248 maxmana=35 lvl=26 gold=79893 weapon=melee arrows=-1 holder=advance
+time=2026-09-23T15:02:32.892+03:00 level=INFO msg=status pos=(5445,4694) area=42 hp=121 mp=248 maxmana=35 lvl=26 gold=79893 weapon=melee arrows=-1 holder=advance
+time=2026-09-23T15:02:38.401+03:00 level=INFO msg="executive: grid re-aligned" area=41
+time=2026-09-23T15:02:40.213+03:00 level=INFO msg=verdict activity=advance verdict=done
+time=2026-09-23T15:02:40.241+03:00 level=INFO msg=grant to=advance class=travel urgency=0.40
+time=2026-09-23T15:02:50.822+03:00 level=INFO msg=outcome verb=enterportal holder=advance tgt="portal=280" result=whiff ev="no hover confirmation on portal"
+time=2026-09-23T15:02:50.822+03:00 level=INFO msg=status pos=(5368,4676) area=41 hp=121 mp=248 maxmana=35 lvl=26 gold=80247 weapon=melee arrows=-1 holder=advance
+time=2026-09-23T15:02:52.293+03:00 level=INFO msg="executive: grid re-aligned" area=40
+time=2026-09-23T15:02:52.294+03:00 level=INFO msg=grant to=repair class=service urgency=0.84
+time=2026-09-23T15:02:52.294+03:00 level=INFO msg=outcome verb=errand-trace holder=repair tgt="" result=refused ev="phase=0 menuTry=0 tries=0 menuOpen=false tradeSelected=false"
+time=2026-09-23T15:02:52.384+03:00 level=INFO msg=outcome verb=errand-trace holder=repair tgt="" result=refused ev="phase=1 menuTry=0 tries=0 menuOpen=false tradeSelected=false"
+time=2026-09-23T15:02:53.538+03:00 level=INFO msg=outcome verb=stride holder=repair tgt=(5117,5100) result=blocked ev="from=(5118,5103) to=(5118,5103) gain=0"
+time=2026-09-23T15:02:53.784+03:00 level=INFO msg=outcome verb=stride holder=repair tgt=(5117,5100) result=blocked ev="from=(5118,5103) to=(5118,5103) gain=0"
+time=2026-09-23T15:02:55.287+03:00 level=INFO msg=outcome verb=errand-trace holder=repair tgt="" result=refused ev="phase=2 menuTry=0 tries=0 menuOpen=false tradeSelected=false"
+time=2026-09-23T15:02:55.786+03:00 level=INFO msg=outcome verb=errand-trace holder=repair tgt="" result=refused ev="phase=2 menuTry=0 tries=1 menuOpen=true tradeSelected=false"
+time=2026-09-23T15:02:55.809+03:00 level=INFO msg=outcome verb=errand-trace holder=repair tgt="" result=refused ev="phase=3 menuTry=0 tries=1 menuOpen=true tradeSelected=false"
+time=2026-09-23T15:02:55.912+03:00 level=INFO msg="sentinel: game refocused — modifier amnesty fired"
+time=2026-09-23T15:02:56.500+03:00 level=INFO msg="executive: game refocused"
+time=2026-09-23T15:02:56.507+03:00 level=INFO msg=outcome verb=errand-trace holder=repair tgt="" result=refused ev="phase=4 menuTry=0 tries=1 menuOpen=true tradeSelected=true"
+time=2026-09-23T15:02:57.844+03:00 level=INFO msg=grant to=fence class=service urgency=0.70
+time=2026-09-23T15:02:57.844+03:00 level=INFO msg=outcome verb=errand-trace holder=fence tgt="" result=refused ev="phase=0 menuTry=0 tries=0 menuOpen=true tradeSelected=false"
+time=2026-09-23T15:02:57.854+03:00 level=INFO msg=outcome verb=errand-trace holder=fence tgt="" result=refused ev="phase=1 menuTry=0 tries=0 menuOpen=true tradeSelected=false"
+time=2026-09-23T15:02:58.134+03:00 level=INFO msg=outcome verb=errand-trace holder=fence tgt="" result=refused ev="phase=1 menuTry=0 tries=0 menuOpen=false tradeSelected=false"
+time=2026-09-23T15:03:01.118+03:00 level=INFO msg=status pos=(5104,5047) area=40 hp=121 mp=248 maxmana=35 lvl=26 gold=78067 weapon=melee arrows=-1 holder=fence
+time=2026-09-23T15:03:01.543+03:00 level=INFO msg=outcome verb=errand-trace holder=fence tgt="" result=refused ev="phase=2 menuTry=0 tries=0 menuOpen=false tradeSelected=false"
+time=2026-09-23T15:03:01.692+03:00 level=INFO msg=outcome verb=errand-trace holder=fence tgt="" result=refused ev="phase=2 menuTry=0 tries=1 menuOpen=false tradeSelected=false"
+time=2026-09-23T15:03:01.732+03:00 level=INFO msg=outcome verb=errand-trace holder=fence tgt="" result=refused ev="phase=2 menuTry=0 tries=1 menuOpen=true tradeSelected=false"
+time=2026-09-23T15:03:01.772+03:00 level=INFO msg=outcome verb=errand-trace holder=fence tgt="" result=refused ev="phase=3 menuTry=0 tries=1 menuOpen=true tradeSelected=false"
+time=2026-09-23T15:03:02.237+03:00 level=INFO msg=outcome verb=errand-trace holder=fence tgt="" result=refused ev="phase=4 menuTry=0 tries=1 menuOpen=true tradeSelected=true"
+time=2026-09-23T15:03:03.944+03:00 level=INFO msg=grant to=spend class=service urgency=0.60
+time=2026-09-23T15:03:07.261+03:00 level=WARN msg="STALL — mute holder" class=service holder=spend silent=5s hp=121 pos=(5091,5034)
+time=2026-09-23T15:03:09.574+03:00 level=WARN msg="STALL — mute holder" class=service holder=spend silent=7.3s hp=121 pos=(5091,5034)
+time=2026-09-23T15:03:10.745+03:00 level=INFO msg=outcome verb=spend holder=spend tgt="" result=deaf ev="count frozen at 5 through both doors (verified 0) — belief retired"
+time=2026-09-23T15:03:10.746+03:00 level=INFO msg=verdict activity=spend verdict=abandoned
+time=2026-09-23T15:03:10.751+03:00 level=INFO msg=grant to=spend class=service urgency=0.60
+time=2026-09-23T15:03:10.752+03:00 level=INFO msg=outcome verb=spend holder=spend tgt="" result=refused ev="no proven REACH TOOL — skill points banked (P-8.5)"
+time=2026-09-23T15:03:10.752+03:00 level=INFO msg=verdict activity=spend verdict=done
+time=2026-09-23T15:03:10.791+03:00 level=INFO msg=grant to=identify class=service urgency=0.55
+time=2026-09-23T15:03:11.936+03:00 level=INFO msg=status pos=(5091,5034) area=40 hp=121 mp=248 maxmana=35 lvl=26 gold=78563 weapon=melee arrows=-1 holder=identify
+time=2026-09-23T15:03:14.762+03:00 level=WARN msg="STALL — mute holder" class=service holder=identify silent=4s hp=121 pos=(5105,5034)
+time=2026-09-23T15:03:16.766+03:00 level=WARN msg="STALL — mute holder" class=service holder=identify silent=6s hp=121 pos=(5105,5034)
+time=2026-09-23T15:03:19.183+03:00 level=WARN msg="STALL — mute holder" class=service holder=identify silent=8.4s hp=121 pos=(5105,5034)
+time=2026-09-23T15:03:19.184+03:00 level=WARN msg="STALL — mute grant released" holder=identify cool=5s
+time=2026-09-23T15:03:19.205+03:00 level=INFO msg=grant to=advance class=travel urgency=0.45
+time=2026-09-23T15:03:19.971+03:00 level=INFO msg="executive: game unfocused — playing on (posted input, your windows untouched)"
+time=2026-09-23T15:03:20.363+03:00 level=INFO msg=verdict activity=advance verdict=done
+time=2026-09-23T15:03:20.402+03:00 level=INFO msg=grant to=advance class=travel urgency=0.45
+time=2026-09-23T15:03:22.133+03:00 level=INFO msg=status pos=(5097,5043) area=40 hp=121 mp=248 maxmana=35 lvl=26 gold=78563 weapon=melee arrows=-1 holder=advance
+time=2026-09-23T15:03:33.974+03:00 level=INFO msg="sentinel: OS shift state changed" down=true engaged=true
+time=2026-09-23T15:03:34.224+03:00 level=INFO msg="sentinel: OS shift state changed" down=false engaged=true
+time=2026-09-23T15:03:46.727+03:00 level=INFO msg="sentinel: game refocused — modifier amnesty fired"
+time=2026-09-23T15:03:47.760+03:00 level=INFO msg=status pos=(5071,5076) area=40 hp=121 mp=248 maxmana=35 lvl=26 gold=78563 weapon=melee arrows=-1 holder=advance
+time=2026-09-23T15:03:47.772+03:00 level=INFO msg="executive: grid re-aligned" area=42
+time=2026-09-23T15:03:48.414+03:00 level=INFO msg=outcome verb=stride holder=advance tgt=(5512,4698) result=blocked ev="from=(5498,4698) to=(5498,4698) gain=0"
+time=2026-09-23T15:03:48.896+03:00 level=INFO msg=outcome verb=stride holder=advance tgt=(5512,4698) result=blocked ev="from=(5498,4698) to=(5498,4698) gain=0"
+time=2026-09-23T15:03:49.409+03:00 level=INFO msg=outcome verb=stride holder=advance tgt=(5512,4698) result=blocked ev="from=(5498,4698) to=(5498,4698) gain=0"
+time=2026-09-23T15:03:49.895+03:00 level=INFO msg=outcome verb=stride holder=advance tgt=(5512,4698) result=blocked ev="from=(5498,4698) to=(5498,4698) gain=0"
+time=2026-09-23T15:03:50.395+03:00 level=INFO msg=outcome verb=stride holder=advance tgt=(5512,4698) result=blocked ev="from=(5498,4698) to=(5498,4698) gain=0"
+time=2026-09-23T15:03:50.882+03:00 level=INFO msg=outcome verb=stride holder=advance tgt=(5512,4698) result=blocked ev="from=(5498,4698) to=(5498,4698) gain=0"
+time=2026-09-23T15:03:51.410+03:00 level=INFO msg=outcome verb=stride holder=advance tgt=(5512,4698) result=blocked ev="from=(5498,4698) to=(5498,4698) gain=0"
+time=2026-09-23T15:03:51.901+03:00 level=INFO msg=outcome verb=stride holder=advance tgt=(5512,4698) result=blocked ev="from=(5498,4698) to=(5498,4698) gain=0"
+time=2026-09-23T15:03:52.391+03:00 level=INFO msg=outcome verb=stride holder=advance tgt=(5512,4698) result=blocked ev="from=(5498,4698) to=(5498,4698) gain=0"
+time=2026-09-23T15:03:52.901+03:00 level=INFO msg=outcome verb=stride holder=advance tgt=(5512,4698) result=blocked ev="from=(5498,4698) to=(5498,4698) gain=0"
+time=2026-09-23T15:03:52.903+03:00 level=INFO msg=verdict activity=advance verdict=done
+time=2026-09-23T15:03:52.942+03:00 level=INFO msg=grant to=advance class=travel urgency=0.40
+time=2026-09-23T15:03:54.779+03:00 level=INFO msg=outcome verb=stride holder=advance tgt=(5533,4698) result=blocked ev="from=(5498,4698) to=(5498,4698) gain=0"
+time=2026-09-23T15:03:56.664+03:00 level=INFO msg=grant to=imbibe class=loot urgency=0.45
+time=2026-09-23T15:03:56.669+03:00 level=INFO msg=verdict activity=imbibe verdict=done
+time=2026-09-23T15:03:56.704+03:00 level=INFO msg=grant to=advance class=travel urgency=0.40
+time=2026-09-23T15:03:58.529+03:00 level=INFO msg=status pos=(5470,4698) area=42 hp=121 mp=248 maxmana=35 lvl=26 gold=78563 weapon=melee arrows=-1 holder=advance
+time=2026-09-23T15:04:00.419+03:00 level=INFO msg=outcome verb=nav holder=march tgt="" result=refused ev="me=(5462,4644) area=42 tgt=(15080,6580) way=(0,0)"
+time=2026-09-23T15:04:02.720+03:00 level=INFO msg=outcome verb=stride holder=advance tgt=(0,0) result=blocked ev="from=(5458,4628) to=(5458,4628) gain=0 detour=+45°"
+time=2026-09-23T15:04:03.240+03:00 level=INFO msg=outcome verb=stride holder=advance tgt=(5461,4628) result=blocked ev="from=(5458,4628) to=(5458,4628) gain=0"
+time=2026-09-23T15:04:03.244+03:00 level=INFO msg=grant to=fight class=fight urgency=0.80
+time=2026-09-23T15:04:04.471+03:00 level=INFO msg=outcome verb=hoverstrike holder=fight tgt="unit=346" result=whiff ev="no hover confirmation on target (aim=650,512 dTile=10,8 seen=[- - - - - - - - - -])"
+time=2026-09-23T15:04:04.679+03:00 level=INFO msg=grant to=advance class=travel urgency=0.40
+time=2026-09-23T15:04:04.686+03:00 level=INFO msg=outcome verb=nav holder=march tgt="" result=refused ev="me=(5458,4628) area=42 tgt=(15080,6580) way=(0,0)"
+time=2026-09-23T15:04:07.972+03:00 level=INFO msg=outcome verb=nav holder=march tgt="" result=refused ev="me=(5488,4637) area=42 tgt=(15080,6580) way=(0,0)"
+time=2026-09-23T15:04:08.536+03:00 level=INFO msg=status pos=(5488,4637) area=42 hp=121 mp=228 maxmana=35 lvl=26 gold=78563 weapon=melee arrows=-1 holder=advance
+time=2026-09-23T15:04:11.016+03:00 level=INFO msg=outcome verb=nav holder=march tgt="" result=refused ev="me=(5507,4649) area=42 tgt=(15080,6580) way=(0,0)"
+time=2026-09-23T15:04:14.256+03:00 level=INFO msg=outcome verb=nav holder=march tgt="" result=refused ev="me=(5529,4675) area=42 tgt=(15080,6580) way=(0,0)"
+time=2026-09-23T15:04:17.467+03:00 level=INFO msg=outcome verb=nav holder=march tgt="" result=refused ev="me=(5567,4701) area=42 tgt=(15080,6580) way=(0,0)"
+time=2026-09-23T15:04:18.718+03:00 level=INFO msg=status pos=(5571,4706) area=42 hp=121 mp=248 maxmana=35 lvl=26 gold=78563 weapon=melee arrows=-1 holder=advance
+time=2026-09-23T15:04:20.775+03:00 level=INFO msg=outcome verb=nav holder=march tgt="" result=refused ev="me=(5599,4715) area=42 tgt=(15080,6580) way=(0,0)"
+time=2026-09-23T15:04:22.975+03:00 level=INFO msg=outcome verb=stride holder=advance tgt=(5632,4726) result=blocked ev="from=(5619,4721) to=(5619,4721) gain=0 detour=-67°"
+time=2026-09-23T15:04:30.166+03:00 level=INFO msg=status pos=(5622,4674) area=42 hp=121 mp=248 maxmana=35 lvl=26 gold=78563 weapon=melee arrows=-1 holder=advance
+time=2026-09-23T15:04:30.194+03:00 level=INFO msg=outcome verb=nav holder=march tgt="" result=refused ev="me=(5597,4674) area=42 tgt=(15080,6580) way=(0,0)"
+time=2026-09-23T15:04:30.830+03:00 level=INFO msg=outcome verb=stride holder=advance tgt=(5601,4675) result=blocked ev="from=(5594,4677) to=(5594,4677) gain=0"
+time=2026-09-23T15:04:33.363+03:00 level=INFO msg=outcome verb=nav holder=march tgt="" result=refused ev="me=(5598,4699) area=42 tgt=(15080,6580) way=(0,0)"
+time=2026-09-23T15:04:35.991+03:00 level=INFO msg=outcome verb=stride holder=advance tgt=(5629,4722) result=blocked ev="from=(5616,4720) to=(5616,4720) gain=0"
+time=2026-09-23T15:04:36.610+03:00 level=INFO msg=outcome verb=stride holder=advance tgt=(5629,4722) result=blocked ev="from=(5616,4720) to=(5616,4720) gain=0"
+time=2026-09-23T15:04:40.276+03:00 level=INFO msg=status pos=(5612,4696) area=42 hp=121 mp=248 maxmana=35 lvl=26 gold=78563 weapon=melee arrows=-1 holder=advance
+time=2026-09-23T15:04:40.327+03:00 level=INFO msg=outcome verb=nav holder=march tgt="" result=refused ev="me=(5606,4674) area=42 tgt=(15080,6580) way=(0,0)"
+time=2026-09-23T15:04:40.950+03:00 level=INFO msg=outcome verb=stride holder=advance tgt=(5617,4678) result=blocked ev="from=(5606,4674) to=(5606,4674) gain=0"
+time=2026-09-23T15:04:41.509+03:00 level=INFO msg=outcome verb=stride holder=advance tgt=(5617,4678) result=blocked ev="from=(5606,4674) to=(5606,4674) gain=0"
+time=2026-09-23T15:04:42.087+03:00 level=INFO msg=outcome verb=stride holder=advance tgt=(5617,4678) result=blocked ev="from=(5606,4674) to=(5606,4674) gain=0"
+time=2026-09-23T15:04:42.641+03:00 level=INFO msg=outcome verb=stride holder=advance tgt=(5617,4678) result=blocked ev="from=(5606,4674) to=(5606,4674) gain=0"
+time=2026-09-23T15:04:43.190+03:00 level=INFO msg=outcome verb=stride holder=advance tgt=(5617,4678) result=blocked ev="from=(5606,4674) to=(5606,4674) gain=0"
+time=2026-09-23T15:04:43.721+03:00 level=INFO msg=outcome verb=stride holder=advance tgt=(5617,4678) result=blocked ev="from=(5606,4674) to=(5606,4674) gain=0"
+time=2026-09-23T15:04:43.734+03:00 level=INFO msg=outcome verb=nav holder=march tgt="" result=refused ev="me=(5606,4674) area=42 tgt=(15080,6580) way=(0,0)"
+time=2026-09-23T15:04:44.291+03:00 level=INFO msg=outcome verb=stride holder=advance tgt=(5617,4678) result=blocked ev="from=(5606,4674) to=(5606,4674) gain=0"
+time=2026-09-23T15:04:44.860+03:00 level=INFO msg=outcome verb=stride holder=advance tgt=(5617,4678) result=blocked ev="from=(5606,4674) to=(5606,4674) gain=0"
+time=2026-09-23T15:04:45.463+03:00 level=INFO msg=outcome verb=stride holder=advance tgt=(5617,4678) result=blocked ev="from=(5606,4674) to=(5606,4674) gain=0"
+time=2026-09-23T15:04:45.990+03:00 level=INFO msg=outcome verb=stride holder=advance tgt=(5617,4678) result=blocked ev="from=(5606,4674) to=(5606,4674) gain=0"
+time=2026-09-23T15:04:46.568+03:00 level=INFO msg=outcome verb=stride holder=advance tgt=(5617,4678) result=blocked ev="from=(5606,4674) to=(5606,4674) gain=0"
+time=2026-09-23T15:04:47.127+03:00 level=INFO msg=outcome verb=stride holder=advance tgt=(5617,4678) result=blocked ev="from=(5606,4674) to=(5606,4674) gain=0"
+time=2026-09-23T15:04:47.160+03:00 level=INFO msg=outcome verb=nav holder=march tgt="" result=refused ev="me=(5606,4674) area=42 tgt=(15080,6580) way=(0,0)"
+time=2026-09-23T15:04:47.716+03:00 level=INFO msg=outcome verb=stride holder=advance tgt=(5617,4678) result=blocked ev="from=(5606,4674) to=(5606,4674) gain=0"
+time=2026-09-23T15:04:50.279+03:00 level=INFO msg=status pos=(5632,4674) area=42 hp=121 mp=248 maxmana=35 lvl=26 gold=78563 weapon=melee arrows=-1 holder=advance
+time=2026-09-23T15:04:50.293+03:00 level=INFO msg=outcome verb=nav holder=march tgt="" result=refused ev="me=(5639,4679) area=42 tgt=(15080,6580) way=(0,0)"
+time=2026-09-23T15:04:53.319+03:00 level=INFO msg=outcome verb=nav holder=march tgt="" result=refused ev="me=(5653,4689) area=42 tgt=(15080,6580) way=(0,0)"
+time=2026-09-23T15:04:54.529+03:00 level=INFO msg=grant to=imbibe class=loot urgency=0.45
+time=2026-09-23T15:04:56.031+03:00 level=INFO msg=grant to=advance class=travel urgency=0.40
+time=2026-09-23T15:04:56.346+03:00 level=INFO msg=outcome verb=nav holder=march tgt="" result=refused ev="me=(5648,4688) area=42 tgt=(15080,6580) way=(0,0)"
+time=2026-09-23T15:04:58.254+03:00 level=INFO msg=grant to=imbibe class=loot urgency=0.45
+time=2026-09-23T15:04:59.771+03:00 level=INFO msg=grant to=advance class=travel urgency=0.40
+time=2026-09-23T15:04:59.832+03:00 level=INFO msg=outcome verb=nav holder=march tgt="" result=refused ev="me=(5647,4688) area=42 tgt=(15080,6580) way=(0,0)"
+time=2026-09-23T15:05:00.805+03:00 level=INFO msg=status pos=(5649,4688) area=42 hp=121 mp=248 maxmana=35 lvl=26 gold=78563 weapon=melee arrows=-1 holder=advance
+time=2026-09-23T15:05:02.124+03:00 level=INFO msg=grant to=imbibe class=loot urgency=0.45
+time=2026-09-23T15:05:07.914+03:00 level=WARN msg=PATHOLOGY kind=thrash detail="6 handovers/30s among 2 holders" cooling=imbibe for=8s
+time=2026-09-23T15:05:07.946+03:00 level=INFO msg=grant to=advance class=travel urgency=0.40
+time=2026-09-23T15:05:08.118+03:00 level=INFO msg=outcome verb=nav holder=march tgt="" result=refused ev="me=(5665,4715) area=42 tgt=(15080,6580) way=(0,0)"
+time=2026-09-23T15:05:10.861+03:00 level=INFO msg=status pos=(5673,4704) area=42 hp=121 mp=248 maxmana=35 lvl=26 gold=78563 weapon=melee arrows=-1 holder=advance
+time=2026-09-23T15:05:11.514+03:00 level=INFO msg=outcome verb=nav holder=march tgt="" result=refused ev="me=(5687,4700) area=42 tgt=(15080,6580) way=(0,0)"
+time=2026-09-23T15:05:14.393+03:00 level=INFO msg=outcome verb=stride holder=advance tgt=(5692,4673) result=blocked ev="from=(5691,4708) to=(5690,4707) gain=1 detour=+22°"
+time=2026-09-23T15:05:14.425+03:00 level=WARN msg=PATHOLOGY kind=thrash detail="7 handovers/30s among 2 holders" cooling=advance for=8s
+time=2026-09-23T15:05:14.426+03:00 level=INFO msg=outcome verb=escalate holder=advance tgt="" result=done ev="rung 3 (fail-leg) for intent.56: watchdog thrash"
+time=2026-09-23T15:05:15.971+03:00 level=INFO msg="status: idle" pos=(5690,4707) area=42 hp=121 lvl=26
+time=2026-09-23T15:05:19.567+03:00 level=WARN msg=PATHOLOGY kind=thrash detail="6 handovers/30s among 2 holders" cooling=advance for=8s
+time=2026-09-23T15:05:19.567+03:00 level=INFO msg=outcome verb=escalate holder=advance tgt="" result=done ev="rung 3 (fail-leg) for intent.56: watchdog thrash"
+time=2026-09-23T15:05:21.139+03:00 level=INFO msg="status: idle" pos=(5690,4707) area=42 hp=121 lvl=26
+time=2026-09-23T15:05:25.595+03:00 level=INFO msg=grant to=advance class=travel urgency=0.40
+time=2026-09-23T15:05:27.343+03:00 level=INFO msg=outcome verb=stride holder=advance tgt=(5715,4682) result=blocked ev="from=(5690,4707) to=(5690,4707) gain=0 detour=+22°"
+time=2026-09-23T15:05:29.225+03:00 level=INFO msg=outcome verb=stride holder=advance tgt=(5725,4707) result=blocked ev="from=(5690,4707) to=(5690,4707) gain=0"
+time=2026-09-23T15:05:31.186+03:00 level=INFO msg=outcome verb=stride holder=advance tgt=(5715,4732) result=blocked ev="from=(5690,4707) to=(5690,4707) gain=0 detour=-22°"
+time=2026-09-23T15:05:31.188+03:00 level=INFO msg=status pos=(5690,4707) area=42 hp=121 mp=248 maxmana=35 lvl=26 gold=78563 weapon=melee arrows=-1 holder=advance
+time=2026-09-23T15:05:34.941+03:00 level=INFO msg=grant to=imbibe class=loot urgency=0.45
+time=2026-09-23T15:05:34.952+03:00 level=INFO msg=verdict activity=imbibe verdict=done
+time=2026-09-23T15:05:34.986+03:00 level=INFO msg=grant to=advance class=travel urgency=0.40
+time=2026-09-23T15:05:42.481+03:00 level=INFO msg=status pos=(5678,4704) area=42 hp=121 mp=248 maxmana=35 lvl=26 gold=78563 weapon=melee arrows=-1 holder=advance
+time=2026-09-23T15:05:53.454+03:00 level=INFO msg=status pos=(5669,4704) area=42 hp=121 mp=248 maxmana=35 lvl=26 gold=78563 weapon=melee arrows=-1 holder=advance
+time=2026-09-23T15:06:04.475+03:00 level=INFO msg=status pos=(5658,4704) area=42 hp=121 mp=248 maxmana=35 lvl=26 gold=78563 weapon=melee arrows=-1 holder=advance
+time=2026-09-23T15:06:06.408+03:00 level=INFO msg=outcome verb=nav holder=march tgt="" result=refused ev="me=(5637,4658) area=42 tgt=(15080,6580) way=(0,0)"
+time=2026-09-23T15:06:09.438+03:00 level=INFO msg=outcome verb=nav holder=march tgt="" result=refused ev="me=(5679,4664) area=42 tgt=(15080,6580) way=(0,0)"
+time=2026-09-23T15:06:15.059+03:00 level=INFO msg=status pos=(5698,4653) area=42 hp=121 mp=248 maxmana=35 lvl=26 gold=78563 weapon=melee arrows=-1 holder=advance
+time=2026-09-23T15:06:18.815+03:00 level=INFO msg=grant to=fight class=fight urgency=0.82
+time=2026-09-23T15:06:20.106+03:00 level=INFO msg=outcome verb=hoverstrike holder=fight tgt="unit=1925" result=whiff ev="no hover confirmation on target (aim=669,522 dTile=9,9 seen=[- - - - - - - - - -])"
+time=2026-09-23T15:06:20.404+03:00 level=INFO msg=grant to=advance class=travel urgency=0.40
+time=2026-09-23T15:06:22.266+03:00 level=INFO msg=grant to=fight class=fight urgency=0.84
+time=2026-09-23T15:06:23.640+03:00 level=INFO msg=outcome verb=hoverstrike holder=fight tgt="unit=1925" result=whiff ev="no hover confirmation on target (aim=75,661 dTile=-8,13 seen=[- - - - - - - - - -])"
+time=2026-09-23T15:06:25.327+03:00 level=INFO msg=outcome verb=hoverstrike holder=fight tgt="unit=1925" result=whiff ev="no hover confirmation on target (aim=531,393 dTile=-5,26 seen=[- - - - - - - - - -])"
+time=2026-09-23T15:06:25.538+03:00 level=INFO msg=status pos=(5709,4551) area=42 hp=121 mp=202 maxmana=35 lvl=26 gold=78563 weapon=melee arrows=-1 holder=fight
+time=2026-09-23T15:06:26.920+03:00 level=INFO msg=outcome verb=hoverstrike holder=fight tgt="unit=1925" result=whiff ev="no hover confirmation on target (aim=570,393 dTile=-5,7 seen=[- - - - - - 2420/t1 - - 2420/t1])"
+time=2026-09-23T15:06:27.813+03:00 level=INFO msg=grant to=imbibe class=loot urgency=0.45
+time=2026-09-23T15:06:27.819+03:00 level=INFO msg=verdict activity=imbibe verdict=done
+time=2026-09-23T15:06:27.853+03:00 level=INFO msg=grant to=advance class=travel urgency=0.40
+time=2026-09-23T15:06:31.681+03:00 level=WARN msg=PATHOLOGY kind=thrash detail="6 handovers/30s among 3 holders" cooling=advance for=8s
+time=2026-09-23T15:06:31.682+03:00 level=INFO msg=outcome verb=escalate holder=advance tgt="" result=done ev="rung 3 (fail-leg) for intent.56: watchdog thrash"
+time=2026-09-23T15:06:31.689+03:00 level=INFO msg="status: idle" pos=(5698,4548) area=42 hp=121 lvl=26
+time=2026-09-23T15:06:36.807+03:00 level=WARN msg=PATHOLOGY kind=thrash detail="6 handovers/30s among 3 holders" cooling=advance for=8s
+time=2026-09-23T15:06:36.808+03:00 level=INFO msg=outcome verb=escalate holder=advance tgt="" result=done ev="rung 3 (fail-leg) for intent.56: watchdog thrash"
+time=2026-09-23T15:06:36.846+03:00 level=INFO msg="status: idle" pos=(5698,4548) area=42 hp=121 lvl=26
+time=2026-09-23T15:06:41.834+03:00 level=WARN msg=PATHOLOGY kind=thrash detail="6 handovers/30s among 3 holders" cooling=advance for=8s
+time=2026-09-23T15:06:41.835+03:00 level=INFO msg=outcome verb=escalate holder=advance tgt="" result=done ev="rung 3 (fail-leg) for intent.56: watchdog thrash"
+time=2026-09-23T15:06:41.874+03:00 level=INFO msg="status: idle" pos=(5698,4548) area=42 hp=121 lvl=26
+time=2026-09-23T15:06:43.809+03:00 level=WARN msg="idle breaker: services cooled 90s — the march reclaims the wheel"
+time=2026-09-23T15:06:46.849+03:00 level=WARN msg=PATHOLOGY kind=thrash detail="6 handovers/30s among 3 holders" cooling=advance for=8s
+time=2026-09-23T15:06:46.850+03:00 level=INFO msg=outcome verb=escalate holder=advance tgt="" result=done ev="rung 3 (fail-leg) for intent.56: watchdog thrash"
+time=2026-09-23T15:06:47.118+03:00 level=INFO msg="status: idle" pos=(5698,4548) area=42 hp=121 lvl=26
+time=2026-09-23T15:06:52.254+03:00 level=INFO msg="status: idle" pos=(5698,4548) area=42 hp=121 lvl=26
+time=2026-09-23T15:06:52.878+03:00 level=INFO msg=grant to=advance class=travel urgency=0.40
+time=2026-09-23T15:07:04.075+03:00 level=INFO msg=status pos=(5650,4545) area=42 hp=121 mp=248 maxmana=35 lvl=26 gold=78563 weapon=melee arrows=-1 holder=advance
+time=2026-09-23T15:07:04.160+03:00 level=INFO msg=outcome verb=nav holder=march tgt="" result=refused ev="me=(5625,4549) area=42 tgt=(15080,6580) way=(0,0)"
+time=2026-09-23T15:07:04.178+03:00 level=INFO msg=outcome verb=escalate holder=advance tgt="" result=done ev="rung 3 (fail-leg) for intent.56: 60s stall at (15080,6580)"
+time=2026-09-23T15:07:04.178+03:00 level=INFO msg=verdict activity=advance verdict=abandoned
+time=2026-09-23T15:07:04.209+03:00 level=INFO msg=grant to=advance class=travel urgency=0.40
+time=2026-09-23T15:07:07.657+03:00 level=INFO msg=outcome verb=nav holder=march tgt="" result=refused ev="me=(5650,4567) area=42 tgt=(15080,6580) way=(0,0)"
+time=2026-09-23T15:07:10.738+03:00 level=INFO msg=outcome verb=nav holder=march tgt="" result=refused ev="me=(5667,4572) area=42 tgt=(15080,6580) way=(0,0)"
+time=2026-09-23T15:07:13.227+03:00 level=INFO msg=grant to=imbibe class=loot urgency=0.45
+time=2026-09-23T15:07:14.674+03:00 level=INFO msg=status pos=(5684,4593) area=42 hp=121 mp=248 maxmana=35 lvl=26 gold=78835 weapon=melee arrows=-1 holder=imbibe
+time=2026-09-23T15:07:23.170+03:00 level=INFO msg=grant to=fight class=fight urgency=0.86
+time=2026-09-23T15:07:24.518+03:00 level=INFO msg=outcome verb=hoverstrike holder=fight tgt="unit=2455" result=whiff ev="no hover confirmation on target (aim=511,345 dTile=6,7 seen=[- - - - - - - 10116/t4 10116/t4 -])"
+time=2026-09-23T15:07:24.721+03:00 level=INFO msg=status pos=(5679,4572) area=42 hp=121 mp=248 maxmana=35 lvl=26 gold=78835 weapon=melee arrows=-1 holder=fight
+time=2026-09-23T15:07:26.103+03:00 level=INFO msg=outcome verb=hoverstrike holder=fight tgt="unit=2455" result=whiff ev="no hover confirmation on target (aim=669,403 dTile=-6,5 seen=[- - - - - - - - - -])"
+time=2026-09-23T15:07:27.890+03:00 level=INFO msg=outcome verb=hoverstrike holder=fight tgt="unit=2455" result=whiff ev="no hover confirmation on target (aim=709,443 dTile=1,4 seen=[- - - - - - - - - -])"
+time=2026-09-23T15:07:28.207+03:00 level=INFO msg=grant to=imbibe class=loot urgency=0.45
+time=2026-09-23T15:07:35.271+03:00 level=INFO msg=status pos=(5661,4569) area=42 hp=121 mp=222 maxmana=35 lvl=26 gold=78835 weapon=melee arrows=-1 holder=imbibe
+time=2026-09-23T15:07:43.876+03:00 level=WARN msg=PATHOLOGY kind=orbit detail="holder=imbibe path=200 net=8 over 19s" cooling=imbibe for=6s
+time=2026-09-23T15:07:46.224+03:00 level=INFO msg=grant to=advance class=travel urgency=0.40
+time=2026-09-23T15:07:48.100+03:00 level=INFO msg=status pos=(5657,4550) area=42 hp=121 mp=248 maxmana=35 lvl=26 gold=78835 weapon=melee arrows=-1 holder=advance
+time=2026-09-23T15:07:50.039+03:00 level=INFO msg=outcome verb=nav holder=march tgt="" result=refused ev="me=(5626,4549) area=42 tgt=(15080,6580) way=(0,0)"
+time=2026-09-23T15:07:53.106+03:00 level=INFO msg=grant to=imbibe class=loot urgency=0.45
+time=2026-09-23T15:07:53.113+03:00 level=INFO msg=verdict activity=imbibe verdict=done
+time=2026-09-23T15:07:53.153+03:00 level=INFO msg=grant to=advance class=travel urgency=0.40
+time=2026-09-23T15:07:53.171+03:00 level=INFO msg=outcome verb=nav holder=march tgt="" result=refused ev="me=(5667,4555) area=42 tgt=(15080,6580) way=(0,0)"
+time=2026-09-23T15:07:56.215+03:00 level=INFO msg=outcome verb=nav holder=march tgt="" result=refused ev="me=(5692,4583) area=42 tgt=(15080,6580) way=(0,0)"
+time=2026-09-23T15:07:58.964+03:00 level=INFO msg=status pos=(5697,4593) area=42 hp=120 mp=248 maxmana=35 lvl=26 gold=78835 weapon=melee arrows=-1 holder=advance
+time=2026-09-23T15:08:02.772+03:00 level=INFO msg=outcome verb=stride holder=advance tgt=(5697,4521) result=blocked ev="from=(5697,4556) to=(5697,4556) gain=0"
+time=2026-09-23T15:08:04.582+03:00 level=INFO msg=outcome verb=stride holder=advance tgt=(5722,4531) result=blocked ev="from=(5697,4556) to=(5697,4556) gain=0"
+time=2026-09-23T15:08:06.473+03:00 level=INFO msg=outcome verb=stride holder=advance tgt=(5732,4556) result=blocked ev="from=(5697,4556) to=(5697,4556) gain=0"
+time=2026-09-23T15:08:10.119+03:00 level=INFO msg=status pos=(5724,4556) area=42 hp=121 mp=248 maxmana=35 lvl=26 gold=78835 weapon=melee arrows=-1 holder=advance
+time=2026-09-23T15:08:15.826+03:00 level=INFO msg=grant to=fight class=fight urgency=0.92
+time=2026-09-23T15:08:17.023+03:00 level=INFO msg=outcome verb=hoverstrike holder=fight tgt="unit=1955" result=whiff ev="no hover confirmation on target (aim=768,335 dTile=-4,-3 seen=[- - - - - - - - - -])"
+time=2026-09-23T15:08:18.769+03:00 level=INFO msg=outcome verb=hoverstrike holder=fight tgt="unit=1955" result=whiff ev="no hover confirmation on target (aim=551,463 dTile=-1,5 seen=[- - - - - - - - - -])"
+time=2026-09-23T15:08:20.214+03:00 level=INFO msg=outcome verb=hoverstrike holder=fight tgt="unit=1955" result=whiff ev="no hover confirmation on target (aim=650,413 dTile=-1,9 seen=[- - - - - - - - - -])"
+time=2026-09-23T15:08:20.406+03:00 level=INFO msg=status pos=(5762,4566) area=42 hp=121 mp=194 maxmana=35 lvl=26 gold=78835 weapon=melee arrows=-1 holder=fight
+time=2026-09-23T15:08:22.249+03:00 level=INFO msg=outcome verb=hoverstrike holder=fight tgt="unit=1953" result=whiff ev="no hover confirmation on target (aim=590,305 dTile=-6,6 seen=[10899/t4 10900/t4 10795/t4 - - - - 10800/t4 10800/t4 10800/t4])"
+time=2026-09-23T15:08:23.818+03:00 level=INFO msg=outcome verb=hoverstrike holder=fight tgt="unit=1953" result=whiff ev="no hover confirmation on target (aim=709,305 dTile=-8,-2 seen=[- - - - - - - - - -])"
+time=2026-09-23T15:08:24.091+03:00 level=INFO msg=grant to=advance class=travel urgency=0.40
+time=2026-09-23T15:08:27.912+03:00 level=INFO msg=outcome verb=stride holder=advance tgt=(5786,4579) result=blocked ev="from=(5761,4554) to=(5761,4554) gain=0"
+time=2026-09-23T15:08:31.686+03:00 level=INFO msg=status pos=(5763,4558) area=42 hp=121 mp=188 maxmana=35 lvl=26 gold=78835 weapon=melee arrows=-1 holder=advance
+time=2026-09-23T15:08:37.353+03:00 level=INFO msg=outcome verb=stride holder=advance tgt=(5784,4610) result=blocked ev="from=(5761,4585) to=(5762,4585) gain=1 detour=+22°"
+time=2026-09-23T15:08:39.258+03:00 level=INFO msg=grant to=imbibe class=loot urgency=0.45
+time=2026-09-23T15:08:39.261+03:00 level=INFO msg=verdict activity=imbibe verdict=done
+time=2026-09-23T15:08:39.298+03:00 level=INFO msg=grant to=advance class=travel urgency=0.40
+time=2026-09-23T15:08:43.138+03:00 level=INFO msg=status pos=(5761,4585) area=42 hp=121 mp=234 maxmana=35 lvl=26 gold=78835 weapon=melee arrows=-1 holder=advance
+time=2026-09-23T15:08:54.124+03:00 level=INFO msg=status pos=(5732,4594) area=42 hp=121 mp=248 maxmana=35 lvl=26 gold=78835 weapon=melee arrows=-1 holder=advance
+time=2026-09-23T15:08:56.049+03:00 level=INFO msg=grant to=fight class=fight urgency=0.84
+time=2026-09-23T15:08:57.267+03:00 level=INFO msg=outcome verb=hoverstrike holder=fight tgt="unit=1925" result=whiff ev="no hover confirmation on target (aim=709,345 dTile=-6,0 seen=[- - - - - - - - - -])"
+time=2026-09-23T15:08:58.984+03:00 level=INFO msg=outcome verb=hoverstrike holder=fight tgt="unit=1925" result=whiff ev="no hover confirmation on target (aim=709,403 dTile=-1,5 seen=[- - - - - - - - - 1905/t1])"
+time=2026-09-23T15:08:59.868+03:00 level=INFO msg=grant to=advance class=travel urgency=0.40
+time=2026-09-23T15:09:05.236+03:00 level=INFO msg=status pos=(5763,4598) area=42 hp=121 mp=248 maxmana=35 lvl=26 gold=78835 weapon=melee arrows=-1 holder=advance
+time=2026-09-23T15:09:07.044+03:00 level=INFO msg=outcome verb=stride holder=advance tgt=(5737,4563) result=blocked ev="from=(5736,4598) to=(5735,4598) gain=1"
+time=2026-09-23T15:09:16.390+03:00 level=INFO msg=status pos=(5683,4612) area=42 hp=121 mp=248 maxmana=35 lvl=26 gold=79075 weapon=melee arrows=-1 holder=advance
+time=2026-09-23T15:09:18.292+03:00 level=INFO msg=outcome verb=nav holder=march tgt="" result=refused ev="me=(5636,4620) area=42 tgt=(15080,6580) way=(0,0)"
+time=2026-09-23T15:09:18.307+03:00 level=INFO msg=outcome verb=escalate holder=advance tgt="" result=done ev="rung 3 (fail-leg) for intent.56: 60s stall at (15080,6580)"
+time=2026-09-23T15:09:18.307+03:00 level=INFO msg=verdict activity=advance verdict=abandoned
+time=2026-09-23T15:09:18.310+03:00 level=INFO msg=grant to=advance class=travel urgency=0.40
+time=2026-09-23T15:09:21.407+03:00 level=INFO msg=outcome verb=nav holder=march tgt="" result=refused ev="me=(5661,4638) area=42 tgt=(15080,6580) way=(0,0)"
+time=2026-09-23T15:09:24.312+03:00 level=INFO msg=grant to=imbibe class=loot urgency=0.45
+time=2026-09-23T15:09:24.316+03:00 level=INFO msg=verdict activity=imbibe verdict=done
+time=2026-09-23T15:09:24.400+03:00 level=INFO msg=grant to=advance class=travel urgency=0.40
+time=2026-09-23T15:09:24.436+03:00 level=INFO msg=outcome verb=nav holder=march tgt="" result=refused ev="me=(5691,4670) area=42 tgt=(15080,6580) way=(0,0)"
+time=2026-09-23T15:09:26.875+03:00 level=INFO msg=status pos=(5696,4678) area=42 hp=121 mp=248 maxmana=35 lvl=26 gold=79075 weapon=melee arrows=-1 holder=advance
+time=2026-09-23T15:09:34.247+03:00 level=INFO msg=outcome verb=stride holder=advance tgt=(5731,4623) result=blocked ev="from=(5731,4658) to=(5731,4658) gain=0"
+time=2026-09-23T15:09:36.005+03:00 level=INFO msg=outcome verb=stride holder=advance tgt=(5756,4633) result=blocked ev="from=(5731,4658) to=(5731,4658) gain=0"
+time=2026-09-23T15:09:37.819+03:00 level=INFO msg=outcome verb=stride holder=advance tgt=(5756,4683) result=blocked ev="from=(5731,4658) to=(5731,4658) gain=0 detour=-90°"
+time=2026-09-23T15:09:37.819+03:00 level=INFO msg=status pos=(5731,4658) area=42 hp=121 mp=248 maxmana=35 lvl=26 gold=79303 weapon=melee arrows=-1 holder=advance
+time=2026-09-23T15:09:45.199+03:00 level=WARN msg=PATHOLOGY kind=orbit detail="holder=advance path=104 net=7 over 18s" cooling=advance for=6s
+time=2026-09-23T15:09:45.200+03:00 level=INFO msg=outcome verb=escalate holder=advance tgt="" result=done ev="rung 3 (fail-leg) for intent.56: watchdog orbit"
+time=2026-09-23T15:09:47.368+03:00 level=INFO msg=outcome verb=stride holder=watchdog tgt=(5708,4635) result=blocked ev="from=(5694,4649) to=(5694,4649) gain=0 detour=+45°"
+time=2026-09-23T15:09:47.458+03:00 level=INFO msg="status: idle" pos=(5694,4649) area=42 hp=121 lvl=26
+time=2026-09-23T15:09:49.319+03:00 level=INFO msg=grant to=advance class=travel urgency=0.40
+time=2026-09-23T15:09:53.056+03:00 level=INFO msg=outcome verb=stride holder=advance tgt=(5743,4668) result=blocked ev="from=(5708,4668) to=(5708,4668) gain=0 detour=-90°"
+time=2026-09-23T15:09:58.617+03:00 level=INFO msg=status pos=(5653,4664) area=42 hp=121 mp=248 maxmana=35 lvl=26 gold=79547 weapon=melee arrows=-1 holder=advance
+time=2026-09-23T15:10:00.552+03:00 level=INFO msg=outcome verb=stride holder=advance tgt=(5600,4645) result=blocked ev="from=(5635,4645) to=(5635,4645) gain=0 detour=+90°"
+time=2026-09-23T15:10:00.596+03:00 level=INFO msg=outcome verb=nav holder=march tgt="" result=refused ev="me=(5635,4645) area=42 tgt=(15080,6580) way=(0,0)"
+time=2026-09-23T15:10:03.987+03:00 level=INFO msg=outcome verb=nav holder=march tgt="" result=refused ev="me=(5684,4652) area=42 tgt=(15080,6580) way=(0,0)"
+time=2026-09-23T15:10:08.798+03:00 level=INFO msg=status pos=(5680,4624) area=42 hp=121 mp=248 maxmana=35 lvl=26 gold=79547 weapon=melee arrows=-1 holder=advance
+time=2026-09-23T15:10:10.733+03:00 level=INFO msg=grant to=fight class=fight urgency=0.82
+time=2026-09-23T15:10:11.997+03:00 level=INFO msg=outcome verb=hoverstrike holder=fight tgt="unit=2641" result=whiff ev="no hover confirmation on target (aim=412,413 dTile=-9,-2 seen=[- - - - - - - - - -])"
+time=2026-09-23T15:10:13.414+03:00 level=INFO msg=outcome verb=hoverstrike holder=fight tgt="unit=2641" result=whiff ev="no hover confirmation on target (aim=689,453 dTile=-5,9 seen=[- - - - - - - - - -])"
+time=2026-09-23T15:10:14.890+03:00 level=INFO msg=outcome verb=hoverstrike holder=fight tgt="unit=2641" result=whiff ev="no hover confirmation on target (aim=689,374 dTile=1,4 seen=[- - - - - - - - - -])"
+time=2026-09-23T15:10:15.140+03:00 level=INFO msg=grant to=imbibe class=loot urgency=0.45
+time=2026-09-23T15:10:22.040+03:00 level=WARN msg="STALL — mute holder" class=loot holder=imbibe silent=4s hp=121 pos=(5674,4580)
+time=2026-09-23T15:10:22.041+03:00 level=INFO msg=status pos=(5674,4580) area=42 hp=121 mp=208 maxmana=35 lvl=26 gold=79547 weapon=melee arrows=-1 holder=imbibe
+time=2026-09-23T15:10:26.089+03:00 level=WARN msg="STALL — mute holder" class=loot holder=imbibe silent=8.1s hp=121 pos=(5674,4581)
+time=2026-09-23T15:10:26.089+03:00 level=WARN msg="STALL — mute grant released" holder=imbibe cool=5s
+time=2026-09-23T15:10:26.254+03:00 level=INFO msg=grant to=advance class=travel urgency=0.40
+time=2026-09-23T15:10:32.044+03:00 level=INFO msg=status pos=(5664,4609) area=42 hp=121 mp=248 maxmana=35 lvl=26 gold=79547 weapon=melee arrows=-1 holder=advance
+time=2026-09-23T15:10:32.049+03:00 level=INFO msg=grant to=imbibe class=loot urgency=0.45
+time=2026-09-23T15:10:32.051+03:00 level=INFO msg=verdict activity=imbibe verdict=done
+time=2026-09-23T15:10:32.088+03:00 level=INFO msg=grant to=advance class=travel urgency=0.40
+time=2026-09-23T15:10:34.031+03:00 level=WARN msg=PATHOLOGY kind=thrash detail="6 handovers/30s among 3 holders" cooling=advance for=8s
+time=2026-09-23T15:10:34.032+03:00 level=INFO msg=outcome verb=escalate holder=advance tgt="" result=done ev="rung 3 (fail-leg) for intent.56: watchdog thrash"
+time=2026-09-23T15:10:37.242+03:00 level=INFO msg="status: idle" pos=(5621,4599) area=42 hp=121 lvl=26
+time=2026-09-23T15:10:40.153+03:00 level=INFO msg=grant to=advance class=travel urgency=0.40
+time=2026-09-23T15:10:40.194+03:00 level=INFO msg=outcome verb=nav holder=march tgt="" result=refused ev="me=(5621,4599) area=42 tgt=(15080,6580) way=(0,0)"
+time=2026-09-23T15:10:40.209+03:00 level=INFO msg=outcome verb=escalate holder=advance tgt="" result=done ev="rung 3 (fail-leg) for intent.56: 60s stall at (15080,6580)"
+time=2026-09-23T15:10:40.210+03:00 level=INFO msg=verdict activity=advance verdict=abandoned
+time=2026-09-23T15:10:40.268+03:00 level=INFO msg=grant to=advance class=travel urgency=0.40
+time=2026-09-23T15:10:43.500+03:00 level=INFO msg=outcome verb=nav holder=march tgt="" result=refused ev="me=(5643,4608) area=42 tgt=(15080,6580) way=(0,0)"
+time=2026-09-23T15:10:46.689+03:00 level=INFO msg=outcome verb=nav holder=march tgt="" result=refused ev="me=(5659,4637) area=42 tgt=(15080,6580) way=(0,0)"
+time=2026-09-23T15:10:47.591+03:00 level=INFO msg=status pos=(5663,4641) area=42 hp=121 mp=248 maxmana=35 lvl=26 gold=80099 weapon=melee arrows=-1 holder=advance
+time=2026-09-23T15:10:49.934+03:00 level=INFO msg=outcome verb=nav holder=march tgt="" result=refused ev="me=(5681,4656) area=42 tgt=(15080,6580) way=(0,0)"
+time=2026-09-23T15:10:58.487+03:00 level=INFO msg=status pos=(5670,4656) area=42 hp=121 mp=248 maxmana=35 lvl=26 gold=80099 weapon=melee arrows=-1 holder=advance
+time=2026-09-23T15:11:02.340+03:00 level=INFO msg=outcome verb=nav holder=march tgt="" result=refused ev="me=(5635,4625) area=42 tgt=(15080,6580) way=(0,0)"
+time=2026-09-23T15:11:05.410+03:00 level=INFO msg=outcome verb=nav holder=march tgt="" result=refused ev="me=(5674,4617) area=42 tgt=(15080,6580) way=(0,0)"
+time=2026-09-23T15:11:05.913+03:00 level=INFO msg=outcome verb=stride holder=advance tgt=(5681,4618) result=blocked ev="from=(5677,4620) to=(5677,4620) gain=0"
+time=2026-09-23T15:11:06.363+03:00 level=INFO msg=outcome verb=stride holder=advance tgt=(5680,4620) result=blocked ev="from=(5677,4620) to=(5677,4620) gain=0"
+time=2026-09-23T15:11:06.784+03:00 level=INFO msg=outcome verb=stride holder=advance tgt=(5680,4620) result=blocked ev="from=(5677,4620) to=(5677,4620) gain=0"
+time=2026-09-23T15:11:07.295+03:00 level=INFO msg=outcome verb=stride holder=advance tgt=(5680,4620) result=blocked ev="from=(5677,4620) to=(5677,4620) gain=0"
+time=2026-09-23T15:11:07.711+03:00 level=INFO msg=outcome verb=stride holder=advance tgt=(5680,4620) result=blocked ev="from=(5677,4620) to=(5677,4620) gain=0"
+time=2026-09-23T15:11:08.129+03:00 level=INFO msg=outcome verb=stride holder=advance tgt=(5680,4620) result=blocked ev="from=(5677,4620) to=(5677,4620) gain=0"
+time=2026-09-23T15:11:08.564+03:00 level=INFO msg=outcome verb=stride holder=advance tgt=(5680,4620) result=blocked ev="from=(5677,4620) to=(5677,4620) gain=0"
+time=2026-09-23T15:11:08.565+03:00 level=INFO msg=status pos=(5677,4620) area=42 hp=121 mp=248 maxmana=35 lvl=26 gold=80099 weapon=melee arrows=-1 holder=advance
+time=2026-09-23T15:11:08.627+03:00 level=INFO msg=outcome verb=nav holder=march tgt="" result=refused ev="me=(5677,4620) area=42 tgt=(15080,6580) way=(0,0)"
+time=2026-09-23T15:11:09.052+03:00 level=INFO msg=outcome verb=stride holder=advance tgt=(5680,4620) result=blocked ev="from=(5677,4620) to=(5677,4620) gain=0"
+time=2026-09-23T15:11:09.525+03:00 level=INFO msg=outcome verb=stride holder=advance tgt=(5680,4620) result=blocked ev="from=(5677,4620) to=(5677,4620) gain=0"
+time=2026-09-23T15:11:09.938+03:00 level=INFO msg=outcome verb=stride holder=advance tgt=(5680,4620) result=blocked ev="from=(5677,4620) to=(5677,4620) gain=0"
+time=2026-09-23T15:11:10.345+03:00 level=INFO msg=outcome verb=stride holder=advance tgt=(5680,4620) result=blocked ev="from=(5677,4620) to=(5677,4620) gain=0"
+time=2026-09-23T15:11:10.805+03:00 level=INFO msg=outcome verb=stride holder=advance tgt=(5680,4620) result=blocked ev="from=(5677,4620) to=(5677,4620) gain=0"
+time=2026-09-23T15:11:11.231+03:00 level=INFO msg=outcome verb=stride holder=advance tgt=(5680,4620) result=blocked ev="from=(5677,4620) to=(5677,4620) gain=0"
+time=2026-09-23T15:11:11.682+03:00 level=INFO msg=outcome verb=stride holder=advance tgt=(5680,4620) result=blocked ev="from=(5677,4620) to=(5677,4620) gain=0"
+time=2026-09-23T15:11:11.750+03:00 level=INFO msg=outcome verb=nav holder=march tgt="" result=refused ev="me=(5677,4620) area=42 tgt=(15080,6580) way=(0,0)"
+time=2026-09-23T15:11:12.203+03:00 level=INFO msg=outcome verb=stride holder=advance tgt=(5680,4620) result=blocked ev="from=(5677,4620) to=(5677,4620) gain=0"
+time=2026-09-23T15:11:12.626+03:00 level=INFO msg=outcome verb=stride holder=advance tgt=(5680,4620) result=blocked ev="from=(5677,4620) to=(5677,4620) gain=0"
+time=2026-09-23T15:11:13.020+03:00 level=INFO msg=outcome verb=stride holder=advance tgt=(5680,4620) result=blocked ev="from=(5677,4620) to=(5677,4620) gain=0"
+time=2026-09-23T15:11:13.052+03:00 level=WARN msg=PATHOLOGY kind=orbit detail="holder=advance path=130 net=9 over 18s" cooling=advance for=6s
+time=2026-09-23T15:11:13.053+03:00 level=INFO msg=outcome verb=escalate holder=advance tgt="" result=done ev="rung 3 (fail-leg) for intent.56: watchdog orbit"
+time=2026-09-23T15:11:15.389+03:00 level=INFO msg="status: idle" pos=(5674,4586) area=42 hp=121 lvl=26
+time=2026-09-23T15:11:17.248+03:00 level=INFO msg=grant to=imbibe class=loot urgency=0.45
+time=2026-09-23T15:11:26.024+03:00 level=INFO msg=status pos=(5660,4574) area=42 hp=121 mp=248 maxmana=35 lvl=26 gold=80099 weapon=melee arrows=-1 holder=imbibe
+time=2026-09-23T15:11:36.072+03:00 level=INFO msg=status pos=(5683,4577) area=42 hp=121 mp=248 maxmana=35 lvl=26 gold=80099 weapon=melee arrows=-1 holder=imbibe
+time=2026-09-23T15:11:36.075+03:00 level=WARN msg=PATHOLOGY kind=orbit detail="holder=imbibe path=232 net=7 over 19s" cooling=imbibe for=6s
+time=2026-09-23T15:11:38.328+03:00 level=INFO msg=grant to=advance class=travel urgency=0.40
+time=2026-09-23T15:11:42.108+03:00 level=INFO msg=outcome verb=nav holder=march tgt="" result=refused ev="me=(5615,4549) area=42 tgt=(15080,6580) way=(0,0)"
+time=2026-09-23T15:11:44.617+03:00 level=INFO msg=outcome verb=stride holder=advance/escape tgt=(5618,4551) result=blocked ev="from=(5611,4549) to=(5611,4549) gain=0"
+time=2026-09-23T15:11:45.316+03:00 level=INFO msg=outcome verb=nav holder=march tgt="" result=refused ev="me=(5614,4549) area=42 tgt=(15080,6580) way=(0,0)"
+time=2026-09-23T15:11:46.228+03:00 level=INFO msg=status pos=(5625,4550) area=42 hp=121 mp=248 maxmana=35 lvl=26 gold=80099 weapon=melee arrows=-1 holder=advance
+time=2026-09-23T15:11:47.634+03:00 level=INFO msg=grant to=imbibe class=loot urgency=0.45
+time=2026-09-23T15:11:47.676+03:00 level=INFO msg=verdict activity=imbibe verdict=done
+time=2026-09-23T15:11:47.715+03:00 level=INFO msg=grant to=advance class=travel urgency=0.40
+time=2026-09-23T15:11:48.437+03:00 level=INFO msg=outcome verb=nav holder=march tgt="" result=refused ev="me=(5659,4561) area=42 tgt=(15080,6580) way=(0,0)"
+time=2026-09-23T15:11:50.178+03:00 level=INFO msg=outcome verb=escalate holder=advance tgt="" result=done ev="rung 3 (fail-leg) for intent.56: 60s stall at (15080,6580)"
+time=2026-09-23T15:11:50.179+03:00 level=INFO msg=verdict activity=advance verdict=abandoned
+time=2026-09-23T15:11:50.182+03:00 level=INFO msg=grant to=advance class=travel urgency=0.40
+time=2026-09-23T15:11:51.673+03:00 level=INFO msg=outcome verb=nav holder=march tgt="" result=refused ev="me=(5684,4577) area=42 tgt=(15080,6580) way=(0,0)"
+time=2026-09-23T15:11:56.237+03:00 level=INFO msg=status pos=(5663,4566) area=42 hp=121 mp=248 maxmana=35 lvl=26 gold=80099 weapon=melee arrows=-1 holder=advance
+time=2026-09-23T15:11:58.128+03:00 level=INFO msg=grant to=fight class=fight urgency=0.84
+time=2026-09-23T15:11:59.435+03:00 level=INFO msg=outcome verb=hoverstrike holder=fight tgt="unit=2636" result=whiff ev="no hover confirmation on target (aim=551,463 dTile=-8,5 seen=[- - - - - - - - - -])"
+time=2026-09-23T15:11:59.746+03:00 level=INFO msg=grant to=advance class=travel urgency=0.40
+time=2026-09-23T15:11:59.786+03:00 level=INFO msg=outcome verb=nav holder=march tgt="" result=refused ev="me=(5607,4549) area=42 tgt=(15080,6580) way=(0,0)"
+time=2026-09-23T15:12:00.706+03:00 level=INFO msg=grant to=fight class=fight urgency=0.80
+time=2026-09-23T15:12:01.995+03:00 level=INFO msg=outcome verb=hoverstrike holder=fight tgt="unit=2636" result=whiff ev="no hover confirmation on target (aim=1065,502 dTile=11,5 seen=[- - - - - - - - - -])"
+time=2026-09-23T15:12:01.996+03:00 level=INFO msg=outcome verb=fight holder=fight tgt="" result=refused ev="hover oracle dark 20 straight — BLIND BRAWLER 60s, positional volleys only"
+time=2026-09-23T15:12:02.249+03:00 level=INFO msg=grant to=advance class=travel urgency=0.40
+time=2026-09-23T15:12:03.216+03:00 level=WARN msg=PATHOLOGY kind=thrash detail="7 handovers/30s among 3 holders" cooling=advance for=8s
+time=2026-09-23T15:12:03.217+03:00 level=INFO msg=outcome verb=escalate holder=advance tgt="" result=done ev="rung 3 (fail-leg) for intent.56: watchdog thrash"
+time=2026-09-23T15:12:03.221+03:00 level=INFO msg="status: idle" pos=(5580,4550) area=42 hp=121 lvl=26
+time=2026-09-23T15:12:08.389+03:00 level=WARN msg=PATHOLOGY kind=thrash detail="6 handovers/30s among 3 holders" cooling=advance for=8s
+time=2026-09-23T15:12:08.390+03:00 level=INFO msg=outcome verb=escalate holder=advance tgt="" result=done ev="rung 3 (fail-leg) for intent.56: watchdog thrash"
+time=2026-09-23T15:12:08.421+03:00 level=INFO msg="status: idle" pos=(5576,4548) area=42 hp=121 lvl=26
+time=2026-09-23T15:12:08.626+03:00 level=INFO msg=grant to=stand class=survive urgency=1.50
+time=2026-09-23T15:12:13.095+03:00 level=INFO msg=grant to=fight class=fight urgency=0.80
+time=2026-09-23T15:12:16.140+03:00 level=INFO msg=grant to=advance class=travel urgency=0.40
+time=2026-09-23T15:12:16.190+03:00 level=INFO msg=outcome verb=nav holder=march tgt="" result=refused ev="me=(5568,4545) area=42 tgt=(15080,6580) way=(0,0)"
+time=2026-09-23T15:12:17.390+03:00 level=INFO msg=grant to=fight class=fight urgency=0.82
+time=2026-09-23T15:12:18.472+03:00 level=INFO msg=status pos=(5575,4549) area=42 hp=121 mp=225 maxmana=35 lvl=26 gold=80099 weapon=melee arrows=-1 holder=fight
+time=2026-09-23T15:12:18.533+03:00 level=WARN msg=PATHOLOGY kind=thrash detail="8 handovers/30s among 3 holders" cooling=fight for=8s
+time=2026-09-23T15:12:18.538+03:00 level=INFO msg=grant to=advance class=travel urgency=0.40
+time=2026-09-23T15:12:19.396+03:00 level=INFO msg=outcome verb=nav holder=march tgt="" result=refused ev="me=(5583,4553) area=42 tgt=(15080,6580) way=(0,0)"
+time=2026-09-23T15:12:22.902+03:00 level=INFO msg=outcome verb=nav holder=march tgt="" result=refused ev="me=(5607,4580) area=42 tgt=(15080,6580) way=(0,0)"
+time=2026-09-23T15:12:23.567+03:00 level=WARN msg=PATHOLOGY kind=thrash detail="9 handovers/30s among 3 holders" cooling=advance for=8s
+time=2026-09-23T15:12:23.568+03:00 level=INFO msg=outcome verb=escalate holder=advance tgt="" result=done ev="rung 3 (fail-leg) for intent.56: watchdog thrash"
+time=2026-09-23T15:12:23.604+03:00 level=INFO msg="status: idle" pos=(5613,4586) area=42 hp=121 lvl=26
+time=2026-09-23T15:12:28.744+03:00 level=WARN msg=PATHOLOGY kind=thrash detail="8 handovers/30s among 3 holders" cooling=advance for=8s
+time=2026-09-23T15:12:28.745+03:00 level=INFO msg=outcome verb=escalate holder=advance tgt="" result=done ev="rung 3 (fail-leg) for intent.56: watchdog thrash"
+time=2026-09-23T15:12:28.763+03:00 level=INFO msg="status: idle" pos=(5616,4588) area=42 hp=121 lvl=26
+time=2026-09-23T15:12:33.787+03:00 level=INFO msg="status: idle" pos=(5616,4588) area=42 hp=121 lvl=26
+time=2026-09-23T15:12:34.868+03:00 level=INFO msg=grant to=advance class=travel urgency=0.40
+time=2026-09-23T15:12:34.915+03:00 level=INFO msg=outcome verb=nav holder=march tgt="" result=refused ev="me=(5616,4588) area=42 tgt=(15080,6580) way=(0,0)"
+time=2026-09-23T15:12:38.283+03:00 level=INFO msg=outcome verb=nav holder=march tgt="" result=refused ev="me=(5618,4574) area=42 tgt=(15080,6580) way=(0,0)"
+time=2026-09-23T15:12:38.896+03:00 level=INFO msg=grant to=fight class=fight urgency=0.82
+time=2026-09-23T15:12:43.127+03:00 level=INFO msg=grant to=advance class=travel urgency=0.40
+time=2026-09-23T15:12:43.165+03:00 level=INFO msg=outcome verb=nav holder=march tgt="" result=refused ev="me=(5614,4560) area=42 tgt=(15080,6580) way=(0,0)"
+time=2026-09-23T15:12:43.966+03:00 level=INFO msg=status pos=(5614,4560) area=42 hp=121 mp=142 maxmana=35 lvl=26 gold=80403 weapon=melee arrows=-1 holder=advance
+time=2026-09-23T15:12:46.712+03:00 level=INFO msg=outcome verb=nav holder=march tgt="" result=refused ev="me=(5585,4553) area=42 tgt=(15080,6580) way=(0,0)"
+time=2026-09-23T15:12:51.804+03:00 level=INFO msg=grant to=fight class=fight urgency=0.88
+time=2026-09-23T15:12:53.986+03:00 level=INFO msg=status pos=(5601,4562) area=42 hp=121 mp=208 maxmana=35 lvl=26 gold=80403 weapon=melee arrows=-1 holder=fight
+time=2026-09-23T15:12:55.433+03:00 level=INFO msg=grant to=advance class=travel urgency=0.40
+time=2026-09-23T15:12:55.479+03:00 level=INFO msg=outcome verb=nav holder=march tgt="" result=refused ev="me=(5604,4552) area=42 tgt=(15080,6580) way=(0,0)"
+time=2026-09-23T15:12:55.495+03:00 level=INFO msg=outcome verb=escalate holder=advance tgt="" result=done ev="rung 3 (fail-leg) for intent.56: 60s stall at (15080,6580)"
+time=2026-09-23T15:12:55.496+03:00 level=INFO msg=verdict activity=advance verdict=abandoned
+time=2026-09-23T15:12:55.500+03:00 level=INFO msg=grant to=advance class=travel urgency=0.40
+time=2026-09-23T15:12:58.777+03:00 level=INFO msg=grant to=imbibe class=loot urgency=0.45
+time=2026-09-23T15:13:04.351+03:00 level=INFO msg=status pos=(5661,4570) area=42 hp=121 mp=214 maxmana=35 lvl=26 gold=80403 weapon=melee arrows=-1 holder=imbibe
+time=2026-09-23T15:13:14.422+03:00 level=INFO msg=status pos=(5680,4570) area=42 hp=121 mp=248 maxmana=35 lvl=26 gold=80403 weapon=melee arrows=-1 holder=imbibe
+time=2026-09-23T15:13:24.429+03:00 level=INFO msg=status pos=(5663,4571) area=42 hp=121 mp=248 maxmana=35 lvl=26 gold=80403 weapon=melee arrows=-1 holder=imbibe
+time=2026-09-23T15:13:28.591+03:00 level=WARN msg=PATHOLOGY kind=orbit detail="holder=imbibe path=253 net=4 over 19s" cooling=imbibe for=6s
+time=2026-09-23T15:13:30.847+03:00 level=INFO msg=grant to=advance class=travel urgency=0.40
+time=2026-09-23T15:13:34.515+03:00 level=INFO msg=status pos=(5658,4582) area=42 hp=121 mp=248 maxmana=35 lvl=26 gold=80403 weapon=melee arrows=-1 holder=advance
+time=2026-09-23T15:13:34.569+03:00 level=INFO msg=grant to=fight class=fight urgency=0.80
+time=2026-09-23T15:13:36.116+03:00 level=INFO msg=outcome verb=hoverstrike holder=fight tgt="unit=2636" result=whiff ev="no hover confirmation on target (aim=610,355 dTile=-10,-2 seen=[- - - 12710/t4 - 12710/t4 12710/t4 - 12710/t4 12710/t4])"
+time=2026-09-23T15:13:37.777+03:00 level=INFO msg=outcome verb=hoverstrike holder=fight tgt="unit=2636" result=whiff ev="no hover confirmation on target (aim=650,512 dTile=-2,5 seen=[- - - - - - - - - -])"
+time=2026-09-23T15:13:38.092+03:00 level=INFO msg=grant to=advance class=travel urgency=0.40
+time=2026-09-23T15:13:38.135+03:00 level=INFO msg=outcome verb=nav holder=march tgt="" result=refused ev="me=(5628,4552) area=42 tgt=(15080,6580) way=(0,0)"
+time=2026-09-23T15:13:38.568+03:00 level=INFO msg=grant to=fight class=fight urgency=0.86
+time=2026-09-23T15:13:39.860+03:00 level=INFO msg=outcome verb=hoverstrike holder=fight tgt="unit=2636" result=whiff ev="no hover confirmation on target (aim=610,433 dTile=-1,7 seen=[- - - - - - - - - -])"
+time=2026-09-23T15:13:40.117+03:00 level=INFO msg=grant to=advance class=travel urgency=0.40
+time=2026-09-23T15:13:41.361+03:00 level=INFO msg=outcome verb=nav holder=march tgt="" result=refused ev="me=(5641,4553) area=42 tgt=(15080,6580) way=(0,0)"
+time=2026-09-23T15:13:41.829+03:00 level=INFO msg=grant to=imbibe class=loot urgency=0.45
+time=2026-09-23T15:13:41.870+03:00 level=INFO msg=verdict activity=imbibe verdict=done
+time=2026-09-23T15:13:41.909+03:00 level=INFO msg=grant to=advance class=travel urgency=0.40
+time=2026-09-23T15:13:44.439+03:00 level=INFO msg=outcome verb=nav holder=march tgt="" result=refused ev="me=(5657,4568) area=42 tgt=(15080,6580) way=(0,0)"
+time=2026-09-23T15:13:44.971+03:00 level=INFO msg=status pos=(5657,4568) area=42 hp=121 mp=211 maxmana=35 lvl=26 gold=80403 weapon=melee arrows=-1 holder=advance
+time=2026-09-23T15:13:45.426+03:00 level=WARN msg=PATHOLOGY kind=thrash detail="7 handovers/30s among 3 holders" cooling=advance for=8s
+time=2026-09-23T15:13:45.427+03:00 level=INFO msg=outcome verb=escalate holder=advance tgt="" result=done ev="rung 3 (fail-leg) for intent.56: watchdog thrash"
+time=2026-09-23T15:13:50.167+03:00 level=INFO msg="status: idle" pos=(5671,4573) area=42 hp=121 lvl=26
+time=2026-09-23T15:13:50.629+03:00 level=WARN msg=PATHOLOGY kind=thrash detail="7 handovers/30s among 3 holders" cooling=advance for=8s
+time=2026-09-23T15:13:50.630+03:00 level=INFO msg=outcome verb=escalate holder=advance tgt="" result=done ev="rung 3 (fail-leg) for intent.56: watchdog thrash"
+time=2026-09-23T15:13:55.304+03:00 level=INFO msg="status: idle" pos=(5671,4573) area=42 hp=121 lvl=26
+time=2026-09-23T15:13:55.744+03:00 level=WARN msg=PATHOLOGY kind=thrash detail="7 handovers/30s among 3 holders" cooling=advance for=8s
+time=2026-09-23T15:13:55.744+03:00 level=INFO msg=outcome verb=escalate holder=advance tgt="" result=done ev="rung 3 (fail-leg) for intent.56: watchdog thrash"
+time=2026-09-23T15:13:57.493+03:00 level=WARN msg="idle breaker: services cooled 90s — the march reclaims the wheel"
+time=2026-09-23T15:14:00.489+03:00 level=INFO msg="status: idle" pos=(5671,4573) area=42 hp=121 lvl=26
+time=2026-09-23T15:14:00.896+03:00 level=WARN msg=PATHOLOGY kind=thrash detail="6 handovers/30s among 3 holders" cooling=advance for=8s
+time=2026-09-23T15:14:00.898+03:00 level=INFO msg=outcome verb=escalate holder=advance tgt="" result=done ev="rung 3 (fail-leg) for intent.56: watchdog thrash"
+time=2026-09-23T15:14:05.671+03:00 level=INFO msg="status: idle" pos=(5671,4573) area=42 hp=121 lvl=26
+time=2026-09-23T15:14:06.966+03:00 level=INFO msg=grant to=advance class=travel urgency=0.40
+time=2026-09-23T15:14:07.003+03:00 level=INFO msg=outcome verb=nav holder=march tgt="" result=refused ev="me=(5671,4573) area=42 tgt=(15080,6580) way=(0,0)"
+time=2026-09-23T15:14:10.360+03:00 level=INFO msg=outcome verb=nav holder=march tgt="" result=refused ev="me=(5677,4586) area=42 tgt=(15080,6580) way=(0,0)"
+time=2026-09-23T15:14:17.164+03:00 level=INFO msg=status pos=(5645,4565) area=42 hp=121 mp=248 maxmana=35 lvl=26 gold=80403 weapon=melee arrows=-1 holder=advance
+time=2026-09-23T15:14:19.096+03:00 level=INFO msg=outcome verb=nav holder=march tgt="" result=refused ev="me=(5598,4549) area=42 tgt=(15080,6580) way=(0,0)"
+time=2026-09-23T15:14:22.651+03:00 level=INFO msg=outcome verb=nav holder=march tgt="" result=refused ev="me=(5560,4549) area=42 tgt=(15080,6580) way=(0,0)"
+time=2026-09-23T15:14:25.923+03:00 level=INFO msg=outcome verb=nav holder=march tgt="" result=refused ev="me=(5576,4549) area=42 tgt=(15080,6580) way=(0,0)"
+time=2026-09-23T15:14:27.403+03:00 level=INFO msg=status pos=(5589,4557) area=42 hp=121 mp=248 maxmana=35 lvl=26 gold=80403 weapon=melee arrows=-1 holder=advance
+time=2026-09-23T15:14:29.221+03:00 level=INFO msg=outcome verb=nav holder=march tgt="" result=refused ev="me=(5599,4567) area=42 tgt=(15080,6580) way=(0,0)"
+time=2026-09-23T15:14:32.670+03:00 level=INFO msg=outcome verb=nav holder=march tgt="" result=refused ev="me=(5608,4582) area=42 tgt=(15080,6580) way=(0,0)"
+time=2026-09-23T15:14:36.016+03:00 level=INFO msg=outcome verb=nav holder=march tgt="" result=refused ev="me=(5644,4610) area=42 tgt=(15080,6580) way=(0,0)"
+time=2026-09-23T15:14:36.493+03:00 level=INFO msg=grant to=imbibe class=loot urgency=0.45
+time=2026-09-23T15:14:36.496+03:00 level=INFO msg=verdict activity=imbibe verdict=done
+time=2026-09-23T15:14:36.534+03:00 level=INFO msg=grant to=advance class=travel urgency=0.40
+time=2026-09-23T15:14:37.500+03:00 level=INFO msg=status pos=(5652,4625) area=42 hp=121 mp=248 maxmana=35 lvl=26 gold=80403 weapon=melee arrows=-1 holder=advance
+time=2026-09-23T15:14:39.350+03:00 level=INFO msg=outcome verb=nav holder=march tgt="" result=refused ev="me=(5673,4649) area=42 tgt=(15080,6580) way=(0,0)"
+time=2026-09-23T15:14:49.006+03:00 level=INFO msg=status pos=(5633,4610) area=42 hp=121 mp=248 maxmana=35 lvl=26 gold=80403 weapon=melee arrows=-1 holder=advance
+time=2026-09-23T15:14:49.194+03:00 level=INFO msg=outcome verb=nav holder=march tgt="" result=refused ev="me=(5609,4591) area=42 tgt=(15080,6580) way=(0,0)"
+time=2026-09-23T15:14:52.776+03:00 level=INFO msg=outcome verb=stride holder=advance tgt=(0,0) result=blocked ev="from=(5596,4549) to=(5596,4549) gain=0 detour=+112°"
+time=2026-09-23T15:14:52.800+03:00 level=INFO msg=outcome verb=nav holder=march tgt="" result=refused ev="me=(5596,4549) area=42 tgt=(15080,6580) way=(0,0)"
+time=2026-09-23T15:14:55.994+03:00 level=INFO msg=outcome verb=nav holder=march tgt="" result=refused ev="me=(5632,4562) area=42 tgt=(15080,6580) way=(0,0)"
+time=2026-09-23T15:14:56.964+03:00 level=INFO msg=outcome verb=stride holder=advance tgt=(5636,4557) result=blocked ev="from=(5630,4558) to=(5630,4558) gain=0"
+time=2026-09-23T15:14:57.501+03:00 level=INFO msg=outcome verb=stride holder=advance tgt=(5633,4557) result=blocked ev="from=(5630,4558) to=(5630,4558) gain=0"
+time=2026-09-23T15:14:58.067+03:00 level=INFO msg=outcome verb=stride holder=advance tgt=(5633,4557) result=blocked ev="from=(5630,4558) to=(5630,4558) gain=0"
+time=2026-09-23T15:14:58.618+03:00 level=INFO msg=outcome verb=stride holder=advance tgt=(5633,4557) result=blocked ev="from=(5630,4558) to=(5630,4558) gain=0"
+time=2026-09-23T15:14:59.196+03:00 level=INFO msg=outcome verb=stride holder=advance tgt=(5633,4557) result=blocked ev="from=(5630,4558) to=(5630,4558) gain=0"
+time=2026-09-23T15:14:59.197+03:00 level=INFO msg=status pos=(5630,4558) area=42 hp=121 mp=248 maxmana=35 lvl=26 gold=80403 weapon=melee arrows=-1 holder=advance
+time=2026-09-23T15:14:59.213+03:00 level=INFO msg=outcome verb=nav holder=march tgt="" result=refused ev="me=(5630,4558) area=42 tgt=(15080,6580) way=(0,0)"
+time=2026-09-23T15:14:59.755+03:00 level=INFO msg=outcome verb=stride holder=advance tgt=(5633,4557) result=blocked ev="from=(5630,4558) to=(5630,4558) gain=0"
+time=2026-09-23T15:15:00.321+03:00 level=INFO msg=outcome verb=stride holder=advance tgt=(5633,4557) result=blocked ev="from=(5630,4558) to=(5630,4558) gain=0"
+time=2026-09-23T15:15:00.878+03:00 level=INFO msg=outcome verb=stride holder=advance tgt=(5633,4557) result=blocked ev="from=(5630,4558) to=(5630,4558) gain=0"
+time=2026-09-23T15:15:01.414+03:00 level=INFO msg=outcome verb=stride holder=advance tgt=(5633,4557) result=blocked ev="from=(5630,4558) to=(5630,4558) gain=0"
+time=2026-09-23T15:15:01.984+03:00 level=INFO msg=outcome verb=stride holder=advance tgt=(5633,4557) result=blocked ev="from=(5630,4558) to=(5630,4558) gain=0"
+time=2026-09-23T15:15:02.586+03:00 level=INFO msg=outcome verb=stride holder=advance tgt=(5633,4557) result=blocked ev="from=(5630,4558) to=(5630,4558) gain=0"
+time=2026-09-23T15:15:02.612+03:00 level=INFO msg=outcome verb=nav holder=march tgt="" result=refused ev="me=(5630,4558) area=42 tgt=(15080,6580) way=(0,0)"
+time=2026-09-23T15:15:03.131+03:00 level=INFO msg=outcome verb=stride holder=advance tgt=(5633,4557) result=blocked ev="from=(5630,4558) to=(5630,4558) gain=0"
+time=2026-09-23T15:15:03.686+03:00 level=INFO msg=outcome verb=stride holder=advance tgt=(5633,4557) result=blocked ev="from=(5630,4558) to=(5630,4558) gain=0"
+time=2026-09-23T15:15:04.227+03:00 level=INFO msg=outcome verb=stride holder=advance tgt=(5633,4557) result=blocked ev="from=(5630,4558) to=(5630,4558) gain=0"
+time=2026-09-23T15:15:04.838+03:00 level=INFO msg=outcome verb=stride holder=advance tgt=(5633,4557) result=blocked ev="from=(5630,4558) to=(5630,4558) gain=0"
+time=2026-09-23T15:15:05.398+03:00 level=INFO msg=outcome verb=stride holder=advance tgt=(5633,4557) result=blocked ev="from=(5630,4558) to=(5630,4558) gain=0"
+time=2026-09-23T15:15:05.992+03:00 level=INFO msg=outcome verb=stride holder=advance tgt=(5633,4557) result=blocked ev="from=(5630,4558) to=(5630,4558) gain=0"
+time=2026-09-23T15:15:06.012+03:00 level=INFO msg=outcome verb=nav holder=march tgt="" result=refused ev="me=(5630,4558) area=42 tgt=(15080,6580) way=(0,0)"
+time=2026-09-23T15:15:06.553+03:00 level=INFO msg=outcome verb=stride holder=advance tgt=(5633,4557) result=blocked ev="from=(5630,4558) to=(5630,4558) gain=0"
+time=2026-09-23T15:15:07.133+03:00 level=INFO msg=outcome verb=stride holder=advance tgt=(5633,4557) result=blocked ev="from=(5630,4558) to=(5630,4558) gain=0"
+time=2026-09-23T15:15:09.628+03:00 level=INFO msg=outcome verb=stride holder=advance/escape tgt=(5636,4558) result=blocked ev="from=(5630,4558) to=(5630,4558) gain=0"
+time=2026-09-23T15:15:09.629+03:00 level=INFO msg=status pos=(5630,4558) area=42 hp=121 mp=248 maxmana=35 lvl=26 gold=80403 weapon=melee arrows=-1 holder=advance
+time=2026-09-23T15:15:09.767+03:00 level=INFO msg=outcome verb=nav holder=march tgt="" result=refused ev="me=(5630,4558) area=42 tgt=(15080,6580) way=(0,0)"
+time=2026-09-23T15:15:10.289+03:00 level=INFO msg=outcome verb=stride holder=advance tgt=(5633,4557) result=blocked ev="from=(5630,4558) to=(5630,4558) gain=0"
+time=2026-09-23T15:15:10.858+03:00 level=INFO msg=outcome verb=stride holder=advance tgt=(5633,4557) result=blocked ev="from=(5630,4558) to=(5630,4558) gain=0"
+time=2026-09-23T15:15:11.422+03:00 level=INFO msg=outcome verb=stride holder=advance tgt=(5633,4557) result=blocked ev="from=(5630,4558) to=(5630,4558) gain=0"
+time=2026-09-23T15:15:11.438+03:00 level=INFO msg=outcome verb=escalate holder=advance tgt="" result=done ev="rung 3 (fail-leg) for intent.56: 60s stall at (15080,6580)"
+time=2026-09-23T15:15:11.438+03:00 level=INFO msg=verdict activity=advance verdict=abandoned
+time=2026-09-23T15:15:11.468+03:00 level=INFO msg=grant to=advance class=travel urgency=0.40
+time=2026-09-23T15:15:12.034+03:00 level=INFO msg=outcome verb=stride holder=advance tgt=(5633,4557) result=blocked ev="from=(5630,4558) to=(5630,4558) gain=0"
+time=2026-09-23T15:15:12.583+03:00 level=INFO msg=outcome verb=stride holder=advance tgt=(5633,4557) result=blocked ev="from=(5630,4558) to=(5630,4558) gain=0"
+time=2026-09-23T15:15:13.153+03:00 level=INFO msg=outcome verb=stride holder=advance tgt=(5633,4557) result=blocked ev="from=(5630,4558) to=(5630,4558) gain=0"
+time=2026-09-23T15:15:13.225+03:00 level=INFO msg=outcome verb=nav holder=march tgt="" result=refused ev="me=(5630,4558) area=42 tgt=(15080,6580) way=(0,0)"
+time=2026-09-23T15:15:13.756+03:00 level=INFO msg=outcome verb=stride holder=advance tgt=(5633,4557) result=blocked ev="from=(5630,4558) to=(5630,4558) gain=0"
+time=2026-09-23T15:15:14.334+03:00 level=INFO msg=outcome verb=stride holder=advance tgt=(5633,4557) result=blocked ev="from=(5630,4558) to=(5630,4558) gain=0"
+time=2026-09-23T15:15:14.887+03:00 level=INFO msg=outcome verb=stride holder=advance tgt=(5633,4557) result=blocked ev="from=(5630,4558) to=(5630,4558) gain=0"
+time=2026-09-23T15:15:15.418+03:00 level=INFO msg=outcome verb=stride holder=advance tgt=(5633,4557) result=blocked ev="from=(5630,4558) to=(5630,4558) gain=0"
+time=2026-09-23T15:15:15.959+03:00 level=INFO msg=outcome verb=stride holder=advance tgt=(5633,4557) result=blocked ev="from=(5630,4558) to=(5630,4558) gain=0"
+time=2026-09-23T15:15:16.489+03:00 level=INFO msg=outcome verb=stride holder=advance tgt=(5633,4557) result=blocked ev="from=(5630,4558) to=(5630,4558) gain=0"
+time=2026-09-23T15:15:16.579+03:00 level=WARN msg=PATHOLOGY kind=stuck detail="holder=advance pinned in 0x0 box for 19s" cooling=advance for=6s
+time=2026-09-23T15:15:16.580+03:00 level=INFO msg=outcome verb=escalate holder=advance tgt="" result=done ev="rung 3 (fail-leg) for intent.56: watchdog stuck"
+time=2026-09-23T15:15:18.761+03:00 level=INFO msg=outcome verb=stride holder=watchdog tgt=(5644,4572) result=blocked ev="from=(5630,4558) to=(5630,4558) gain=0 detour=-22°"
+time=2026-09-23T15:15:18.766+03:00 level=INFO msg="status: idle" pos=(5630,4558) area=42 hp=121 lvl=26
+time=2026-09-23T15:15:20.726+03:00 level=INFO msg=grant to=advance class=travel urgency=0.40
+time=2026-09-23T15:15:20.769+03:00 level=INFO msg=outcome verb=nav holder=march tgt="" result=refused ev="me=(5630,4558) area=42 tgt=(15080,6580) way=(0,0)"
+time=2026-09-23T15:15:21.344+03:00 level=INFO msg=outcome verb=stride holder=advance tgt=(5633,4557) result=blocked ev="from=(5630,4558) to=(5630,4558) gain=0"
+time=2026-09-23T15:15:21.858+03:00 level=INFO msg=outcome verb=stride holder=advance tgt=(5633,4557) result=blocked ev="from=(5630,4558) to=(5630,4558) gain=0"
+time=2026-09-23T15:15:21.861+03:00 level=WARN msg=PATHOLOGY kind=stuck detail="holder=advance pinned in 0x0 box for 19s" cooling=advance for=6s
+time=2026-09-23T15:15:21.861+03:00 level=INFO msg=outcome verb=escalate holder=advance tgt="" result=done ev="rung 3 (fail-leg) for intent.56: watchdog stuck"
+time=2026-09-23T15:15:24.161+03:00 level=INFO msg="status: idle" pos=(5600,4548) area=42 hp=121 lvl=26
+time=2026-09-23T15:15:25.870+03:00 level=INFO msg=grant to=advance class=travel urgency=0.40
+time=2026-09-23T15:15:25.918+03:00 level=INFO msg=outcome verb=nav holder=march tgt="" result=refused ev="me=(5596,4549) area=42 tgt=(15080,6580) way=(0,0)"
+time=2026-09-23T15:15:28.546+03:00 level=WARN msg=PATHOLOGY kind=orbit detail="holder=advance path=64 net=6 over 18s" cooling=advance for=6s
+time=2026-09-23T15:15:28.546+03:00 level=INFO msg=outcome verb=escalate holder=advance tgt="" result=done ev="rung 3 (fail-leg) for intent.56: watchdog orbit"
+time=2026-09-23T15:15:30.759+03:00 level=INFO msg="status: idle" pos=(5629,4567) area=42 hp=121 lvl=26
+time=2026-09-23T15:15:32.670+03:00 level=INFO msg=grant to=advance class=travel urgency=0.40
+time=2026-09-23T15:15:32.707+03:00 level=INFO msg=outcome verb=nav holder=march tgt="" result=refused ev="me=(5629,4567) area=42 tgt=(15080,6580) way=(0,0)"
+time=2026-09-23T15:15:33.688+03:00 level=WARN msg=PATHOLOGY kind=orbit detail="holder=advance path=75 net=5 over 19s" cooling=advance for=6s
+time=2026-09-23T15:15:33.688+03:00 level=INFO msg=outcome verb=escalate holder=advance tgt="" result=done ev="rung 3 (fail-leg) for intent.56: watchdog orbit"
+time=2026-09-23T15:15:33.689+03:00 level=WARN msg="watchdog: POCKET BREAKER — footwork refuted; the portal is the door"
+time=2026-09-23T15:15:45.541+03:00 level=INFO msg=outcome verb=enterportal holder=watchdog tgt="portal=1243" result=whiff ev="no hover confirmation on portal"
+time=2026-09-23T15:15:45.634+03:00 level=INFO msg=grant to=advance class=travel urgency=0.40
+time=2026-09-23T15:15:45.690+03:00 level=INFO msg=outcome verb=nav holder=march tgt="" result=refused ev="me=(5624,4556) area=42 tgt=(15080,6580) way=(0,0)"
+time=2026-09-23T15:15:47.928+03:00 level=INFO msg=outcome verb=stride holder=advance/escape tgt=(5630,4556) result=blocked ev="from=(5624,4556) to=(5624,4556) gain=0"
+time=2026-09-23T15:15:47.929+03:00 level=INFO msg=status pos=(5624,4556) area=42 hp=121 mp=248 maxmana=35 lvl=26 gold=80403 weapon=melee arrows=-1 holder=advance
+time=2026-09-23T15:15:48.653+03:00 level=INFO msg=outcome verb=stride holder=advance tgt=(5634,4557) result=blocked ev="from=(5624,4556) to=(5624,4556) gain=0"
+time=2026-09-23T15:15:48.727+03:00 level=INFO msg=outcome verb=nav holder=march tgt="" result=refused ev="me=(5624,4556) area=42 tgt=(15080,6580) way=(0,0)"
+time=2026-09-23T15:15:49.373+03:00 level=INFO msg=outcome verb=stride holder=advance tgt=(5634,4557) result=blocked ev="from=(5624,4556) to=(5624,4556) gain=0"
+time=2026-09-23T15:15:50.026+03:00 level=INFO msg=outcome verb=stride holder=advance tgt=(5634,4557) result=blocked ev="from=(5624,4556) to=(5624,4556) gain=0"
+time=2026-09-23T15:15:50.742+03:00 level=INFO msg=outcome verb=stride holder=advance tgt=(5634,4557) result=blocked ev="from=(5624,4556) to=(5624,4556) gain=0"
+time=2026-09-23T15:15:51.409+03:00 level=INFO msg=outcome verb=stride holder=advance tgt=(5634,4557) result=blocked ev="from=(5624,4556) to=(5624,4556) gain=0"
+time=2026-09-23T15:15:52.101+03:00 level=INFO msg=outcome verb=stride holder=advance tgt=(5634,4557) result=blocked ev="from=(5624,4556) to=(5624,4556) gain=0"
+time=2026-09-23T15:15:52.250+03:00 level=INFO msg=outcome verb=nav holder=march tgt="" result=refused ev="me=(5624,4556) area=42 tgt=(15080,6580) way=(0,0)"
+time=2026-09-23T15:15:52.893+03:00 level=INFO msg=outcome verb=stride holder=advance tgt=(5634,4557) result=blocked ev="from=(5624,4556) to=(5624,4556) gain=0"
+time=2026-09-23T15:15:53.592+03:00 level=INFO msg=outcome verb=stride holder=advance tgt=(5634,4557) result=blocked ev="from=(5624,4556) to=(5624,4556) gain=0"
+time=2026-09-23T15:15:54.248+03:00 level=INFO msg=outcome verb=stride holder=advance tgt=(5634,4557) result=blocked ev="from=(5624,4556) to=(5624,4556) gain=0"
+time=2026-09-23T15:15:55.054+03:00 level=INFO msg=outcome verb=stride holder=advance tgt=(5634,4557) result=blocked ev="from=(5624,4556) to=(5624,4556) gain=0"
+time=2026-09-23T15:15:55.668+03:00 level=INFO msg=outcome verb=stride holder=advance tgt=(5634,4557) result=blocked ev="from=(5624,4556) to=(5624,4556) gain=0"
+time=2026-09-23T15:15:55.745+03:00 level=INFO msg=outcome verb=nav holder=march tgt="" result=refused ev="me=(5624,4556) area=42 tgt=(15080,6580) way=(0,0)"
+time=2026-09-23T15:15:56.419+03:00 level=INFO msg=outcome verb=stride holder=advance tgt=(5634,4557) result=blocked ev="from=(5624,4556) to=(5624,4556) gain=0"
+time=2026-09-23T15:15:57.089+03:00 level=INFO msg=outcome verb=stride holder=advance tgt=(5634,4557) result=blocked ev="from=(5624,4556) to=(5624,4556) gain=0"
+time=2026-09-23T15:15:57.725+03:00 level=INFO msg=outcome verb=stride holder=advance tgt=(5634,4557) result=blocked ev="from=(5624,4556) to=(5624,4556) gain=0"
+time=2026-09-23T15:15:58.390+03:00 level=INFO msg=outcome verb=stride holder=advance tgt=(5634,4557) result=blocked ev="from=(5624,4556) to=(5624,4556) gain=0"
+time=2026-09-23T15:15:58.392+03:00 level=INFO msg=status pos=(5624,4556) area=42 hp=121 mp=248 maxmana=35 lvl=26 gold=80403 weapon=melee arrows=-1 holder=advance
+time=2026-09-23T15:15:59.060+03:00 level=INFO msg=outcome verb=stride holder=advance tgt=(5634,4557) result=blocked ev="from=(5624,4556) to=(5624,4556) gain=0"
+time=2026-09-23T15:15:59.163+03:00 level=INFO msg=outcome verb=nav holder=march tgt="" result=refused ev="me=(5624,4556) area=42 tgt=(15080,6580) way=(0,0)"
+time=2026-09-23T15:15:59.783+03:00 level=INFO msg=outcome verb=stride holder=advance tgt=(5634,4557) result=blocked ev="from=(5624,4556) to=(5624,4556) gain=0"
+time=2026-09-23T15:16:02.260+03:00 level=INFO msg=outcome verb=stride holder=advance/escape tgt=(5638,4556) result=blocked ev="from=(5624,4556) to=(5624,4556) gain=0"
+time=2026-09-23T15:16:02.319+03:00 level=WARN msg=PATHOLOGY kind=stuck detail="holder=advance pinned in 0x0 box for 16s" cooling=advance for=6s
+time=2026-09-23T15:16:02.320+03:00 level=INFO msg=outcome verb=escalate holder=advance tgt="" result=done ev="rung 3 (fail-leg) for intent.56: watchdog stuck"
+time=2026-09-23T15:16:04.636+03:00 level=INFO msg="status: idle" pos=(5622,4549) area=42 hp=121 lvl=26
+time=2026-09-23T15:16:06.399+03:00 level=INFO msg=grant to=advance class=travel urgency=0.40
+time=2026-09-23T15:16:06.443+03:00 level=INFO msg=outcome verb=nav holder=march tgt="" result=refused ev="me=(5622,4549) area=42 tgt=(15080,6580) way=(0,0)"
+time=2026-09-23T15:16:08.597+03:00 level=INFO msg=grant to=imbibe class=loot urgency=0.45
+time=2026-09-23T15:16:15.813+03:00 level=INFO msg=status pos=(5680,4575) area=42 hp=121 mp=248 maxmana=35 lvl=26 gold=80403 weapon=melee arrows=-1 holder=imbibe
+time=2026-09-23T15:16:25.854+03:00 level=INFO msg=status pos=(5661,4570) area=42 hp=121 mp=248 maxmana=35 lvl=26 gold=80403 weapon=melee arrows=-1 holder=imbibe
+time=2026-09-23T15:16:35.737+03:00 level=WARN msg=PATHOLOGY kind=orbit detail="holder=imbibe path=258 net=0 over 19s" cooling=imbibe for=6s
+time=2026-09-23T15:16:37.920+03:00 level=INFO msg=outcome verb=stride holder=watchdog tgt=(5680,4570) result=blocked ev="from=(5660,4570) to=(5659,4570) gain=1"
+time=2026-09-23T15:16:37.970+03:00 level=INFO msg=grant to=advance class=travel urgency=0.40
+time=2026-09-23T15:16:39.783+03:00 level=INFO msg=status pos=(5659,4570) area=42 hp=121 mp=248 maxmana=35 lvl=26 gold=80403 weapon=melee arrows=-1 holder=advance
+time=2026-09-23T15:16:41.739+03:00 level=INFO msg=outcome verb=nav holder=march tgt="" result=refused ev="me=(5611,4549) area=42 tgt=(15080,6580) way=(0,0)"
+time=2026-09-23T15:16:45.102+03:00 level=INFO msg=grant to=imbibe class=loot urgency=0.45
+time=2026-09-23T15:16:45.112+03:00 level=INFO msg=verdict activity=imbibe verdict=done
+time=2026-09-23T15:16:45.149+03:00 level=INFO msg=grant to=advance class=travel urgency=0.40
+time=2026-09-23T15:16:45.160+03:00 level=INFO msg=outcome verb=nav holder=march tgt="" result=refused ev="me=(5646,4556) area=42 tgt=(15080,6580) way=(0,0)"
+time=2026-09-23T15:16:48.262+03:00 level=INFO msg=outcome verb=nav holder=march tgt="" result=refused ev="me=(5661,4575) area=42 tgt=(15080,6580) way=(0,0)"
+time=2026-09-23T15:16:50.371+03:00 level=INFO msg=status pos=(5677,4579) area=42 hp=121 mp=248 maxmana=35 lvl=26 gold=80403 weapon=melee arrows=-1 holder=advance
+time=2026-09-23T15:16:51.698+03:00 level=INFO msg=outcome verb=nav holder=march tgt="" result=refused ev="me=(5684,4592) area=42 tgt=(15080,6580) way=(0,0)"
+time=2026-09-23T15:16:57.657+03:00 level=WARN msg=PATHOLOGY kind=orbit detail="holder=advance path=227 net=10 over 19s" cooling=advance for=6s
+time=2026-09-23T15:16:57.658+03:00 level=INFO msg=outcome verb=escalate holder=advance tgt="" result=done ev="rung 3 (fail-leg) for intent.56: watchdog orbit"
+time=2026-09-23T15:17:00.015+03:00 level=INFO msg="status: idle" pos=(5634,4578) area=42 hp=121 lvl=26
+time=2026-09-23T15:17:01.701+03:00 level=INFO msg=grant to=advance class=travel urgency=0.40
+time=2026-09-23T15:17:01.748+03:00 level=INFO msg=outcome verb=nav holder=march tgt="" result=refused ev="me=(5634,4578) area=42 tgt=(15080,6580) way=(0,0)"
+time=2026-09-23T15:17:02.563+03:00 level=INFO msg=outcome verb=stride holder=advance tgt=(0,0) result=blocked ev="from=(5634,4578) to=(5634,4578) gain=0 detour=+45°"
+time=2026-09-23T15:17:03.101+03:00 level=INFO msg=outcome verb=stride holder=advance tgt=(5637,4577) result=blocked ev="from=(5634,4578) to=(5634,4578) gain=0"
+time=2026-09-23T15:17:03.678+03:00 level=INFO msg=outcome verb=stride holder=advance tgt=(5637,4577) result=blocked ev="from=(5634,4578) to=(5634,4578) gain=0"
+time=2026-09-23T15:17:04.242+03:00 level=INFO msg=outcome verb=stride holder=advance tgt=(5637,4577) result=blocked ev="from=(5634,4578) to=(5634,4578) gain=0"
+time=2026-09-23T15:17:04.827+03:00 level=INFO msg=outcome verb=stride holder=advance tgt=(5637,4577) result=blocked ev="from=(5634,4578) to=(5634,4578) gain=0"
+time=2026-09-23T15:17:04.843+03:00 level=INFO msg=outcome verb=nav holder=march tgt="" result=refused ev="me=(5634,4578) area=42 tgt=(15080,6580) way=(0,0)"
+time=2026-09-23T15:17:05.409+03:00 level=INFO msg=outcome verb=stride holder=advance tgt=(5637,4577) result=blocked ev="from=(5634,4578) to=(5634,4578) gain=0"
+time=2026-09-23T15:17:07.865+03:00 level=INFO msg=outcome verb=stride holder=advance/escape tgt=(5640,4578) result=blocked ev="from=(5634,4578) to=(5634,4578) gain=0"
+time=2026-09-23T15:17:08.014+03:00 level=INFO msg=outcome verb=nav holder=march tgt="" result=refused ev="me=(5634,4578) area=42 tgt=(15080,6580) way=(0,0)"
+time=2026-09-23T15:17:08.551+03:00 level=INFO msg=outcome verb=stride holder=advance tgt=(5637,4577) result=blocked ev="from=(5634,4578) to=(5634,4578) gain=0"
+time=2026-09-23T15:17:09.073+03:00 level=INFO msg=outcome verb=stride holder=advance tgt=(5637,4577) result=blocked ev="from=(5634,4578) to=(5634,4578) gain=0"
+time=2026-09-23T15:17:09.591+03:00 level=INFO msg=outcome verb=stride holder=advance tgt=(5637,4577) result=blocked ev="from=(5634,4578) to=(5634,4578) gain=0"
+time=2026-09-23T15:17:10.127+03:00 level=INFO msg=outcome verb=stride holder=advance tgt=(5637,4577) result=blocked ev="from=(5634,4578) to=(5634,4578) gain=0"
+time=2026-09-23T15:17:10.127+03:00 level=INFO msg=status pos=(5634,4578) area=42 hp=121 mp=248 maxmana=35 lvl=26 gold=80403 weapon=melee arrows=-1 holder=advance
+time=2026-09-23T15:17:10.674+03:00 level=INFO msg=outcome verb=stride holder=advance tgt=(5637,4577) result=blocked ev="from=(5634,4578) to=(5634,4578) gain=0"
+time=2026-09-23T15:17:11.188+03:00 level=INFO msg=outcome verb=stride holder=advance tgt=(5637,4577) result=blocked ev="from=(5634,4578) to=(5634,4578) gain=0"
+time=2026-09-23T15:17:11.260+03:00 level=INFO msg=outcome verb=nav holder=march tgt="" result=refused ev="me=(5634,4578) area=42 tgt=(15080,6580) way=(0,0)"
+time=2026-09-23T15:17:11.754+03:00 level=INFO msg=outcome verb=stride holder=advance tgt=(5637,4577) result=blocked ev="from=(5634,4578) to=(5634,4578) gain=0"
+time=2026-09-23T15:17:12.272+03:00 level=INFO msg=outcome verb=stride holder=advance tgt=(5637,4577) result=blocked ev="from=(5634,4578) to=(5634,4578) gain=0"
+time=2026-09-23T15:17:12.832+03:00 level=INFO msg=outcome verb=stride holder=advance tgt=(5637,4577) result=blocked ev="from=(5634,4578) to=(5634,4578) gain=0"
+time=2026-09-23T15:17:13.355+03:00 level=INFO msg=outcome verb=stride holder=advance tgt=(5637,4577) result=blocked ev="from=(5634,4578) to=(5634,4578) gain=0"
+time=2026-09-23T15:17:13.879+03:00 level=INFO msg=outcome verb=stride holder=advance tgt=(5637,4577) result=blocked ev="from=(5634,4578) to=(5634,4578) gain=0"
+time=2026-09-23T15:17:14.421+03:00 level=INFO msg=outcome verb=stride holder=advance tgt=(5637,4577) result=blocked ev="from=(5634,4578) to=(5634,4578) gain=0"
+time=2026-09-23T15:17:14.552+03:00 level=INFO msg=outcome verb=nav holder=march tgt="" result=refused ev="me=(5634,4578) area=42 tgt=(15080,6580) way=(0,0)"
+time=2026-09-23T15:17:15.051+03:00 level=INFO msg=outcome verb=stride holder=advance tgt=(5637,4577) result=blocked ev="from=(5634,4578) to=(5634,4578) gain=0"
+time=2026-09-23T15:17:15.549+03:00 level=INFO msg=outcome verb=stride holder=advance tgt=(5637,4577) result=blocked ev="from=(5634,4578) to=(5634,4578) gain=0"
+time=2026-09-23T15:17:16.061+03:00 level=INFO msg=outcome verb=stride holder=advance tgt=(5637,4577) result=blocked ev="from=(5634,4578) to=(5634,4578) gain=0"
+time=2026-09-23T15:17:16.564+03:00 level=INFO msg=outcome verb=stride holder=advance tgt=(5637,4577) result=blocked ev="from=(5634,4578) to=(5634,4578) gain=0"
+time=2026-09-23T15:17:17.120+03:00 level=INFO msg=outcome verb=stride holder=advance tgt=(5637,4577) result=blocked ev="from=(5634,4578) to=(5634,4578) gain=0"
+time=2026-09-23T15:17:17.661+03:00 level=INFO msg=outcome verb=stride holder=advance tgt=(5637,4577) result=blocked ev="from=(5634,4578) to=(5634,4578) gain=0"
+time=2026-09-23T15:17:17.735+03:00 level=INFO msg=outcome verb=nav holder=march tgt="" result=refused ev="me=(5634,4578) area=42 tgt=(15080,6580) way=(0,0)"
+time=2026-09-23T15:17:18.267+03:00 level=INFO msg=outcome verb=stride holder=advance tgt=(5637,4577) result=blocked ev="from=(5634,4578) to=(5634,4578) gain=0"
+time=2026-09-23T15:17:18.805+03:00 level=INFO msg=outcome verb=stride holder=advance tgt=(5637,4577) result=blocked ev="from=(5634,4578) to=(5634,4578) gain=0"
+time=2026-09-23T15:17:19.348+03:00 level=INFO msg=outcome verb=stride holder=advance tgt=(5637,4577) result=blocked ev="from=(5634,4578) to=(5634,4578) gain=0"
+time=2026-09-23T15:17:19.352+03:00 level=WARN msg=PATHOLOGY kind=stuck detail="holder=advance pinned in 0x0 box for 19s" cooling=advance for=6s
+time=2026-09-23T15:17:19.352+03:00 level=INFO msg=outcome verb=escalate holder=advance tgt="" result=done ev="rung 3 (fail-leg) for intent.56: watchdog stuck"
+time=2026-09-23T15:17:21.531+03:00 level=INFO msg=outcome verb=stride holder=watchdog tgt=(5634,4558) result=blocked ev="from=(5634,4578) to=(5634,4578) gain=0"
+time=2026-09-23T15:17:21.625+03:00 level=INFO msg="status: idle" pos=(5634,4578) area=42 hp=121 lvl=26
+time=2026-09-23T15:17:23.500+03:00 level=INFO msg=grant to=advance class=travel urgency=0.40
+time=2026-09-23T15:17:23.539+03:00 level=INFO msg=outcome verb=nav holder=march tgt="" result=refused ev="me=(5634,4578) area=42 tgt=(15080,6580) way=(0,0)"
+time=2026-09-23T15:17:25.988+03:00 level=INFO msg=outcome verb=stride holder=advance/escape tgt=(5648,4578) result=blocked ev="from=(5634,4578) to=(5634,4578) gain=0"
+time=2026-09-23T15:17:26.044+03:00 level=WARN msg=PATHOLOGY kind=stuck detail="holder=advance pinned in 0x0 box for 18s" cooling=advance for=6s
+time=2026-09-23T15:17:26.045+03:00 level=INFO msg=outcome verb=escalate holder=advance tgt="" result=done ev="rung 3 (fail-leg) for intent.56: watchdog stuck"
+time=2026-09-23T15:17:28.300+03:00 level=INFO msg="status: idle" pos=(5666,4580) area=42 hp=121 lvl=26
+time=2026-09-23T15:17:30.210+03:00 level=INFO msg=grant to=imbibe class=loot urgency=0.45
+time=2026-09-23T15:17:30.213+03:00 level=INFO msg=verdict activity=imbibe verdict=done
+time=2026-09-23T15:17:30.250+03:00 level=INFO msg=grant to=advance class=travel urgency=0.40
+time=2026-09-23T15:17:30.290+03:00 level=INFO msg=outcome verb=nav holder=march tgt="" result=refused ev="me=(5678,4580) area=42 tgt=(15080,6580) way=(0,0)"
+time=2026-09-23T15:17:39.658+03:00 level=INFO msg=status pos=(5618,4549) area=42 hp=121 mp=248 maxmana=35 lvl=26 gold=80403 weapon=melee arrows=-1 holder=advance
+time=2026-09-23T15:17:39.758+03:00 level=INFO msg=outcome verb=nav holder=march tgt="" result=refused ev="me=(5596,4549) area=42 tgt=(15080,6580) way=(0,0)"
+time=2026-09-23T15:17:43.181+03:00 level=INFO msg=outcome verb=nav holder=march tgt="" result=refused ev="me=(5639,4552) area=42 tgt=(15080,6580) way=(0,0)"
+time=2026-09-23T15:17:46.673+03:00 level=INFO msg=outcome verb=nav holder=march tgt="" result=refused ev="me=(5668,4572) area=42 tgt=(15080,6580) way=(0,0)"
+time=2026-09-23T15:17:48.203+03:00 level=WARN msg=PATHOLOGY kind=orbit detail="holder=advance path=224 net=9 over 19s" cooling=advance for=6s
+time=2026-09-23T15:17:48.209+03:00 level=INFO msg=outcome verb=escalate holder=advance tgt="" result=done ev="rung 3 (fail-leg) for intent.56: watchdog orbit"
+time=2026-09-23T15:17:50.417+03:00 level=INFO msg="status: idle" pos=(5657,4563) area=42 hp=121 lvl=26
+time=2026-09-23T15:17:52.281+03:00 level=INFO msg=grant to=advance class=travel urgency=0.40
+time=2026-09-23T15:17:52.321+03:00 level=INFO msg=outcome verb=nav holder=march tgt="" result=refused ev="me=(5653,4560) area=42 tgt=(15080,6580) way=(0,0)"
+time=2026-09-23T15:17:53.891+03:00 level=INFO msg=outcome verb=escalate holder=advance tgt="" result=done ev="rung 3 (fail-leg) for intent.56: 60s stall at (15080,6580)"
+time=2026-09-23T15:17:53.892+03:00 level=INFO msg=verdict activity=advance verdict=abandoned
+time=2026-09-23T15:17:53.896+03:00 level=INFO msg=grant to=advance class=travel urgency=0.40
+time=2026-09-23T15:17:55.529+03:00 level=INFO msg=outcome verb=nav holder=march tgt="" result=refused ev="me=(5675,4560) area=42 tgt=(15080,6580) way=(0,0)"
+time=2026-09-23T15:18:02.039+03:00 level=INFO msg=status pos=(5674,4576) area=42 hp=121 mp=248 maxmana=35 lvl=26 gold=80403 weapon=melee arrows=-1 holder=advance
+time=2026-09-23T15:18:05.924+03:00 level=INFO msg=outcome verb=nav holder=march tgt="" result=refused ev="me=(5623,4549) area=42 tgt=(15080,6580) way=(0,0)"
+time=2026-09-23T15:18:09.087+03:00 level=INFO msg=outcome verb=stride holder=advance tgt=(0,0) result=blocked ev="from=(5596,4549) to=(5596,4549) gain=0 detour=+112°"
+time=2026-09-23T15:18:09.168+03:00 level=INFO msg=outcome verb=nav holder=march tgt="" result=refused ev="me=(5596,4549) area=42 tgt=(15080,6580) way=(0,0)"
+time=2026-09-23T15:18:09.769+03:00 level=INFO msg=outcome verb=stride holder=advance tgt=(5599,4550) result=blocked ev="from=(5596,4549) to=(5596,4549) gain=0"
+time=2026-09-23T15:18:11.825+03:00 level=INFO msg=outcome verb=stride holder=advance tgt=(5620,4554) result=blocked ev="from=(5610,4553) to=(5610,4553) gain=0"
+time=2026-09-23T15:18:12.458+03:00 level=INFO msg=outcome verb=stride holder=advance tgt=(5620,4555) result=blocked ev="from=(5610,4553) to=(5610,4553) gain=0"
+time=2026-09-23T15:18:12.458+03:00 level=INFO msg=status pos=(5610,4553) area=42 hp=121 mp=248 maxmana=35 lvl=26 gold=80403 weapon=melee arrows=-1 holder=advance
+time=2026-09-23T15:18:12.539+03:00 level=INFO msg=outcome verb=nav holder=march tgt="" result=refused ev="me=(5610,4553) area=42 tgt=(15080,6580) way=(0,0)"
+time=2026-09-23T15:18:13.184+03:00 level=INFO msg=outcome verb=stride holder=advance tgt=(5620,4555) result=blocked ev="from=(5610,4553) to=(5610,4553) gain=0"
+time=2026-09-23T15:18:13.879+03:00 level=INFO msg=outcome verb=stride holder=advance tgt=(5620,4555) result=blocked ev="from=(5610,4553) to=(5610,4553) gain=0"
+time=2026-09-23T15:18:14.543+03:00 level=INFO msg=outcome verb=stride holder=advance tgt=(5620,4555) result=blocked ev="from=(5610,4553) to=(5610,4553) gain=0"
+time=2026-09-23T15:18:15.234+03:00 level=INFO msg=outcome verb=stride holder=advance tgt=(5620,4555) result=blocked ev="from=(5610,4553) to=(5610,4553) gain=0"
+time=2026-09-23T15:18:15.903+03:00 level=INFO msg=outcome verb=stride holder=advance tgt=(5620,4555) result=blocked ev="from=(5610,4553) to=(5610,4553) gain=0"
+time=2026-09-23T15:18:15.985+03:00 level=INFO msg=outcome verb=nav holder=march tgt="" result=refused ev="me=(5610,4553) area=42 tgt=(15080,6580) way=(0,0)"
+time=2026-09-23T15:18:16.642+03:00 level=INFO msg=outcome verb=stride holder=advance tgt=(5620,4555) result=blocked ev="from=(5610,4553) to=(5610,4553) gain=0"
+time=2026-09-23T15:18:17.239+03:00 level=INFO msg=outcome verb=stride holder=advance tgt=(5620,4555) result=blocked ev="from=(5610,4553) to=(5610,4553) gain=0"
+time=2026-09-23T15:18:17.870+03:00 level=INFO msg=outcome verb=stride holder=advance tgt=(5620,4555) result=blocked ev="from=(5610,4553) to=(5610,4553) gain=0"
+time=2026-09-23T15:18:18.503+03:00 level=INFO msg=outcome verb=stride holder=advance tgt=(5620,4555) result=blocked ev="from=(5610,4553) to=(5610,4553) gain=0"
+time=2026-09-23T15:18:19.089+03:00 level=INFO msg=outcome verb=stride holder=advance tgt=(5620,4555) result=blocked ev="from=(5610,4553) to=(5610,4553) gain=0"
+time=2026-09-23T15:18:19.175+03:00 level=INFO msg=outcome verb=nav holder=march tgt="" result=refused ev="me=(5610,4553) area=42 tgt=(15080,6580) way=(0,0)"
+time=2026-09-23T15:18:19.791+03:00 level=INFO msg=outcome verb=stride holder=advance tgt=(5620,4555) result=blocked ev="from=(5610,4553) to=(5610,4553) gain=0"
+time=2026-09-23T15:18:20.381+03:00 level=INFO msg=outcome verb=stride holder=advance tgt=(5620,4555) result=blocked ev="from=(5610,4553) to=(5610,4553) gain=0"
+time=2026-09-23T15:18:21.023+03:00 level=INFO msg=outcome verb=stride holder=advance tgt=(5620,4555) result=blocked ev="from=(5610,4553) to=(5610,4553) gain=0"
+time=2026-09-23T15:18:21.736+03:00 level=INFO msg=outcome verb=stride holder=advance tgt=(5620,4555) result=blocked ev="from=(5610,4553) to=(5610,4553) gain=0"
+time=2026-09-23T15:18:22.350+03:00 level=INFO msg=outcome verb=stride holder=advance tgt=(5620,4555) result=blocked ev="from=(5610,4553) to=(5610,4553) gain=0"
+time=2026-09-23T15:18:22.426+03:00 level=INFO msg=outcome verb=nav holder=march tgt="" result=refused ev="me=(5610,4553) area=42 tgt=(15080,6580) way=(0,0)"
+time=2026-09-23T15:18:24.871+03:00 level=INFO msg=outcome verb=stride holder=advance/escape tgt=(5616,4553) result=blocked ev="from=(5610,4553) to=(5610,4553) gain=0"
+time=2026-09-23T15:18:24.871+03:00 level=INFO msg=status pos=(5610,4553) area=42 hp=121 mp=248 maxmana=35 lvl=26 gold=80403 weapon=melee arrows=-1 holder=advance
+time=2026-09-23T15:18:25.560+03:00 level=INFO msg=outcome verb=stride holder=advance tgt=(5620,4555) result=blocked ev="from=(5610,4553) to=(5610,4553) gain=0"
+time=2026-09-23T15:18:25.640+03:00 level=INFO msg=outcome verb=nav holder=march tgt="" result=refused ev="me=(5610,4553) area=42 tgt=(15080,6580) way=(0,0)"
+time=2026-09-23T15:18:26.259+03:00 level=INFO msg=outcome verb=stride holder=advance tgt=(5620,4555) result=blocked ev="from=(5610,4553) to=(5610,4553) gain=0"
+time=2026-09-23T15:18:26.890+03:00 level=INFO msg=outcome verb=stride holder=advance tgt=(5620,4555) result=blocked ev="from=(5610,4553) to=(5610,4553) gain=0"
+time=2026-09-23T15:18:27.492+03:00 level=INFO msg=outcome verb=stride holder=advance tgt=(5620,4555) result=blocked ev="from=(5610,4553) to=(5610,4553) gain=0"
+time=2026-09-23T15:18:28.541+03:00 level=INFO msg=outcome verb=stride holder=advance tgt=(5620,4555) result=blocked ev="from=(5610,4553) to=(5610,4553) gain=0"
+time=2026-09-23T15:18:29.166+03:00 level=INFO msg=outcome verb=stride holder=advance tgt=(5620,4555) result=blocked ev="from=(5610,4553) to=(5610,4553) gain=0"
+time=2026-09-23T15:18:29.257+03:00 level=INFO msg=outcome verb=nav holder=march tgt="" result=refused ev="me=(5610,4553) area=42 tgt=(15080,6580) way=(0,0)"
+time=2026-09-23T15:18:29.886+03:00 level=INFO msg=outcome verb=stride holder=advance tgt=(5620,4555) result=blocked ev="from=(5610,4553) to=(5610,4553) gain=0"
+time=2026-09-23T15:18:30.537+03:00 level=INFO msg=outcome verb=stride holder=advance tgt=(5620,4555) result=blocked ev="from=(5610,4553) to=(5610,4553) gain=0"
+time=2026-09-23T15:18:31.191+03:00 level=INFO msg=outcome verb=stride holder=advance tgt=(5620,4555) result=blocked ev="from=(5610,4553) to=(5610,4553) gain=0"
+time=2026-09-23T15:18:31.781+03:00 level=INFO msg=outcome verb=stride holder=advance tgt=(5620,4555) result=blocked ev="from=(5610,4553) to=(5610,4553) gain=0"
+time=2026-09-23T15:18:32.389+03:00 level=INFO msg=outcome verb=stride holder=advance tgt=(5620,4555) result=blocked ev="from=(5610,4553) to=(5610,4553) gain=0"
+time=2026-09-23T15:18:32.446+03:00 level=WARN msg=PATHOLOGY kind=stuck detail="holder=advance pinned in 0x0 box for 19s" cooling=advance for=6s
+time=2026-09-23T15:18:32.447+03:00 level=INFO msg=outcome verb=escalate holder=advance tgt="" result=done ev="rung 3 (fail-leg) for intent.56: watchdog stuck"
+time=2026-09-23T15:18:34.684+03:00 level=INFO msg=outcome verb=stride holder=watchdog tgt=(5624,4539) result=blocked ev="from=(5610,4553) to=(5610,4553) gain=0"
+time=2026-09-23T15:18:34.726+03:00 level=INFO msg="status: idle" pos=(5610,4553) area=42 hp=121 lvl=26
+time=2026-09-23T15:18:36.523+03:00 level=INFO msg=grant to=advance class=travel urgency=0.40
+time=2026-09-23T15:18:36.594+03:00 level=INFO msg=outcome verb=nav holder=march tgt="" result=refused ev="me=(5610,4553) area=42 tgt=(15080,6580) way=(0,0)"
+time=2026-09-23T15:18:37.235+03:00 level=INFO msg=outcome verb=stride holder=advance tgt=(5620,4555) result=blocked ev="from=(5610,4553) to=(5610,4553) gain=0"
+time=2026-09-23T15:18:39.668+03:00 level=INFO msg=outcome verb=stride holder=advance/escape tgt=(5624,4553) result=blocked ev="from=(5610,4553) to=(5610,4553) gain=0"
+time=2026-09-23T15:18:39.720+03:00 level=WARN msg=PATHOLOGY kind=stuck detail="holder=advance pinned in 0x0 box for 19s" cooling=advance for=6s
+time=2026-09-23T15:18:39.720+03:00 level=INFO msg=outcome verb=escalate holder=advance tgt="" result=done ev="rung 3 (fail-leg) for intent.56: watchdog stuck"
+time=2026-09-23T15:18:41.914+03:00 level=INFO msg="status: idle" pos=(5628,4568) area=42 hp=121 lvl=26
+time=2026-09-23T15:18:43.821+03:00 level=INFO msg=grant to=advance class=travel urgency=0.40
+time=2026-09-23T15:18:43.860+03:00 level=INFO msg=outcome verb=nav holder=march tgt="" result=refused ev="me=(5628,4568) area=42 tgt=(15080,6580) way=(0,0)"
+time=2026-09-23T15:18:44.335+03:00 level=INFO msg=outcome verb=stride holder=advance tgt=(5627,4565) result=blocked ev="from=(5628,4568) to=(5628,4568) gain=0"
+time=2026-09-23T15:18:44.802+03:00 level=INFO msg=outcome verb=stride holder=advance tgt=(5627,4565) result=blocked ev="from=(5628,4568) to=(5628,4568) gain=0"
+time=2026-09-23T15:18:45.290+03:00 level=INFO msg=outcome verb=stride holder=advance tgt=(5627,4565) result=blocked ev="from=(5628,4568) to=(5628,4568) gain=0"
+time=2026-09-23T15:18:45.746+03:00 level=INFO msg=outcome verb=stride holder=advance tgt=(5627,4565) result=blocked ev="from=(5628,4568) to=(5628,4568) gain=0"
+time=2026-09-23T15:18:46.260+03:00 level=INFO msg=outcome verb=stride holder=advance tgt=(5627,4565) result=blocked ev="from=(5628,4568) to=(5628,4568) gain=0"
+time=2026-09-23T15:18:46.760+03:00 level=INFO msg=outcome verb=stride holder=advance tgt=(5627,4565) result=blocked ev="from=(5628,4568) to=(5628,4568) gain=0"
+time=2026-09-23T15:18:47.219+03:00 level=INFO msg=outcome verb=stride holder=advance tgt=(5627,4565) result=blocked ev="from=(5628,4568) to=(5628,4568) gain=0"
+time=2026-09-23T15:18:47.234+03:00 level=INFO msg=outcome verb=nav holder=march tgt="" result=refused ev="me=(5628,4568) area=42 tgt=(15080,6580) way=(0,0)"
+time=2026-09-23T15:18:47.737+03:00 level=INFO msg=outcome verb=stride holder=advance tgt=(5627,4565) result=blocked ev="from=(5628,4568) to=(5628,4568) gain=0"
+time=2026-09-23T15:18:48.184+03:00 level=INFO msg=outcome verb=stride holder=advance tgt=(5627,4565) result=blocked ev="from=(5628,4568) to=(5628,4568) gain=0"
+time=2026-09-23T15:18:48.698+03:00 level=INFO msg=outcome verb=stride holder=advance tgt=(5627,4565) result=blocked ev="from=(5628,4568) to=(5628,4568) gain=0"
+time=2026-09-23T15:18:49.227+03:00 level=INFO msg=outcome verb=stride holder=advance tgt=(5627,4565) result=blocked ev="from=(5628,4568) to=(5628,4568) gain=0"
+time=2026-09-23T15:18:49.768+03:00 level=INFO msg=outcome verb=stride holder=advance tgt=(5627,4565) result=blocked ev="from=(5628,4568) to=(5628,4568) gain=0"
+time=2026-09-23T15:18:50.267+03:00 level=INFO msg=outcome verb=stride holder=advance tgt=(5627,4565) result=blocked ev="from=(5628,4568) to=(5628,4568) gain=0"
+time=2026-09-23T15:18:50.308+03:00 level=INFO msg=outcome verb=nav holder=march tgt="" result=refused ev="me=(5628,4568) area=42 tgt=(15080,6580) way=(0,0)"
+time=2026-09-23T15:18:50.775+03:00 level=INFO msg=outcome verb=stride holder=advance tgt=(5627,4565) result=blocked ev="from=(5628,4568) to=(5628,4568) gain=0"
+time=2026-09-23T15:18:51.288+03:00 level=INFO msg=outcome verb=stride holder=advance tgt=(5627,4565) result=blocked ev="from=(5628,4568) to=(5628,4568) gain=0"
+time=2026-09-23T15:18:51.746+03:00 level=INFO msg=outcome verb=stride holder=advance tgt=(5627,4565) result=blocked ev="from=(5628,4568) to=(5628,4568) gain=0"
+time=2026-09-23T15:18:54.160+03:00 level=INFO msg=outcome verb=stride holder=advance/escape tgt=(5628,4562) result=blocked ev="from=(5628,4568) to=(5628,4568) gain=0"
+time=2026-09-23T15:18:54.161+03:00 level=INFO msg=status pos=(5628,4568) area=42 hp=121 mp=248 maxmana=35 lvl=26 gold=80403 weapon=melee arrows=-1 holder=advance
+time=2026-09-23T15:18:54.252+03:00 level=INFO msg=outcome verb=nav holder=march tgt="" result=refused ev="me=(5628,4568) area=42 tgt=(15080,6580) way=(0,0)"
+time=2026-09-23T15:18:54.750+03:00 level=INFO msg=outcome verb=stride holder=advance tgt=(5627,4565) result=blocked ev="from=(5628,4568) to=(5628,4568) gain=0"
+time=2026-09-23T15:18:55.267+03:00 level=INFO msg=outcome verb=stride holder=advance tgt=(5627,4565) result=blocked ev="from=(5628,4568) to=(5628,4568) gain=0"
+time=2026-09-23T15:18:55.762+03:00 level=INFO msg=outcome verb=stride holder=advance tgt=(5627,4565) result=blocked ev="from=(5628,4568) to=(5628,4568) gain=0"
+time=2026-09-23T15:18:56.214+03:00 level=INFO msg=outcome verb=stride holder=advance tgt=(5627,4565) result=blocked ev="from=(5628,4568) to=(5628,4568) gain=0"
+time=2026-09-23T15:18:56.680+03:00 level=INFO msg=outcome verb=stride holder=advance tgt=(5627,4565) result=blocked ev="from=(5628,4568) to=(5628,4568) gain=0"
+time=2026-09-23T15:18:57.179+03:00 level=INFO msg=outcome verb=stride holder=advance tgt=(5627,4565) result=blocked ev="from=(5628,4568) to=(5628,4568) gain=0"
+time=2026-09-23T15:18:57.699+03:00 level=INFO msg=outcome verb=stride holder=advance tgt=(5627,4565) result=blocked ev="from=(5628,4568) to=(5628,4568) gain=0"
+time=2026-09-23T15:18:57.712+03:00 level=INFO msg=outcome verb=nav holder=march tgt="" result=refused ev="me=(5628,4568) area=42 tgt=(15080,6580) way=(0,0)"
+time=2026-09-23T15:18:58.205+03:00 level=INFO msg=outcome verb=stride holder=advance tgt=(5627,4565) result=blocked ev="from=(5628,4568) to=(5628,4568) gain=0"
+time=2026-09-23T15:18:58.217+03:00 level=INFO msg=outcome verb=escalate holder=advance tgt="" result=done ev="rung 3 (fail-leg) for intent.56: 60s stall at (15080,6580)"
+time=2026-09-23T15:18:58.218+03:00 level=INFO msg=verdict activity=advance verdict=abandoned
+time=2026-09-23T15:18:58.249+03:00 level=INFO msg=grant to=advance class=travel urgency=0.40
+time=2026-09-23T15:18:58.793+03:00 level=INFO msg=outcome verb=stride holder=advance tgt=(5627,4565) result=blocked ev="from=(5628,4568) to=(5628,4568) gain=0"
+time=2026-09-23T15:18:59.300+03:00 level=INFO msg=outcome verb=stride holder=advance tgt=(5627,4565) result=blocked ev="from=(5628,4568) to=(5628,4568) gain=0"
+time=2026-09-23T15:18:59.882+03:00 level=INFO msg=outcome verb=stride holder=advance tgt=(5627,4565) result=blocked ev="from=(5628,4568) to=(5628,4568) gain=0"
+time=2026-09-23T15:19:00.432+03:00 level=INFO msg=outcome verb=stride holder=advance tgt=(5627,4565) result=blocked ev="from=(5628,4568) to=(5628,4568) gain=0"
+time=2026-09-23T15:19:01.034+03:00 level=INFO msg=outcome verb=stride holder=advance tgt=(5627,4565) result=blocked ev="from=(5628,4568) to=(5628,4568) gain=0"
+time=2026-09-23T15:19:01.071+03:00 level=WARN msg=PATHOLOGY kind=stuck detail="holder=advance pinned in 0x0 box for 19s" cooling=advance for=6s
+time=2026-09-23T15:19:01.071+03:00 level=INFO msg=outcome verb=escalate holder=advance tgt="" result=done ev="rung 3 (fail-leg) for intent.56: watchdog stuck"
+time=2026-09-23T15:19:03.271+03:00 level=INFO msg="status: idle" pos=(5624,4549) area=42 hp=121 lvl=26
+time=2026-09-23T15:19:05.216+03:00 level=INFO msg=grant to=advance class=travel urgency=0.40
+time=2026-09-23T15:19:05.265+03:00 level=INFO msg=outcome verb=nav holder=march tgt="" result=refused ev="me=(5624,4549) area=42 tgt=(15080,6580) way=(0,0)"
+time=2026-09-23T15:19:07.471+03:00 level=INFO msg=grant to=imbibe class=loot urgency=0.45
+time=2026-09-23T15:19:07.475+03:00 level=INFO msg=verdict activity=imbibe verdict=done
+time=2026-09-23T15:19:07.478+03:00 level=INFO msg=grant to=advance class=travel urgency=0.40
+time=2026-09-23T15:19:08.638+03:00 level=INFO msg=outcome verb=nav holder=march tgt="" result=refused ev="me=(5664,4569) area=42 tgt=(15080,6580) way=(0,0)"
+time=2026-09-23T15:19:11.698+03:00 level=INFO msg=outcome verb=nav holder=march tgt="" result=refused ev="me=(5669,4582) area=42 tgt=(15080,6580) way=(0,0)"
+time=2026-09-23T15:19:13.539+03:00 level=INFO msg=status pos=(5683,4589) area=42 hp=121 mp=248 maxmana=35 lvl=26 gold=80403 weapon=melee arrows=-1 holder=advance
+time=2026-09-23T15:19:18.608+03:00 level=INFO msg=outcome verb=stride holder=advance tgt=(5733,4608) result=blocked ev="from=(5698,4608) to=(5698,4608) gain=0"
+time=2026-09-23T15:19:24.372+03:00 level=INFO msg=status pos=(5652,4571) area=42 hp=121 mp=248 maxmana=35 lvl=26 gold=80403 weapon=melee arrows=-1 holder=advance
+time=2026-09-23T15:19:26.320+03:00 level=INFO msg=outcome verb=nav holder=march tgt="" result=refused ev="me=(5602,4548) area=42 tgt=(15080,6580) way=(0,0)"
+time=2026-09-23T15:19:28.389+03:00 level=INFO msg=outcome verb=stride holder=advance tgt=(5624,4555) result=blocked ev="from=(5614,4553) to=(5614,4553) gain=0"
+time=2026-09-23T15:19:29.059+03:00 level=INFO msg=outcome verb=stride holder=advance tgt=(5624,4555) result=blocked ev="from=(5614,4553) to=(5614,4553) gain=0"
+time=2026-09-23T15:19:29.751+03:00 level=INFO msg=outcome verb=stride holder=advance tgt=(5624,4555) result=blocked ev="from=(5614,4553) to=(5614,4553) gain=0"
+time=2026-09-23T15:19:29.771+03:00 level=INFO msg=outcome verb=nav holder=march tgt="" result=refused ev="me=(5614,4553) area=42 tgt=(15080,6580) way=(0,0)"
+time=2026-09-23T15:19:30.429+03:00 level=INFO msg=outcome verb=stride holder=advance tgt=(5624,4555) result=blocked ev="from=(5614,4553) to=(5614,4553) gain=0"
+time=2026-09-23T15:19:31.104+03:00 level=INFO msg=outcome verb=stride holder=advance tgt=(5624,4555) result=blocked ev="from=(5614,4553) to=(5614,4553) gain=0"
+time=2026-09-23T15:19:31.855+03:00 level=INFO msg=outcome verb=stride holder=advance tgt=(5624,4555) result=blocked ev="from=(5614,4553) to=(5614,4553) gain=0"
+time=2026-09-23T15:19:32.504+03:00 level=INFO msg=outcome verb=stride holder=advance tgt=(5624,4555) result=blocked ev="from=(5614,4553) to=(5614,4553) gain=0"
+time=2026-09-23T15:19:33.253+03:00 level=INFO msg=outcome verb=stride holder=advance tgt=(5624,4555) result=blocked ev="from=(5614,4553) to=(5614,4553) gain=0"
+time=2026-09-23T15:19:33.308+03:00 level=INFO msg=outcome verb=nav holder=march tgt="" result=refused ev="me=(5614,4553) area=42 tgt=(15080,6580) way=(0,0)"
+time=2026-09-23T15:19:33.995+03:00 level=INFO msg=outcome verb=stride holder=advance tgt=(5624,4555) result=blocked ev="from=(5614,4553) to=(5614,4553) gain=0"
+time=2026-09-23T15:19:34.646+03:00 level=INFO msg=outcome verb=stride holder=advance tgt=(5624,4555) result=blocked ev="from=(5614,4553) to=(5614,4553) gain=0"
+time=2026-09-23T15:19:34.647+03:00 level=INFO msg=status pos=(5614,4553) area=42 hp=121 mp=248 maxmana=35 lvl=26 gold=80403 weapon=melee arrows=-1 holder=advance
+time=2026-09-23T15:19:35.408+03:00 level=INFO msg=outcome verb=stride holder=advance tgt=(5624,4555) result=blocked ev="from=(5614,4553) to=(5614,4553) gain=0"
+time=2026-09-23T15:19:36.070+03:00 level=INFO msg=outcome verb=stride holder=advance tgt=(5624,4555) result=blocked ev="from=(5614,4553) to=(5614,4553) gain=0"
+time=2026-09-23T15:19:36.764+03:00 level=INFO msg=outcome verb=stride holder=advance tgt=(5624,4555) result=blocked ev="from=(5614,4553) to=(5614,4553) gain=0"
+time=2026-09-23T15:19:36.813+03:00 level=INFO msg=outcome verb=nav holder=march tgt="" result=refused ev="me=(5614,4553) area=42 tgt=(15080,6580) way=(0,0)"
+time=2026-09-23T15:19:37.522+03:00 level=INFO msg=outcome verb=stride holder=advance tgt=(5624,4555) result=blocked ev="from=(5614,4553) to=(5614,4553) gain=0"
+time=2026-09-23T15:19:38.202+03:00 level=INFO msg=outcome verb=stride holder=advance tgt=(5624,4555) result=blocked ev="from=(5614,4553) to=(5614,4553) gain=0"
+time=2026-09-23T15:19:38.943+03:00 level=INFO msg=outcome verb=stride holder=advance tgt=(5624,4555) result=blocked ev="from=(5614,4553) to=(5614,4553) gain=0"
+time=2026-09-23T15:19:41.439+03:00 level=INFO msg=outcome verb=stride holder=advance/escape tgt=(5620,4553) result=blocked ev="from=(5614,4553) to=(5614,4553) gain=0"
+time=2026-09-23T15:19:41.578+03:00 level=INFO msg=outcome verb=nav holder=march tgt="" result=refused ev="me=(5614,4553) area=42 tgt=(15080,6580) way=(0,0)"
+time=2026-09-23T15:19:42.260+03:00 level=INFO msg=outcome verb=stride holder=advance tgt=(5624,4555) result=blocked ev="from=(5614,4553) to=(5614,4553) gain=0"
+time=2026-09-23T15:19:42.904+03:00 level=INFO msg=outcome verb=stride holder=advance tgt=(5624,4555) result=blocked ev="from=(5614,4553) to=(5614,4553) gain=0"
+time=2026-09-23T15:19:43.568+03:00 level=INFO msg=outcome verb=stride holder=advance tgt=(5624,4555) result=blocked ev="from=(5614,4553) to=(5614,4553) gain=0"
+time=2026-09-23T15:19:44.315+03:00 level=INFO msg=outcome verb=stride holder=advance tgt=(5624,4555) result=blocked ev="from=(5614,4553) to=(5614,4553) gain=0"
+time=2026-09-23T15:19:44.973+03:00 level=INFO msg=outcome verb=stride holder=advance tgt=(5624,4555) result=blocked ev="from=(5614,4553) to=(5614,4553) gain=0"
+time=2026-09-23T15:19:44.973+03:00 level=INFO msg=status pos=(5614,4553) area=42 hp=121 mp=248 maxmana=35 lvl=26 gold=80403 weapon=melee arrows=-1 holder=advance
+time=2026-09-23T15:19:45.046+03:00 level=INFO msg=outcome verb=nav holder=march tgt="" result=refused ev="me=(5614,4553) area=42 tgt=(15080,6580) way=(0,0)"
+time=2026-09-23T15:19:45.719+03:00 level=INFO msg=outcome verb=stride holder=advance tgt=(5624,4555) result=blocked ev="from=(5614,4553) to=(5614,4553) gain=0"
+time=2026-09-23T15:19:46.425+03:00 level=INFO msg=outcome verb=stride holder=advance tgt=(5624,4555) result=blocked ev="from=(5614,4553) to=(5614,4553) gain=0"
+time=2026-09-23T15:19:47.121+03:00 level=INFO msg=outcome verb=stride holder=advance tgt=(5624,4555) result=blocked ev="from=(5614,4553) to=(5614,4553) gain=0"
+time=2026-09-23T15:19:47.778+03:00 level=INFO msg=outcome verb=stride holder=advance tgt=(5624,4555) result=blocked ev="from=(5614,4553) to=(5614,4553) gain=0"
+time=2026-09-23T15:19:48.521+03:00 level=INFO msg=outcome verb=stride holder=advance tgt=(5624,4555) result=blocked ev="from=(5614,4553) to=(5614,4553) gain=0"
+time=2026-09-23T15:19:48.601+03:00 level=INFO msg=outcome verb=nav holder=march tgt="" result=refused ev="me=(5614,4553) area=42 tgt=(15080,6580) way=(0,0)"
+time=2026-09-23T15:19:49.321+03:00 level=INFO msg=outcome verb=stride holder=advance tgt=(5624,4555) result=blocked ev="from=(5614,4553) to=(5614,4553) gain=0"
+time=2026-09-23T15:19:49.325+03:00 level=WARN msg=PATHOLOGY kind=stuck detail="holder=advance pinned in 0x0 box for 19s" cooling=advance for=6s
+time=2026-09-23T15:19:49.326+03:00 level=INFO msg=outcome verb=escalate holder=advance tgt="" result=done ev="rung 3 (fail-leg) for intent.56: watchdog stuck"
+time=2026-09-23T15:19:51.550+03:00 level=INFO msg=outcome verb=stride holder=watchdog tgt=(5634,4553) result=blocked ev="from=(5614,4553) to=(5614,4553) gain=0"
+time=2026-09-23T15:19:51.602+03:00 level=INFO msg="status: idle" pos=(5614,4553) area=42 hp=121 lvl=26
+time=2026-09-23T15:19:53.490+03:00 level=INFO msg=grant to=advance class=travel urgency=0.40
+time=2026-09-23T15:19:53.534+03:00 level=INFO msg=outcome verb=nav holder=march tgt="" result=refused ev="me=(5614,4553) area=42 tgt=(15080,6580) way=(0,0)"
+time=2026-09-23T15:19:56.052+03:00 level=INFO msg=outcome verb=stride holder=advance/escape tgt=(5628,4553) result=blocked ev="from=(5614,4553) to=(5614,4553) gain=0"
+time=2026-09-23T15:19:56.144+03:00 level=WARN msg=PATHOLOGY kind=stuck detail="holder=advance pinned in 0x0 box for 19s" cooling=advance for=6s
+time=2026-09-23T15:19:56.146+03:00 level=INFO msg=outcome verb=escalate holder=advance tgt="" result=done ev="rung 3 (fail-leg) for intent.56: watchdog stuck"
+time=2026-09-23T15:19:58.374+03:00 level=INFO msg="status: idle" pos=(5581,4553) area=42 hp=121 lvl=26
+time=2026-09-23T15:20:00.210+03:00 level=INFO msg=grant to=advance class=travel urgency=0.40
+time=2026-09-23T15:20:00.260+03:00 level=INFO msg=outcome verb=nav holder=march tgt="" result=refused ev="me=(5579,4553) area=42 tgt=(15080,6580) way=(0,0)"
+time=2026-09-23T15:20:03.983+03:00 level=INFO msg=outcome verb=nav holder=march tgt="" result=refused ev="me=(5605,4572) area=42 tgt=(15080,6580) way=(0,0)"
+time=2026-09-23T15:20:07.354+03:00 level=INFO msg=outcome verb=nav holder=march tgt="" result=refused ev="me=(5608,4578) area=42 tgt=(15080,6580) way=(0,0)"
+time=2026-09-23T15:20:10.459+03:00 level=INFO msg=status pos=(5612,4585) area=42 hp=121 mp=248 maxmana=35 lvl=26 gold=80403 weapon=melee arrows=-1 holder=advance
+time=2026-09-23T15:20:10.590+03:00 level=INFO msg=outcome verb=nav holder=march tgt="" result=refused ev="me=(5628,4583) area=42 tgt=(15080,6580) way=(0,0)"
+time=2026-09-23T15:20:13.758+03:00 level=INFO msg=outcome verb=nav holder=march tgt="" result=refused ev="me=(5615,4577) area=42 tgt=(15080,6580) way=(0,0)"
+time=2026-09-23T15:20:14.711+03:00 level=INFO msg=outcome verb=escalate holder=advance tgt="" result=done ev="rung 3 (fail-leg) for intent.56: 60s stall at (15080,6580)"
+time=2026-09-23T15:20:14.712+03:00 level=INFO msg=verdict activity=advance verdict=abandoned
+time=2026-09-23T15:20:14.740+03:00 level=INFO msg=grant to=advance class=travel urgency=0.40
+time=2026-09-23T15:20:16.882+03:00 level=INFO msg=outcome verb=nav holder=march tgt="" result=refused ev="me=(5616,4589) area=42 tgt=(15080,6580) way=(0,0)"
+time=2026-09-23T15:20:19.930+03:00 level=INFO msg=outcome verb=nav holder=march tgt="" result=refused ev="me=(5642,4610) area=42 tgt=(15080,6580) way=(0,0)"
+time=2026-09-23T15:20:20.388+03:00 level=INFO msg=grant to=imbibe class=loot urgency=0.45
+time=2026-09-23T15:20:20.391+03:00 level=INFO msg=verdict activity=imbibe verdict=done
+time=2026-09-23T15:20:20.429+03:00 level=INFO msg=grant to=advance class=travel urgency=0.40
+time=2026-09-23T15:20:20.720+03:00 level=INFO msg=status pos=(5650,4614) area=42 hp=121 mp=248 maxmana=35 lvl=26 gold=80403 weapon=melee arrows=-1 holder=advance
+time=2026-09-23T15:20:23.203+03:00 level=INFO msg=outcome verb=nav holder=march tgt="" result=refused ev="me=(5654,4630) area=42 tgt=(15080,6580) way=(0,0)"
+time=2026-09-23T15:20:26.441+03:00 level=INFO msg=outcome verb=nav holder=march tgt="" result=refused ev="me=(5680,4652) area=42 tgt=(15080,6580) way=(0,0)"
+time=2026-09-23T15:20:31.495+03:00 level=INFO msg=status pos=(5696,4677) area=42 hp=121 mp=248 maxmana=35 lvl=26 gold=80403 weapon=melee arrows=-1 holder=advance
+time=2026-09-23T15:20:37.091+03:00 level=INFO msg=outcome verb=stride holder=advance tgt=(5610,4620) result=blocked ev="from=(5635,4645) to=(5635,4645) gain=0 detour=+45°"
+time=2026-09-23T15:20:37.229+03:00 level=INFO msg=outcome verb=nav holder=march tgt="" result=refused ev="me=(5635,4645) area=42 tgt=(15080,6580) way=(0,0)"
+time=2026-09-23T15:20:38.008+03:00 level=INFO msg=outcome verb=stride holder=advance tgt=(0,0) result=blocked ev="from=(5635,4645) to=(5635,4645) gain=0 detour=+45°"
+time=2026-09-23T15:20:38.527+03:00 level=INFO msg=outcome verb=stride holder=advance tgt=(5638,4645) result=blocked ev="from=(5635,4645) to=(5635,4645) gain=0"
+time=2026-09-23T15:20:39.014+03:00 level=INFO msg=outcome verb=stride holder=advance tgt=(5638,4645) result=blocked ev="from=(5635,4645) to=(5635,4645) gain=0"
+time=2026-09-23T15:20:39.516+03:00 level=INFO msg=outcome verb=stride holder=advance tgt=(5638,4645) result=blocked ev="from=(5635,4645) to=(5635,4645) gain=0"
+time=2026-09-23T15:20:40.040+03:00 level=INFO msg=outcome verb=stride holder=advance tgt=(5638,4645) result=blocked ev="from=(5635,4645) to=(5635,4645) gain=0"
+time=2026-09-23T15:20:40.555+03:00 level=INFO msg=outcome verb=stride holder=advance tgt=(5638,4645) result=blocked ev="from=(5635,4645) to=(5635,4645) gain=0"
+time=2026-09-23T15:20:40.622+03:00 level=INFO msg=outcome verb=nav holder=march tgt="" result=refused ev="me=(5635,4645) area=42 tgt=(15080,6580) way=(0,0)"
+time=2026-09-23T15:20:41.128+03:00 level=INFO msg=outcome verb=stride holder=advance tgt=(5638,4645) result=blocked ev="from=(5635,4645) to=(5635,4645) gain=0"
+time=2026-09-23T15:20:42.154+03:00 level=INFO msg="sentinel: game refocused — modifier amnesty fired"
+time=2026-09-23T15:20:43.582+03:00 level=INFO msg=outcome verb=stride holder=advance/escape tgt=(5641,4645) result=blocked ev="from=(5635,4645) to=(5635,4645) gain=0"
+time=2026-09-23T15:20:43.583+03:00 level=INFO msg=status pos=(5635,4645) area=42 hp=121 mp=248 maxmana=35 lvl=26 gold=80403 weapon=melee arrows=-1 holder=advance
+time=2026-09-23T15:20:43.583+03:00 level=INFO msg="executive: game refocused"
+time=2026-09-23T15:20:43.742+03:00 level=INFO msg=outcome verb=nav holder=march tgt="" result=refused ev="me=(5635,4645) area=42 tgt=(15080,6580) way=(0,0)"
+time=2026-09-23T15:20:44.234+03:00 level=INFO msg=outcome verb=stride holder=advance tgt=(5638,4645) result=blocked ev="from=(5635,4645) to=(5635,4645) gain=0"
+time=2026-09-23T15:20:44.771+03:00 level=INFO msg=outcome verb=stride holder=advance tgt=(5638,4645) result=blocked ev="from=(5635,4645) to=(5635,4645) gain=0"
+time=2026-09-23T15:20:44.771+03:00 level=INFO msg="executive: game unfocused — playing on (posted input, your windows untouched)"
+time=2026-09-23T15:20:45.336+03:00 level=INFO msg=outcome verb=stride holder=advance tgt=(5638,4645) result=blocked ev="from=(5635,4645) to=(5635,4645) gain=0"
+time=2026-09-23T15:20:45.854+03:00 level=INFO msg=outcome verb=stride holder=advance tgt=(5638,4645) result=blocked ev="from=(5635,4645) to=(5635,4645) gain=0"
+time=2026-09-23T15:20:46.420+03:00 level=INFO msg=outcome verb=stride holder=advance tgt=(5638,4645) result=blocked ev="from=(5635,4645) to=(5635,4645) gain=0"
+time=2026-09-23T15:20:46.888+03:00 level=INFO msg=outcome verb=stride holder=advance tgt=(5638,4645) result=blocked ev="from=(5635,4645) to=(5635,4645) gain=0"
+time=2026-09-23T15:20:46.957+03:00 level=INFO msg="healed input fn" fn=GetPhysicalCursorPos
+time=2026-09-23T15:20:46.957+03:00 level=INFO msg="healed input fn" fn=GetCursorPos
+time=2026-09-23T15:20:46.957+03:00 level=INFO msg="healed input fn" fn=GetCursorInfo
+time=2026-09-23T15:20:46.958+03:00 level=INFO msg="healed input fn" fn=SetCursorPos
+time=2026-09-23T15:20:46.958+03:00 level=INFO msg="healed input fn" fn=GetKeyState
+time=2026-09-23T15:20:46.958+03:00 level=INFO msg="healed input fn" fn=GetAsyncKeyState
+time=2026-09-23T15:20:46.958+03:00 level=INFO msg="healed input fn" fn=GetKeyboardState
+time=2026-09-23T15:20:46.958+03:00 level=INFO msg="healed input fn" fn=TrackMouseEvent
