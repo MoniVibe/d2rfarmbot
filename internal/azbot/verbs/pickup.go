@@ -25,6 +25,37 @@ type Pickup struct {
 	// AllowBelow lifts the uniques-only guard for belt bottles (2026-09-23: potion
 	// looting). Loot sets it ONLY for items the belt classifier calls a potion.
 	AllowBelow bool
+	// Accept widens the hover oracle to the caller's loot POLICY (step 11, run
+	// u: in a pile the probe kept hovering the neighbours — "seen" named Keys —
+	// and whiffed twice at d=3 on the one exact UnitID). A hovered ground item
+	// Accept approves is as good a click as the target: the click goes to THAT
+	// item and the postcondition follows it. Nil = the exact target only.
+	Accept func(it data.Item) bool
+}
+
+// hoveredPick is the pure decision behind the probe: which ground item under
+// the cursor may be clicked. The target wins (by HoverData or its own
+// IsHovered flag); otherwise any hovered item the policy accepts. ok=false:
+// nothing clickable is hovered.
+func hoveredPick(hover data.HoverData, ground []data.Item, target data.UnitID, accept func(data.Item) bool) (data.UnitID, bool) {
+	if hover.IsHovered && hover.UnitID == target {
+		return target, true
+	}
+	for _, it := range ground {
+		if it.UnitID == target && it.IsHovered {
+			return target, true
+		}
+	}
+	if accept == nil {
+		return 0, false
+	}
+	for _, it := range ground {
+		hovered := it.IsHovered || (hover.IsHovered && hover.UnitType == 4 && hover.UnitID == it.UnitID)
+		if hovered && accept(it) {
+			return it.UnitID, true
+		}
+	}
+	return 0, false
 }
 
 func (pk Pickup) Do(m *motor.Motor, gr *game.MemoryReader, p *percept.Perceptor, led *Ledger, holder string) Outcome {
@@ -117,12 +148,29 @@ func (pk Pickup) Do(m *motor.Motor, gr *game.MemoryReader, p *percept.Perceptor,
 			break
 		}
 	}
+	// PROBE ON STILL GROUND (step 11, run u: two whiffs at d=3 while she slid
+	// d=6→10→9): a projection taken while she is still carried by the last
+	// stride aims where the item WAS relative to her. Let her stop (≤450ms)
+	// before the first probe, and re-project from her live position per row.
 	me := d.PlayerUnit.Position
-	bx := int(float32((targetPos.X-me.X)-(targetPos.Y-me.Y))*19.8) + gr.GameAreaSizeX/2
-	by := int(float32((targetPos.X-me.X)+(targetPos.Y-me.Y))*9.9) + gr.GameAreaSizeY/2
+	for i := 0; i < 3; i++ {
+		time.Sleep(150 * time.Millisecond)
+		now := gr.GetData().PlayerUnit.Position
+		if now == me {
+			break
+		}
+		me = now
+	}
+	sweepStart := me
+	project := func(at data.Position) (int, int) {
+		return int(float32((targetPos.X-at.X)-(targetPos.Y-at.Y))*19.8) + gr.GameAreaSizeX/2,
+			int(float32((targetPos.X-at.X)+(targetPos.Y-at.Y))*9.9) + gr.GameAreaSizeY/2
+	}
+	bx, by := project(me)
+	clicked := pk.Target
 	groundGone := func() bool {
 		for _, it := range gr.GetData().Inventory.ByLocation(item.LocationGround) {
-			if it.UnitID == pk.Target {
+			if it.UnitID == clicked {
 				return false
 			}
 		}
@@ -135,6 +183,12 @@ func (pk Pickup) Do(m *motor.Motor, gr *game.MemoryReader, p *percept.Perceptor,
 	// ground-gone postcondition decides whether the click worked; a miss returns
 	// to Loot's bounded failure/ban path rather than re-bidding forever.
 	if !m.HoverReady() {
+		if !ClickableLogical(gr, bx, by) {
+			o.Result = ResRefused
+			o.Evidence = fmt.Sprintf("background pickup point (%d,%d) is off the world", bx, by)
+			led.Append(o)
+			return o
+		}
 		m.ClickLeft(bx, by)
 		deadline := time.Now().Add(win)
 		for time.Now().Before(deadline) {
@@ -164,22 +218,19 @@ func (pk Pickup) Do(m *motor.Motor, gr *game.MemoryReader, p *percept.Perceptor,
 	// watched her hover for minutes, 00:05) — and it is DOUBLE-CONFIRMED,
 	// because a single read reflects the prior probe's cursor (the
 	// enterportal frame-latency lesson, finally applied here).
-	itemHovered := func() bool {
+	//
+	// PROBE = HOVER ONLY: the sweep moves the cursor and reads; the ONE click
+	// comes after a double-confirmed hover on an item worth taking — the
+	// target, or (with Accept) any wanted item the cursor landed on.
+	itemHovered := func() (data.UnitID, bool) {
 		dd := gr.GetData()
-		if dd.HoverData.IsHovered && dd.HoverData.UnitID == pk.Target {
-			return true
-		}
-		for _, it := range dd.Inventory.ByLocation(item.LocationGround) {
-			if it.UnitID == pk.Target && it.IsHovered {
-				return true
-			}
-		}
-		return false
+		return hoveredPick(dd.HoverData, dd.Inventory.ByLocation(item.LocationGround), pk.Target, pk.Accept)
 	}
 	confirmed, px, py := false, bx, by
 	var seen []string // what the cursor DID hover (whiff diagnosis, as in hoverstrike)
 sweep:
 	for _, dy := range []int{0, -8, 8, -16, -24} {
+		bx, by = project(gr.GetData().PlayerUnit.Position) // fresh per row
 		for _, dx := range []int{0, -10, 10, -20, 20} {
 			cx, cy := bx+dx, by+dy
 			if !ClickableLogical(gr, cx, cy) {
@@ -187,7 +238,8 @@ sweep:
 			}
 			m.AimPhysical(cx, cy)
 			time.Sleep(50 * time.Millisecond)
-			if !itemHovered() {
+			id, ok := itemHovered()
+			if !ok {
 				if hd := gr.GetData().HoverData; hd.IsHovered {
 					seen = append(seen, fmt.Sprintf("%d/t%d", hd.UnitID, hd.UnitType))
 				} else {
@@ -197,17 +249,25 @@ sweep:
 			}
 			m.AimPhysical(cx, cy)
 			time.Sleep(70 * time.Millisecond)
-			if itemHovered() {
-				confirmed, px, py = true, cx, cy
+			if id2, ok2 := itemHovered(); ok2 && id2 == id {
+				confirmed, px, py, clicked = true, cx, cy, id
 				break sweep
 			}
 		}
 	}
 	if !confirmed {
 		o.Result = ResWhiff
-		o.Evidence = fmt.Sprintf("no hover confirmation on item (d=%d aim=%d,%d seen=%v)", chebyshev(me, targetPos), bx, by, seen)
+		now := gr.GetData().PlayerUnit.Position
+		o.Evidence = fmt.Sprintf("no hover confirmation on item (d=%d aim=%d,%d seen=%v)", chebyshev(now, targetPos), bx, by, seen)
+		if now != sweepStart {
+			// She moved while only the cursor did: not ours — name it.
+			o.Evidence += fmt.Sprintf(" drift=(%d,%d) during the hover-only sweep", now.X-sweepStart.X, now.Y-sweepStart.Y)
+		}
 		led.Append(o)
 		return o
+	}
+	if clicked != pk.Target {
+		o.Target += fmt.Sprintf(" took=%d (wanted neighbour under the cursor)", clicked)
 	}
 	m.ClickLeft(px, py)
 

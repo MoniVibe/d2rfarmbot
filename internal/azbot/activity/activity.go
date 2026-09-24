@@ -2000,9 +2000,33 @@ func (f *Fight) assess(o verbs.Outcome) {
 
 // ---------------------------------------------------------------- Loot (ClassLoot)
 
+// lootProgress is Loot's "progress or let go" clock, measured over a WINDOW
+// that restarts at every click Loot itself makes (step 11, run u: two pickup
+// probes at d=3, then d=6→10→9 and a 60s ban for "no progress in 4s" — the
+// best distance was the d=3 the pickups had already reached, so walking back
+// could never beat it). Distance lost to our own clicks is not a stall; only a
+// window that fails to improve on its own starting distance is.
+type lootProgress struct {
+	best  int       // best distance since the window opened (<0: not yet sampled)
+	since time.Time // when best last improved, or the window opened
+}
+
+// restart opens a fresh window at now: the next observation is its baseline.
+func (p *lootProgress) restart(now time.Time) { p.best, p.since = -1, now }
+
+// stuck observes distance d at now and reports whether the approach has made
+// no progress for longer than patience while still walking (d > 3; at hand the
+// pickup's own failure count rules).
+func (p *lootProgress) stuck(d int, now time.Time, patience time.Duration) bool {
+	if p.best < 0 || d < p.best {
+		p.best, p.since = d, now
+		return false
+	}
+	return d > 3 && now.Sub(p.since) > patience
+}
+
 type Loot struct {
-	bestD    int       // closest approach to the current target
-	bestAt   time.Time // when bestD last improved
+	prog     lootProgress // approach clock; restarted per target and per pickup click
 	target   data.UnitID
 	failures map[data.UnitID]int
 	ban      map[data.UnitID]time.Time
@@ -2062,6 +2086,20 @@ func lootBlockedByHostile(s *percept.Snapshot) bool {
 		}
 	}
 	return false
+}
+
+// acceptFor is the pickup probe's policy oracle: a ground item under the
+// cursor is worth the click when the loot policy wants it and it is not
+// banned — the exact target is not the only unique in a pile (step 11).
+func (l *Loot) acceptFor(s *percept.Snapshot, now time.Time) func(data.Item) bool {
+	return func(it data.Item) bool {
+		if until, banned := l.ban[it.UnitID]; banned && now.Before(until) {
+			return false
+		}
+		ref := percept.ItemRef{ID: it.UnitID, Pos: it.Position, Name: string(it.Name),
+			Quality: int(it.Quality), Potion: percept.PotionKind(it, true)}
+		return l.wanted(s, ref) > 0
+	}
 }
 
 func (l *Loot) pick(s *percept.Snapshot) (percept.ItemRef, float64, bool) {
@@ -2136,16 +2174,15 @@ func (l *Loot) Step(ctx *Ctx) Verdict {
 		return Done
 	}
 	if it.ID != l.target {
-		l.bestD, l.bestAt = 1<<30, time.Now()
+		l.prog.restart(time.Now())
 	}
 	l.target = it.ID
 	d := chebyshev(s.Me.Pos, it.Pos)
 	// PROGRESS OR LET GO (2026-09-23, Dry Hills: 19s "running" in place toward a
 	// drop behind clutter the grid cannot see, three times in two minutes). The
-	// distance must shrink within 4s or the drop is banned for a minute.
-	if d < l.bestD {
-		l.bestD, l.bestAt = d, time.Now()
-	} else if d > 3 && time.Since(l.bestAt) > 4*time.Second { // walking only; at hand the pickup's own failure count rules
+	// distance must shrink within 4s or the drop is banned for a minute — 4s
+	// measured from the last pickup click, against that window's own best.
+	if l.prog.stuck(d, time.Now(), 4*time.Second) {
 		l.ban[it.ID] = time.Now().Add(60 * time.Second)
 		l.j, l.target = nil, 0
 		ctx.Led.Append(verbs.Outcome{Verb: "loot", Holder: l.Name(), Result: verbs.ResBlocked,
@@ -2172,7 +2209,11 @@ func (l *Loot) Step(ctx *Ctx) Verdict {
 		return Running
 	}
 	o := verbs.Pickup{Target: it.ID, TargetPos: it.Pos, TargetQuality: it.Quality,
-		AllowBelow: it.Potion == "health" || it.Potion == "mana"}.Do(ctx.M, ctx.GR, ctx.P, ctx.Led, l.Name())
+		AllowBelow: it.Potion == "health" || it.Potion == "mana",
+		Accept:     l.acceptFor(s, time.Now())}.Do(ctx.M, ctx.GR, ctx.P, ctx.Led, l.Name())
+	// Whatever the pickup did to her position is ours: the approach clock
+	// starts over from wherever she stands now.
+	l.prog.restart(time.Now())
 	if o.Result != verbs.ResDone {
 		l.failures[it.ID]++
 		if l.failures[it.ID] >= 3 {
