@@ -88,7 +88,7 @@ type Seen struct {
 }
 
 // Eye publishes the latest Seen for other goroutines (the Sentinel, later).
-// Read-only in shadow mode: nothing gates on it yet.
+// Without -janitor it is read-only; with it, the executive gate judges every Step on it.
 type Eye struct{ p atomic.Pointer[Seen] }
 
 // Publish replaces the current observation.

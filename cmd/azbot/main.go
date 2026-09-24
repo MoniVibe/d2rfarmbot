@@ -218,6 +218,7 @@ func main() {
 	replayF := flag.String("replay", "", "OFFLINE DECISION REPLAY: path to a flight .jsonl — every frame runs Demand + arbiter and prints the grant timeline. No game needed; live failures become desk-checkable evidence (the STE mentality: verify against recorded reality, not her blood)")
 	exitXY := flag.String("exitxy", "", "relogtest: screenshot x,y of the pause menu's Save and Exit button")
 	playXY := flag.String("playxy", "", "relogtest: screenshot x,y of the main menu's Play button")
+	janitorF := flag.Bool("janitor", false, "v2 step 6: the executive GATES every Step on the screen oracle and a janitor closes foreign panels by sight (replaces the pause sentry, startup hygiene, cursor-drop ESC, watchdog ESC probe and the services' blind ESCs). Also AZBOT_JANITOR=1")
 	logger := slog.New(slog.NewTextHandler(os.Stdout, nil))
 
 	flag.Parse()
@@ -273,6 +274,8 @@ func main() {
 	}
 	logger.Info("world scale", "scale", ws, "client", client, "dpi", *dpiScale)
 	logger.Info("navigation mode", "deliberate", os.Getenv("AZBOT_DELIBERATE") == "1")
+	janitorOn := *janitorF || os.Getenv("AZBOT_JANITOR") == "1"
+	logger.Info("ui mode", "janitor", janitorOn)
 	gi, err := game.InjectorInit(logger, pid)
 	if err != nil {
 		logger.Error("injector init failed", "err", err)
@@ -1828,13 +1831,24 @@ func main() {
 	// STARTUP UI HYGIENE, BY SIGHT (2026-09-23): the blind ESC dance here raised
 	// the pause menu whenever no panel was open, and memory cannot see panels.
 	// Close an inherited shop by its own X, then click away any pause/sub-panel.
-	if x, y, ok := game.ShopOpenX(gr.Screenshot()); ok {
-		logger.Info("startup: inherited trade panel — closing by its X")
-		m.RealMenuClick(x, y)
-		time.Sleep(400 * time.Millisecond)
-	}
-	if n := activity.EnsureWorld(gr, m); n > 0 {
-		logger.Info("startup: cleared blocking screens by sight", "layers", n)
+	// JANITOR ON (v2 step 6): the janitor does this by the same oracle the gate
+	// uses — every seen panel is foreign with no holder — and it runs once
+	// more every tick, so it also replaces the pause sentry below.
+	activity.JanitorOn = janitorOn
+	gk := newGatekeeper(logger, m, gr, sh)
+	if janitorOn {
+		if n := gk.settle(p); n > 0 {
+			logger.Info("startup: janitor cleared foreign screens by sight", "actions", n)
+		}
+	} else {
+		if x, y, ok := game.ShopOpenX(gr.Screenshot()); ok {
+			logger.Info("startup: inherited trade panel — closing by its X")
+			m.RealMenuClick(x, y)
+			time.Sleep(400 * time.Millisecond)
+		}
+		if n := activity.EnsureWorld(gr, m); n > 0 {
+			logger.Info("startup: cleared blocking screens by sight", "layers", n)
+		}
 	}
 	// calibrate wraps probing + the owner's declared build: the owner KNOWS the char
 	// (classic-bot law — kolbot/koolo configs declared skills; nobody inferred them).
@@ -2109,6 +2123,7 @@ func main() {
 	}
 	lastUnpause := time.Time{}
 	lastDeEsc := time.Time{}
+	gateOpenAt := time.Time{} // janitor ON: when the gate last reopened (the stall alarm's grace)
 	idleSince := time.Time{}
 	stuckRunN := 0
 	stuckRunPos := data.Position{}
@@ -2306,7 +2321,9 @@ func main() {
 		// sentry never fired and a stray pause ate whole runs. The screen is the
 		// oracle now (game.PauseMenuVisible, 12/12 vs 0/12 on real captures), and
 		// the cure is a click on Return to Game — never an ESC, which toggles.
-		if time.Now().After(activity.MenuSanctionUntil) && time.Since(lastDeEsc) > 3*time.Second {
+		// JANITOR ON: retired — the gate below sees the pause menu every tick
+		// and the janitor clicks Return to Game (Relog's sanction honoured).
+		if !janitorOn && time.Now().After(activity.MenuSanctionUntil) && time.Since(lastDeEsc) > 3*time.Second {
 			lastDeEsc = time.Now()
 			if activity.ClearPause(gr, m) {
 				logger.Warn("menu sentry: pause menu on screen with no sanction — clicked Return to Game")
@@ -2348,8 +2365,32 @@ func main() {
 		// One context per tick: the lifecycle calls inside Decide and the Step
 		// below see the same world.
 		actx := &activity.Ctx{M: m, GR: gr, P: p, Led: led, Grid: grid, Cap: &cap, Snap: s, SwapKey: hid.GetASCIICode(*swapKey), InvKey: hid.GetASCIICode(*invKeyF), Regrid: regrid, Mem: mem}
+		if janitorOn {
+			actx.Screen = gk.Stable()
+		}
 		grant, gch := core.Decide(actx, demands)
 		lastBids = len(demands)
+
+		// THE GATE (v2 step 6, janitor ON): the holder's Needs against the
+		// stable screen Reading. A foreign panel or cursor item earns ONE
+		// janitor action; the holder's clock pauses and it does not Step. The
+		// monitors below are skipped too — a gated holder is not stuck, and the
+		// watchdog's escape stride must not walk into a panel.
+		if janitorOn {
+			open, was := gk.step(tick, s, arb, roster)
+			if was > 2*time.Second {
+				// A long block starved the position monitors: start them fresh
+				// (the refocus precedent) so the wait is not read as a wedge.
+				wd = watchdog.New()
+				deadmanPos, deadmanAt, emaRefAt = s.Me.Pos, time.Now(), time.Now()
+			}
+			if was > 0 {
+				gateOpenAt = time.Now()
+			}
+			if !open {
+				continue
+			}
+		}
 
 		// SELF-OBSERVATION (the owner's ask: "tell what the bot is up to, moments where
 		// it's stuck, looping, thrashing — and unstuck itself"): the bot consumes its own
@@ -2478,7 +2519,9 @@ func main() {
 					// bring diablo to the forefront sometimes") — it may not
 					// fire on the first stumble. Three same-box stucks first:
 					// real wedges persist; noise doesn't steal the screen.
-					if o.Result != verbs.ResDone && !s.Me.CursorItem && stuckRunN >= 3 &&
+					// JANITOR ON: no probe — the screen Reading answers "is a
+					// menu up?" and the gate already acted on it.
+					if !janitorOn && o.Result != verbs.ResDone && !s.Me.CursorItem && stuckRunN >= 3 &&
 						time.Since(lastUnpause) > 30*time.Second {
 						safeGround := true
 						for _, e := range s.Enemies {
@@ -2565,8 +2608,9 @@ func main() {
 			prevEngaged = m.Engage.Engaged()
 			engagedAt = time.Now()
 		}
+		// Gate grace (janitor ON): a holder the gate held was silent by order.
 		if grant != nil && time.Since(stallWarnAt) > 2*time.Second && !led.LastAppend().IsZero() &&
-			time.Since(engagedAt) > 5*time.Second {
+			time.Since(engagedAt) > 5*time.Second && time.Since(gateOpenAt) > 5*time.Second {
 			silent := time.Since(led.LastAppend())
 			bar := 4 * time.Second
 			if grant.Demand.Class == arbiter.ClassSurvive {
@@ -2644,21 +2688,26 @@ func main() {
 		// feet (a unique gets re-looted by doctrine; junk stays where junk
 		// belongs) → one ESC for the byte-blind bag that identify/equip
 		// opened (the menu sentry cures a stray pause menu within a tick).
-		if s.Me.CursorItem {
-			if cursorItemAt.IsZero() {
-				cursorItemAt = time.Now()
-			}
-			if time.Since(cursorItemAt) > 3*time.Second && time.Since(cursorDropAt) > 10*time.Second &&
-				m.Engage.Engaged() {
-				logger.Warn("watchdog: CURSOR-ITEM DROP — lmb at feet, esc the bag")
-				m.BareClick(gr.GameAreaSizeX/2, gr.GameAreaSizeY/2+140)
-				time.Sleep(400 * time.Millisecond)
-				m.RealEsc()
-				cursorDropAt = time.Now()
+		// JANITOR ON: replaced by the gate's cursor rule — a foreign item on
+		// clear ground is dropped at the same spot, over an open bag it is left
+		// (logged), and the drop is judged by a later Reading. Never an ESC.
+		if !janitorOn {
+			if s.Me.CursorItem {
+				if cursorItemAt.IsZero() {
+					cursorItemAt = time.Now()
+				}
+				if time.Since(cursorItemAt) > 3*time.Second && time.Since(cursorDropAt) > 10*time.Second &&
+					m.Engage.Engaged() {
+					logger.Warn("watchdog: CURSOR-ITEM DROP — lmb at feet, esc the bag")
+					m.BareClick(gr.GameAreaSizeX/2, gr.GameAreaSizeY/2+140)
+					time.Sleep(400 * time.Millisecond)
+					m.RealEsc()
+					cursorDropAt = time.Now()
+					cursorItemAt = time.Time{}
+				}
+			} else {
 				cursorItemAt = time.Time{}
 			}
-		} else {
-			cursorItemAt = time.Time{}
 		}
 		if time.Since(statusAt) > 10*time.Second {
 			// mp/maxmana joined 2026-07-20 11:30 (the owner: "he has about 33

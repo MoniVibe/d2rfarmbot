@@ -2,8 +2,8 @@ package main
 
 // The executive's v2 observability and the screen oracle in SHADOW mode
 // (docs/AZBOT_V2.md steps 4-5): trace lines, the 1 Hz state line, decision
-// frames, and a bounded-rate screen read that is logged and published but
-// never gates or acts.
+// frames, and a bounded-rate screen read that is logged and published. It never
+// acts itself; with -janitor the gate (janitor.go) judges every Step on it.
 
 import (
 	"fmt"
@@ -70,6 +70,7 @@ type shadow struct {
 	seen   bool // at least one capture observed
 	last   screen.Reading
 	lineAt time.Time
+	gate   string // janitor gate for the state line: ok | blocked(<panels>) | wedge ("" = janitor off)
 }
 
 // Every 2nd tick, 100ms floor: the 40ms tick floor would otherwise ask for
@@ -133,7 +134,7 @@ func (sh *shadow) stateLine(tick uint64, s *percept.Snapshot, ses string, arb *a
 	hold := holderWho(arb)
 	st := trace.State{At: now, Tick: tick, Session: ses, Hold: hold, Held: arb.Held(hold),
 		Phase: phaseOf(roster, hold), Valid: s.Valid, HP: s.Me.HPPct, MP: s.Me.MPPct,
-		X: s.Me.Pos.X, Y: s.Me.Pos.Y}
+		X: s.Me.Pos.X, Y: s.Me.Pos.Y, Gate: sh.gate}
 	if sh.seen {
 		b := sh.tr.State()
 		st.Mode, st.UI, st.Cursor = trace.ModeName(b.Mode), trace.UIName(b.Panels), "-"
@@ -163,6 +164,7 @@ func (sh *shadow) frame(tick uint64, s *percept.Snapshot, arb *arbiter.Arbiter, 
 	}
 	if sh.seen {
 		f.Screen, f.Seen = sh.tr.State().String(), sh.last.String()
+		f.Gate = sh.gate
 	}
 	return f
 }
