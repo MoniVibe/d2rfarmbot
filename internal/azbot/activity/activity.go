@@ -133,7 +133,7 @@ func losClear(g *game.Grid, a, b data.Position) bool {
 // the owner's left skill in place — so Approach (policy.Choose's "out of
 // reach, no hover") degrades to that in-place swing there.
 func meleeAttackKey(ctx *Ctx, s *percept.Snapshot, dist int) byte {
-	_, key := meleeStrike(ctx, s, dist, false, true)
+	_, key := meleeStrike(ctx, s, dist, nil, false, true)
 	return key
 }
 
@@ -141,12 +141,40 @@ func meleeAttackKey(ctx *Ctx, s *percept.Snapshot, dist int) byte {
 // (policy.LeftAudit); Fight feeds it, every strike site obeys it.
 var leftAudit policy.LeftAudit
 
+// leapClock is the leap cooldown (policy.LeapCooldown): stamped by every
+// Leap Attack that goes out (noteLeap), read by every strike decision.
+var leapClock policy.LeapClock
+
+// noteLeap stamps the leap cooldown when key is the proven Leap Attack.
+func noteLeap(ctx *Ctx, key byte) {
+	if key != 0 && ctx != nil && ctx.Cap != nil && ctx.Cap.LeapAttack != nil && key == ctx.Cap.LeapAttack.Key {
+		leapClock.Fired(time.Now())
+	}
+}
+
+// packNear counts the sighted enemies within policy.PackRadius of us — the
+// pack we already stand in (a leap out of it is vetoed).
+func packNear(s *percept.Snapshot) int {
+	n := 0
+	for _, e := range s.Enemies {
+		if sighted(s, e) && chebyshev(s.Me.Pos, e.Pos) <= policy.PackRadius {
+			n++
+		}
+	}
+	return n
+}
+
 // meleeStrike runs the pure strike policy on the proven capability and maps
 // the answer onto a key: 0 for the left hand (and the plain attack), the
-// proven right binding's key otherwise.
-func meleeStrike(ctx *Ctx, s *percept.Snapshot, dist int, hoverOK, leapOK bool) (policy.Kind, byte) {
+// proven right binding's key otherwise. to is the struck position when the
+// caller knows it (nil: unknown) — a leap along a walled line is vetoed.
+func meleeStrike(ctx *Ctx, s *percept.Snapshot, dist int, to *data.Position, hoverOK, leapOK bool) (policy.Kind, byte) {
 	if ctx == nil || ctx.Cap == nil || s == nil {
 		return policy.Basic, 0
+	}
+	walled := false
+	if to != nil && ctx.Grid != nil && dist > policy.MeleeReach {
+		walled = !losClear(ctx.Grid, s.Me.Pos, *to)
 	}
 	c := ctx.Cap
 	combatIsLeap := c.Combat != nil && c.LeapAttack != nil && c.Combat.Skill == c.LeapAttack.Skill
@@ -166,6 +194,9 @@ func meleeStrike(ctx *Ctx, s *percept.Snapshot, dist int, hoverOK, leapOK bool) 
 		LeapReady:    leapAttackReady(s),
 		LeapBlocked:  !leapOK || time.Now().Before(vaultHungerUntil),
 		HoverOK:      hoverOK,
+		LeapCooling:  leapClock.Cooling(time.Now()),
+		PackNear:     packNear(s),
+		LineWalled:   walled,
 	})
 	switch k {
 	case policy.Leap:
@@ -1748,7 +1779,7 @@ func (f *Fight) Step(ctx *Ctx) Verdict {
 		// left skill the pre-Carnage order (Leap, Double Swing, plain) stands.
 		// rk is the IN-REACH strike (ring, clinch); the pursuit key is chosen
 		// below, once the lock has settled.
-		_, rk := meleeStrike(ctx, s, contact, false, true)
+		_, rk := meleeStrike(ctx, s, contact, &contactPos, false, true)
 		if time.Now().Before(vaultHungerUntil) {
 			rk = 0 // the pool is spoken for: the movement leap eats first
 		}
@@ -1862,7 +1893,7 @@ func (f *Fight) Step(ctx *Ctx) Verdict {
 		// swing at air (SHIFT), so close on foot and swing in reach.
 		d = chebyshev(s.Me.Pos, f.targetPos)
 		hoverOK := ctx.M.HoverReady() && !time.Now().Before(f.hoverBlindUntil)
-		ck, mk := meleeStrike(ctx, s, d, hoverOK, contact > 3)
+		ck, mk := meleeStrike(ctx, s, d, &f.targetPos, hoverOK, contact > 3)
 		if time.Now().Before(vaultHungerUntil) && mk != 0 {
 			ck, mk = policy.Basic, 0 // the pool is spoken for: the movement leap eats first
 		}
@@ -1891,9 +1922,18 @@ func (f *Fight) Step(ctx *Ctx) Verdict {
 		}
 		var accept map[data.UnitID]bool
 		if s.Me.WeaponKind != "bow" { // melee: any live, sighted hostile in reach is as good
+			// ...and any body no farther than the lock itself (relay R9: all 52
+			// pursuit hovers whiffed, 39 of them with the cursor ON another
+			// monster — the one standing between us and the lock, at 4-7 tiles,
+			// outside the old 4-tile accept ring). A nearer body under the
+			// cursor is exactly what melee should hit on the way.
+			ring := 4
+			if d > ring {
+				ring = d
+			}
 			accept = map[data.UnitID]bool{}
 			for _, e := range s.Enemies {
-				if !e.Walled && chebyshev(s.Me.Pos, e.Pos) <= 4 {
+				if !e.Walled && chebyshev(s.Me.Pos, e.Pos) <= ring {
 					accept[e.ID] = true
 				}
 			}
@@ -1943,6 +1983,7 @@ func (f *Fight) Step(ctx *Ctx) Verdict {
 			if o.Unit != 0 {
 				hit = data.UnitID(o.Unit) // Accept landed on a neighbour
 			}
+			noteLeap(ctx, mk)
 			f.noteStrike(ctx, hit, mk, true)
 		}
 		f.assess(o)
@@ -2022,6 +2063,7 @@ func volleyAt(ctx *Ctx, pos data.Position, key byte, skipSelect bool) bool {
 		if rs != skill.TomeOfIdentify && rs != skill.ScrollOfIdentify &&
 			rs != skill.TomeOfTownPortal && rs != skill.ScrollOfTownPortal {
 			ctx.M.ClickRight(bx, by)
+			noteLeap(ctx, key)
 			return true
 		}
 		// A tome refuses to disarm: fall through to the plain attack below.

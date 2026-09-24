@@ -42,11 +42,11 @@ func TestMeleeAttackKeyPrefersLeapAttackAndFallsBackToDoubleSwing(t *testing.T) 
 	ctx := &Ctx{Cap: &combat.Capability{LeapAttack: leap, DoubleSwing: double, Combat: leap}}
 	s := &percept.Snapshot{Valid: true}
 	s.Me.MaxMana, s.Me.MPPct = 40, 50
-	if got := meleeAttackKey(ctx, s, 5); got != leap.Key {
+	if got := meleeAttackKey(ctx, s, 6); got != leap.Key {
 		t.Fatalf("healthy ranged contact key = %#x, want Leap Attack %#x", got, leap.Key)
 	}
 	s.Me.MPPct = 15
-	if got := meleeAttackKey(ctx, s, 5); got != double.Key {
+	if got := meleeAttackKey(ctx, s, 6); got != double.Key {
 		t.Fatalf("low-mana contact key = %#x, want Double Swing %#x", got, double.Key)
 	}
 	if got := meleeAttackKey(ctx, s, 2); got != double.Key {

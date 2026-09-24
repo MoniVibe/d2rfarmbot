@@ -29,25 +29,25 @@ func TestMeleeStrikeLeftPrimary(t *testing.T) {
 	s := &percept.Snapshot{Valid: true}
 	s.Me.MaxMana, s.Me.MPPct = 40, 80
 
-	if k, key := meleeStrike(ctx, s, 2, true, true); k != policy.Left || key != 0 {
+	if k, key := meleeStrike(ctx, s, 2, nil, true, true); k != policy.Left || key != 0 {
 		t.Fatalf("in reach: got %v key %#x, want the left hand with no key press", k, key)
 	}
 	if key := meleeAttackKey(ctx, s, 1); key != 0 {
 		t.Fatalf("blind point-blank strike key = %#x, want 0 (SHIFT+left)", key)
 	}
-	if k, key := meleeStrike(ctx, s, 6, true, true); k != policy.Leap || key != 0x74 {
+	if k, key := meleeStrike(ctx, s, 6, nil, true, true); k != policy.Leap || key != 0x74 {
 		t.Fatalf("beyond reach: got %v key %#x, want the Leap Attack gap-closer", k, key)
 	}
-	if k, _ := meleeStrike(ctx, s, 6, false, false); k != policy.Approach {
+	if k, _ := meleeStrike(ctx, s, 6, nil, false, false); k != policy.Approach {
 		t.Fatalf("beyond reach, hover dark, leap forbidden: got %v, want Approach", k)
 	}
 	leftAudit.BenchUntil = time.Now().Add(time.Minute)
-	if k, key := meleeStrike(ctx, s, 2, true, true); k != policy.Swing || key != 0x72 {
+	if k, key := meleeStrike(ctx, s, 2, nil, true, true); k != policy.Swing || key != 0x72 {
 		t.Fatalf("benched left: got %v key %#x, want the Double Swing fallback", k, key)
 	}
 	leftAudit = policy.LeftAudit{}
 	ctx.Cap.Left.Disabled = true
-	if k, key := meleeStrike(ctx, s, 2, true, true); k != policy.Swing || key != 0x72 {
+	if k, key := meleeStrike(ctx, s, 2, nil, true, true); k != policy.Swing || key != 0x72 {
 		t.Fatalf("-leftskill=off: got %v key %#x, want the pre-Carnage Double Swing", k, key)
 	}
 }
@@ -120,5 +120,65 @@ func TestSilentLeftStrikesBenchCarnage(t *testing.T) {
 	}
 	if len(strikeLines(led, "fight")) != 1 {
 		t.Fatalf("the bench must be written: %q", strikeLines(led, "fight"))
+	}
+}
+
+// Relay R9's leap gates at the activity seam: a short gap is walked, a leap
+// cools the next one, and a pack we stand in vetoes the leap.
+func TestMeleeStrikeLeapGates(t *testing.T) {
+	defer func() { leftAudit, leapClock = policy.LeftAudit{}, policy.LeapClock{} }()
+	ctx := &Ctx{Cap: fableboi()}
+	s := &percept.Snapshot{Valid: true}
+	s.Me.Pos = data.Position{X: 100, Y: 100}
+	s.Me.MaxMana, s.Me.MPPct = 40, 80
+
+	if k, _ := meleeStrike(ctx, s, 5, nil, false, true); k != policy.Approach {
+		t.Fatalf("d=5, hover dark: got %v, want Approach (walk the short gap)", k)
+	}
+	if k, _ := meleeStrike(ctx, s, 8, nil, false, true); k != policy.Leap {
+		t.Fatalf("d=8: got %v, want the Leap gap-closer", k)
+	}
+	noteLeap(ctx, 0x74)
+	if k, _ := meleeStrike(ctx, s, 8, nil, false, true); k != policy.Approach {
+		t.Fatalf("leap cooling: got %v, want Approach", k)
+	}
+	leapClock = policy.LeapClock{}
+	for i := 0; i < policy.PackHold; i++ {
+		s.Enemies = append(s.Enemies, percept.EnemyRef{ID: data.UnitID(20 + i), Pos: data.Position{X: 104, Y: 100 + i}})
+	}
+	if k, _ := meleeStrike(ctx, s, 8, nil, false, true); k != policy.Approach {
+		t.Fatalf("inside a pack: got %v, want Approach (no leap out of it)", k)
+	}
+}
+
+// A body another strike already killed answers the next swing with
+// "overkill" — never "deaf", never a strike against the left audit.
+func TestOverkillIsNotSilence(t *testing.T) {
+	defer func() { leftAudit = policy.LeftAudit{} }()
+	led := verbs.NewLedger(256)
+	s := &percept.Snapshot{Valid: true}
+	s.Me.Pos = data.Position{X: 100, Y: 100}
+	s.Enemies = []percept.EnemyRef{{ID: 7, Pos: data.Position{X: 102, Y: 100}, Mode: uint32(mode.NpcStandingStill)}}
+	ctx := &Ctx{Cap: fableboi(), Led: led, Snap: s}
+	f := NewFight()
+	f.target = 7
+	f.noteLock(ctx, time.Now())
+	f.noteStrike(ctx, 7, 0, true)
+	f.noteStrike(ctx, 7, 0, true)
+	s.Enemies = nil // one swing killed it: gone from the live list
+	f.resolveStrikes(ctx, time.Now())
+	got := strikeLines(led, "strike")
+	want := []string{
+		"skill=skill#999 mouse=left target=7 d=2 result=hit",
+		"skill=skill#999 mouse=left target=7 d=2 result=overkill",
+	}
+	if strings.Join(got, "|") != strings.Join(want, "|") {
+		t.Fatalf("strike lines:\n got %q\nwant %q", got, want)
+	}
+	if leftAudit.Deaf != 0 {
+		t.Fatalf("overkill fed the left audit: deaf run %d", leftAudit.Deaf)
+	}
+	if !f.deathTaken[7] {
+		t.Fatal("the kill must be recorded for the fight summary")
 	}
 }

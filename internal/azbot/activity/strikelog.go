@@ -20,12 +20,13 @@ import (
 //
 //	verb=fight   ev="fight summary: target=<id> strikes=N hits=M duration=Xs killed=true|false"
 //
-// "hit" is only the evidence the fight already trusts: the struck unit's Mode
-// ENTERS GettingHit after the click (a rising edge — one flinch credits one
-// strike), or the unit turns up as a corpse (Death/Dead mode). Monster Life is
-// a dead channel on this build and is never read. "whiff" = no click reached
-// a monster (hover never confirmed / no clickable world); "deaf" = the click
-// went out and nothing answered inside strikeEvidenceWindow.
+// The verdict is policy.Judge: "hit" = the struck unit's Mode ENTERS
+// GettingHit or KnockedBack after the click (a rising edge — one edge credits
+// one strike), or the unit turns up as a corpse, or it vanished from the live
+// list after an in-reach strike. "overkill" = its death was already credited
+// to an earlier strike (not counted by the left audit). "whiff" = no click
+// reached a monster (hover never confirmed / no clickable world); "deaf" = the
+// click went out and nothing answered inside strikeEvidenceWindow.
 
 // strikeEvidenceWindow bounds how long a strike waits for its evidence.
 const strikeEvidenceWindow = time.Second
@@ -119,32 +120,34 @@ func (f *Fight) resolveStrikes(ctx *Ctx, now time.Time) {
 	var dead map[data.UnitID]bool
 	keep := f.open[:0]
 	for _, r := range f.open {
-		res := ""
-		if m, ok := live[r.target]; ok {
-			hitMode := uint32(mode.NpcGettingHit)
-			if m == hitMode && r.lastMode != hitMode && !flinched[r.target] {
-				flinched[r.target], res = true, "hit"
-			}
-			r.lastMode = m
-		} else if !f.deathTaken[r.target] {
+		m, present := live[r.target]
+		seen := policy.Seen{Present: present, Mode: m, PrevMode: r.lastMode,
+			FlinchTaken: flinched[r.target], DeathTaken: f.deathTaken[r.target],
+			InReach: r.d >= 0 && r.d <= policy.MeleeReach,
+			Expired: now.Sub(r.at) > strikeEvidenceWindow}
+		if !present && !seen.DeathTaken {
 			if dead == nil {
 				dead = corpses(ctx)
 			}
-			if dead[r.target] {
-				if f.deathTaken == nil {
-					f.deathTaken = map[data.UnitID]bool{}
-				}
-				f.deathTaken[r.target], res = true, "hit"
+			seen.Corpse = dead[r.target]
+		}
+		v := policy.Judge(seen)
+		if present {
+			r.lastMode = m
+			if v == policy.Hit {
+				flinched[r.target] = true
 			}
+		} else if v == policy.Hit {
+			if f.deathTaken == nil {
+				f.deathTaken = map[data.UnitID]bool{}
+			}
+			f.deathTaken[r.target] = true
 		}
-		if res == "" && now.Sub(r.at) > strikeEvidenceWindow {
-			res = "deaf"
-		}
-		if res == "" {
+		if v == policy.Pending {
 			keep = append(keep, r)
 			continue
 		}
-		f.closeStrike(ctx, r, res)
+		f.closeStrike(ctx, r, v.String())
 	}
 	f.open = keep
 }
@@ -179,7 +182,10 @@ func (f *Fight) closeStrike(ctx *Ctx, r strikeRec, res string) {
 	if res == "hit" && r.lock != 0 && r.lock == f.tally.target {
 		f.tally.hits++
 	}
-	if r.left && res != "whiff" {
+	// A whiff never reached a monster and an overkill met a body another
+	// strike had already killed: neither is the left skill's evidence or its
+	// silence.
+	if r.left && res != "whiff" && res != "overkill" {
 		if leftAudit.Resolve(res == "hit", time.Now()) {
 			ctx.Led.Append(verbs.Outcome{Verb: "fight", Holder: f.Name(), Result: verbs.ResRefused,
 				Evidence: fmt.Sprintf("left skill %s benched: %d silent left strikes — Double Swing carries %s, then the left re-proves",
