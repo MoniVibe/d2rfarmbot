@@ -59,6 +59,8 @@ func screenHints(s *percept.Snapshot) screen.Hints {
 }
 
 type shadow struct {
+	mu         sync.Mutex // guards everything below Eye: the async eye writes, the loop reads
+	feed       atomic.Pointer[fed]
 	logger     *slog.Logger
 	gr         *game.MemoryReader
 	cad        exec.Cadence
@@ -87,13 +89,46 @@ func (sh *shadow) Kick() { sh.kick.Store(true) }
 // observe captures and reads the screen when the cadence allows. Read-only:
 // it logs, publishes, and measures — nothing downstream consults it yet.
 func (sh *shadow) observe(tick uint64, s *percept.Snapshot, hold string) {
+	sh.observeHints(tick, screenHints(s), hold)
+}
+
+// fed is the loop's latest word to the async eye: which tick, what memory says.
+type fed struct {
+	tick  uint64
+	hints screen.Hints
+	hold  string
+}
+
+// Feed hands the async eye this tick's hints (cheap; never blocks the loop).
+func (sh *shadow) Feed(tick uint64, s *percept.Snapshot, hold string) {
+	sh.feed.Store(&fed{tick: tick, hints: screenHints(s), hold: hold})
+}
+
+// Start runs the eye on its own goroutine. Relay R4: Screenshot+Observe cost
+// p50 30ms / p99 50ms, paid inside every 2nd executive tick; off the loop the
+// executive keeps its cadence and the eye publishes when it can.
+func (sh *shadow) Start() {
+	go func() {
+		t := time.NewTicker(25 * time.Millisecond)
+		defer t.Stop()
+		for range t.C {
+			if f := sh.feed.Load(); f != nil {
+				sh.observeHints(f.tick, f.hints, f.hold)
+			}
+		}
+	}()
+}
+
+func (sh *shadow) observeHints(tick uint64, hints screen.Hints, hold string) {
+	sh.mu.Lock()
+	defer sh.mu.Unlock()
 	now := time.Now()
 	if sh.kick.Swap(false) {
 		sh.cad.Kick()
 	}
 	if sh.cad.Due(tick, now) {
 		t0 := time.Now()
-		r := screen.Observe(sh.gr.Screenshot(), screenHints(s))
+		r := screen.Observe(sh.gr.Screenshot(), hints)
 		sh.lat.Add(time.Since(t0))
 		cx, cy := game.OSCursorPos()
 		if tr, ok := sh.tr.Update(now, r); ok {
@@ -136,6 +171,8 @@ func (sh *shadow) stateLine(tick uint64, s *percept.Snapshot, ses string, arb *a
 		return
 	}
 	sh.lineAt = now
+	sh.mu.Lock()
+	defer sh.mu.Unlock()
 	hold := holderWho(arb)
 	st := trace.State{At: now, Tick: tick, Session: ses, Hold: hold, Held: arb.Held(hold),
 		Phase: phaseOf(roster, hold), Valid: s.Valid, HP: s.Me.HPPct, MP: s.Me.MPPct,
@@ -167,9 +204,18 @@ func (sh *shadow) frame(tick uint64, s *percept.Snapshot, arb *arbiter.Arbiter, 
 	if ch, at := core.Last(); ch.Changed() {
 		f.Change, f.ChangeTick = ch.String(), at
 	}
+	sh.mu.Lock()
+	defer sh.mu.Unlock()
 	if sh.seen {
 		f.Screen, f.Seen = sh.tr.State().String(), sh.last.String()
 		f.Gate = sh.gate
 	}
 	return f
+}
+
+// SetGate records the janitor's verdict for the state line (loop side).
+func (sh *shadow) SetGate(g string) {
+	sh.mu.Lock()
+	sh.gate = g
+	sh.mu.Unlock()
 }

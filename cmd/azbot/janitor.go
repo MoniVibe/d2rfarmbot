@@ -97,7 +97,7 @@ func (g *gatekeeper) step(tick uint64, s *percept.Snapshot, arb *arbiter.Arbiter
 	now := time.Now()
 	seen := g.sh.Eye.Latest()
 	d := g.j.Decide(now, seen, g.needs(who, s, roster))
-	g.sh.gate = d.Gate()
+	g.sh.SetGate(d.Gate())
 	if d.Open {
 		arb.SetBlocked(false)
 		if !g.blockedAt.IsZero() {

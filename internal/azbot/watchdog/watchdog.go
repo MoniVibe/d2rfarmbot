@@ -137,6 +137,10 @@ type Verdict struct {
 	Evidence  string
 	Site      data.Position
 	At        time.Time
+	// Involved: every holder in a thrash window, most handovers first. The
+	// executive picks whom to bench by class — the latest winner may be the
+	// fight itself (relay R4: 74 thrash verdicts, nearly all mid-fight).
+	Involved []string
 }
 
 // Summary is "kind evidence" — the bench reason and the log's why.
@@ -439,7 +443,7 @@ func (w *Watchdog) thrash(c Context, now time.Time) Verdict {
 	}
 	culprit := recent[len(recent)-1].who // the most recent: the flip's latest winner
 	return Verdict{Pathology: Thrash, Holder: c.Holder, Culprit: culprit, BenchFor: ThrashBench,
-		Remedy: RemedyNone, Site: w.last.Pos, At: now,
+		Remedy: RemedyNone, Site: w.last.Pos, At: now, Involved: names,
 		Evidence: fmt.Sprintf("%s: %d handovers/30s among %d holders", strings.Join(pair, "<->"), len(recent), len(count))}
 }
 

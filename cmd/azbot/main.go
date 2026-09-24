@@ -1819,6 +1819,7 @@ func main() {
 	// ---- THE EXECUTIVE: one arbiter, one activity per cycle, honest grants ----
 	led := verbs.NewLedger(2048)
 	sh := newShadow(logger, gr)
+	sh.Start()
 	led.Sink = func(o verbs.Outcome) {
 		// done outcomes are the quiet normal; exceptions speak — except the route
 		// owner's decisions, which are the story of WHERE she is going and why.
@@ -2240,7 +2241,7 @@ func main() {
 		s := p.Capture()
 		// SHADOW SCREEN (v2 step 5): read, trace and publish what is on screen —
 		// engaged or not, so the owner's panels are named too. Nothing gates on it.
-		sh.observe(tick, s, holderWho(arb))
+		sh.Feed(tick, s, holderWho(arb))
 		// LAYER 0 — THE SESSION (v2 step 8). A relog is requested by Relog's
 		// trigger (a naked girl in town, her body far) or by the owner's
 		// logs/relog.now; once the session takes it, the holder's episode ends
@@ -2560,13 +2561,29 @@ func main() {
 			// verdict as its reason. Survival and recovery are never benched;
 			// a convicted holder of those classes still has its episode ended.
 			convicted := false
-			if v.Culprit != "" {
+			classOf := func(who string) arbiter.Class {
 				cls := arbiter.ClassIdle
 				for _, d := range demands {
-					if d.Who == v.Culprit {
+					if d.Who == who {
 						cls = d.Class
 					}
 				}
+				return cls
+			}
+			if v.Pathology == watchdog.Thrash {
+				// Thrash is a decision problem between bidders: silence the
+				// least important one that is not fighting or surviving. Benching
+				// the fight (or ending Stand) mid-pack left her swinging at
+				// nothing; when only those classes ping-pong, log and let them be.
+				v.Culprit = ""
+				for i := len(v.Involved) - 1; i >= 0; i-- {
+					if c := v.Involved[i]; classOf(c) > arbiter.ClassFight && (v.Culprit == "" || classOf(c) > classOf(v.Culprit)) {
+						v.Culprit = c
+					}
+				}
+			}
+			if v.Culprit != "" {
+				cls := classOf(v.Culprit)
 				if cls > arbiter.ClassRecover {
 					arb.Bench(v.Culprit, time.Now().Add(v.BenchFor), why)
 					convicted = v.Culprit == holderName
