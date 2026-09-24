@@ -1,0 +1,13 @@
+08:44:29 focus=True
+==== azbot preflight self-test ====
+PASS focus              D2R foreground=true (focused mode is the operating contract)
+PASS in-town            area=40 pos=(5098,5093)
+PASS belt               used=8/8 hp=4 mana=4 unknown=0 hpCols=[0 3]
+PASS aim-npc            npc=202 dist=15 confirmed=true after 1 probes
+PASS trade-open         vendor npc=177 stock=86
+PASS buy-potion         health potion id=603 page=3 grid(9,2) px(612,333) gold 97953→97886 owned 6→7
+==== 6/6 passed ====
+08:45:05 r10 janitor=true confirmed
+08:45:15 r10 tp: time=2026-09-24T08:45:15.279+03:00 level=INFO msg="capability: proven binding" key=f1 skill=220 skill_name="Book of Townportal"
+09:30:27 r10 exited after 2708s; relog=0 f10=0; final: == Fableboi  area=62 "Maggot Lair Level 1"  pos=(17537,5339)  town=false -- monsters within 40: 1 alive, 0 dead 
+09:30:27 DONE

@@ -1,0 +1,110 @@
+time=2026-09-24T08:42:57.504+03:00 level=INFO msg="azbot attaching" pid=34076
+[d2go] PATTERN NOT FOUND (memlen=41508864): 44 88 25 00 00 00 00 66 44 89 25 00 00 00 00
+[d2go] PATTERN NOT FOUND (memlen=41508864): 48 03 c7 49 8b 8c c6
+[d2go] PATTERN NOT FOUND (memlen=41508864): 48 8b 05 00 00 00 00 48 8b d9 f3 0f 10 50 00
+[d2go] PATTERN NOT FOUND (memlen=41508864): 02 45 33 d2 4d 8b
+[d2go] PATTERN NOT FOUND (memlen=41508864): 48 8b 0d 00 00 00 00 4c 8d 44 24 00 48 03 c2
+[d2go] PATTERN NOT FOUND (memlen=41508864): 48 89 05 00 00 00 00 0f 11 00
+time=2026-09-24T08:43:01.876+03:00 level=INFO msg="aim calibration loaded" kx=1.1125320679211068 ky=1.1293540875695656 ox=2.951161121414657 oy=-27.490030603728087
+time=2026-09-24T08:43:01.879+03:00 level=INFO msg="world scale" scale=1.25 client=1536x840 dpi=1.25
+time=2026-09-24T08:43:01.880+03:00 level=INFO msg="navigation mode" deliberate=false
+time=2026-09-24T08:43:01.880+03:00 level=INFO msg="ui mode" janitor=false
+[sendinput] structSize=40 n=1 injected=1 err=The operation completed successfully.
+[sendinput] structSize=40 n=1 injected=1 err=The operation completed successfully.
+[sendinput] structSize=40 n=1 injected=1 err=The operation completed successfully.
+[sendinput] structSize=40 n=1 injected=1 err=The operation completed successfully.
+[sendinput] structSize=40 n=1 injected=1 err=The operation completed successfully.
+[sendinput] structSize=40 n=1 injected=1 err=The operation completed successfully.
+[interception] create_context failed — driver not installed? (using SendInput fallback)
+[d2go] PATTERN NOT FOUND (memlen=41508864): 44 88 25 00 00 00 00 66 44 89 25 00 00 00 00
+[d2go] PATTERN NOT FOUND (memlen=41508864): 48 03 c7 49 8b 8c c6
+[d2go] PATTERN NOT FOUND (memlen=41508864): 48 8b 05 00 00 00 00 48 8b d9 f3 0f 10 50 00
+[d2go] PATTERN NOT FOUND (memlen=41508864): 02 45 33 d2 4d 8b
+[d2go] PATTERN NOT FOUND (memlen=41508864): 48 8b 0d 00 00 00 00 4c 8d 44 24 00 48 03 c2
+[d2go] PATTERN NOT FOUND (memlen=41508864): 48 89 05 00 00 00 00 0f 11 00
+[d2go] PATTERN NOT FOUND (memlen=41508864): 44 88 25 00 00 00 00 66 44 89 25 00 00 00 00
+[d2go] PATTERN NOT FOUND (memlen=41508864): 48 03 c7 49 8b 8c c6
+[d2go] PATTERN NOT FOUND (memlen=41508864): 48 8b 05 00 00 00 00 48 8b d9 f3 0f 10 50 00
+[d2go] PATTERN NOT FOUND (memlen=41508864): 02 45 33 d2 4d 8b
+[d2go] PATTERN NOT FOUND (memlen=41508864): 48 8b 0d 00 00 00 00 4c 8d 44 24 00 48 03 c2
+[d2go] PATTERN NOT FOUND (memlen=41508864): 48 89 05 00 00 00 00 0f 11 00
+[d2go] PATTERN NOT FOUND (memlen=41508864): 44 88 25 00 00 00 00 66 44 89 25 00 00 00 00
+[d2go] PATTERN NOT FOUND (memlen=41508864): 48 03 c7 49 8b 8c c6
+[d2go] PATTERN NOT FOUND (memlen=41508864): 48 8b 05 00 00 00 00 48 8b d9 f3 0f 10 50 00
+[d2go] PATTERN NOT FOUND (memlen=41508864): 02 45 33 d2 4d 8b
+[d2go] PATTERN NOT FOUND (memlen=41508864): 48 8b 0d 00 00 00 00 4c 8d 44 24 00 48 03 c2
+[d2go] PATTERN NOT FOUND (memlen=41508864): 48 89 05 00 00 00 00 0f 11 00
+[d2go] PATTERN NOT FOUND (memlen=41508864): 44 88 25 00 00 00 00 66 44 89 25 00 00 00 00
+[d2go] PATTERN NOT FOUND (memlen=41508864): 48 03 c7 49 8b 8c c6
+[d2go] PATTERN NOT FOUND (memlen=41508864): 48 8b 05 00 00 00 00 48 8b d9 f3 0f 10 50 00
+[d2go] PATTERN NOT FOUND (memlen=41508864): 02 45 33 d2 4d 8b
+[d2go] PATTERN NOT FOUND (memlen=41508864): 48 8b 0d 00 00 00 00 4c 8d 44 24 00 48 03 c2
+[d2go] PATTERN NOT FOUND (memlen=41508864): 48 89 05 00 00 00 00 0f 11 00
+[d2go] PATTERN NOT FOUND (memlen=41508864): 44 88 25 00 00 00 00 66 44 89 25 00 00 00 00
+[d2go] PATTERN NOT FOUND (memlen=41508864): 48 03 c7 49 8b 8c c6
+[d2go] PATTERN NOT FOUND (memlen=41508864): 48 8b 05 00 00 00 00 48 8b d9 f3 0f 10 50 00
+[d2go] PATTERN NOT FOUND (memlen=41508864): 02 45 33 d2 4d 8b
+[d2go] PATTERN NOT FOUND (memlen=41508864): 48 8b 0d 00 00 00 00 4c 8d 44 24 00 48 03 c2
+[d2go] PATTERN NOT FOUND (memlen=41508864): 48 89 05 00 00 00 00 0f 11 00
+[sendinput] structSize=40 n=1 injected=1 err=The operation completed successfully.
+[sendinput] structSize=40 n=1 injected=1 err=The operation completed successfully.
+[sendinput] structSize=40 n=1 injected=1 err=The operation completed successfully.
+time=2026-09-24T08:43:29.679+03:00 level=WARN msg="attach: gate failing behind a PAUSE/sub-panel screen — clicked it away" try=4
+[d2go] PATTERN NOT FOUND (memlen=41508864): 44 88 25 00 00 00 00 66 44 89 25 00 00 00 00
+[d2go] PATTERN NOT FOUND (memlen=41508864): 48 8b 05 00 00 00 00 48 8b d9 f3 0f 10 50 00
+[d2go] PATTERN NOT FOUND (memlen=41508864): 02 45 33 d2 4d 8b
+[d2go] PATTERN NOT FOUND (memlen=41508864): 48 8b 0d 00 00 00 00 4c 8d 44 24 00 48 03 c2
+[d2go] PATTERN NOT FOUND (memlen=41508864): 48 89 05 00 00 00 00 0f 11 00
+time=2026-09-24T08:43:35.317+03:00 level=INFO msg="attach report" verdict="position=true stats=true uibytes=true mode=true"
+time=2026-09-24T08:43:40.875+03:00 level=INFO msg="sentinel live" killswitch=f10 drinkAt=60
+time=2026-09-24T08:43:40.875+03:00 level=INFO msg=director goal=farm
+time=2026-09-24T08:43:44.141+03:00 level=INFO msg="map data fetched" seed=466817790 areas=136
+time=2026-09-24T08:43:44.141+03:00 level=INFO msg="relogtest: foreground check" isForeground=true
+T L=session from=Attaching to=InGame why="valid world" tick=1
+time=2026-09-24T08:43:44.645+03:00 level=INFO msg="relogtest: screenshot" path=logs/relog_InGame.png
+time=2026-09-24T08:43:44.699+03:00 level=INFO msg="session: relog wanted, not yet" why="drill (-relogtest)" waiting="mode unknown"
+T L=ui from=unknown to=world+automap why="area name 119 px, corner 0.91 dark" tick=3 hold=relogtest cursor=767,535->767,535
+T L=session from=InGame to=Relogging/OpenPause why="relog: drill (-relogtest)" tick=2
+time=2026-09-24T08:43:44.798+03:00 level=WARN msg="SESSION: relog begins" why="drill (-relogtest)" seed=466817790
+[sendinput] structSize=40 n=1 injected=1 err=The operation completed successfully.
+[sendinput] structSize=40 n=1 injected=1 err=The operation completed successfully.
+time=2026-09-24T08:43:45.000+03:00 level=INFO msg="session: act" ses=Relogging/OpenPause act=esc
+T L=ui from=world+automap to=world+pause why="grey pause buttons; automap gone" tick=6 hold=relogtest cursor=767,535->767,535
+T L=session from=Relogging/OpenPause to=Relogging/ClickSaveExit why="pause menu seen" tick=8
+[sendinput] structSize=40 n=1 injected=1 err=The operation completed successfully.
+[sendinput] structSize=40 n=1 injected=1 err=The operation completed successfully.
+[sendinput] structSize=40 n=1 injected=1 err=The operation completed successfully.
+time=2026-09-24T08:43:45.710+03:00 level=INFO msg="session: act" ses=Relogging/ClickSaveExit act="click 958,822"
+time=2026-09-24T08:43:46.090+03:00 level=INFO msg="relogtest: screenshot" path=logs/relog_Relogging_ClickSaveExit.png
+T L=ui from=world+pause to=unknown+pause why="" tick=11 hold=relogtest cursor=766,645->766,645
+T L=session from=Relogging/ClickSaveExit to=Relogging/AwaitMenu why="pause menu gone, world unloading" tick=11
+time=2026-09-24T08:43:46.462+03:00 level=INFO msg="relogtest: screenshot" path=logs/relog_Relogging_AwaitMenu.png
+T L=ui from=unknown+pause to=unknown why="pause gone" tick=13 hold=relogtest cursor=766,645->766,645
+T L=session from=Relogging/AwaitMenu to=Relogging/ClickPlay why="character screen settled" tick=61
+[sendinput] structSize=40 n=1 injected=1 err=The operation completed successfully.
+[sendinput] structSize=40 n=1 injected=1 err=The operation completed successfully.
+[sendinput] structSize=40 n=1 injected=1 err=The operation completed successfully.
+time=2026-09-24T08:43:49.763+03:00 level=INFO msg="session: act" ses=Relogging/ClickPlay act="click 922,822"
+time=2026-09-24T08:43:50.251+03:00 level=INFO msg="relogtest: screenshot" path=logs/relog_Relogging_ClickPlay.png
+T L=session from=Relogging/ClickPlay to=Relogging/AwaitWorld why="Play clicked" tick=62
+time=2026-09-24T08:43:50.603+03:00 level=INFO msg="relogtest: screenshot" path=logs/relog_Relogging_AwaitWorld.png
+T L=ui from=unknown to=world why="" tick=64 hold=relogtest cursor=737,645->737,645
+T L=session from=Relogging/AwaitWorld to=InGame why="relog done: world back, seed unchanged (466817790)" tick=64
+time=2026-09-24T08:43:52.005+03:00 level=WARN msg="SESSION: relog done" took=7.2s detail="world back, seed unchanged (466817790)"
+time=2026-09-24T08:43:52.430+03:00 level=INFO msg="relogtest: screenshot" path=logs/relog_InGame.png
+time=2026-09-24T08:43:54.471+03:00 level=INFO msg="relogtest: BACK IN GAME" took=7.2s detail="world back, seed unchanged (466817790)" pos=(5098,5093) area=40 seed=466817790
+time=2026-09-24T08:43:54.471+03:00 level=INFO msg="relogtest: corpse" found=false pos=(0,0)
+[sendinput] structSize=40 n=1 injected=1 err=The operation completed successfully.
+[sendinput] structSize=40 n=1 injected=1 err=The operation completed successfully.
+[sendinput] structSize=40 n=1 injected=1 err=The operation completed successfully.
+[sendinput] structSize=40 n=1 injected=1 err=The operation completed successfully.
+[sendinput] structSize=40 n=1 injected=1 err=The operation completed successfully.
+[sendinput] structSize=40 n=1 injected=1 err=The operation completed successfully.
+time=2026-09-24T08:43:54.491+03:00 level=INFO msg="healed input fn" fn=GetPhysicalCursorPos
+time=2026-09-24T08:43:54.491+03:00 level=INFO msg="healed input fn" fn=GetCursorPos
+time=2026-09-24T08:43:54.491+03:00 level=INFO msg="healed input fn" fn=GetCursorInfo
+time=2026-09-24T08:43:54.491+03:00 level=INFO msg="healed input fn" fn=SetCursorPos
+time=2026-09-24T08:43:54.491+03:00 level=INFO msg="healed input fn" fn=GetKeyState
+time=2026-09-24T08:43:54.491+03:00 level=INFO msg="healed input fn" fn=GetAsyncKeyState
+time=2026-09-24T08:43:54.491+03:00 level=INFO msg="healed input fn" fn=GetKeyboardState
+time=2026-09-24T08:43:54.491+03:00 level=INFO msg="healed input fn" fn=TrackMouseEvent
