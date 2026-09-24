@@ -68,6 +68,19 @@ func (cm ClickMove) Do(m *motor.Motor, gr *game.MemoryReader, p *percept.Percept
 		total = t2
 	}
 	ad, hasMap := d.Areas[d.PlayerUnit.Area]
+	// THE HUD LAW (step 11): a waystation that projects onto the bottom bar,
+	// an orb or the portrait is not a walk order — it clicks a skill button,
+	// the belt or the mini-menu. Such samples are passed over like unwalkable
+	// ones; the shorter ranges project nearer the player, off the HUD.
+	aim := HUD(gr)
+	project := func(p data.Position) (int, int) {
+		return int(float32((p.X-start.X)-(p.Y-start.Y))*19.8) + gr.GameAreaSizeX/2,
+			int(float32((p.X-start.X)+(p.Y-start.Y))*9.9) + gr.GameAreaSizeY/2
+	}
+	onHUD := func(p data.Position) bool {
+		x, y := project(p)
+		return !aim.SafeLogical(x, y)
+	}
 	way := cm.To
 	for _, dist := range []int{30, 22, 15, 10, 6} {
 		if total <= dist {
@@ -77,6 +90,9 @@ func (cm ClickMove) Do(m *motor.Motor, gr *game.MemoryReader, p *percept.Percept
 				X: start.X + (cm.To.X-start.X)*dist/total,
 				Y: start.Y + (cm.To.Y-start.Y)*dist/total,
 			}
+		}
+		if onHUD(way) {
+			continue
 		}
 		if !hasMap || ad.Grid == nil {
 			break // no oracle: click the nearest sample and hope honestly
@@ -131,11 +147,13 @@ func (cm ClickMove) Do(m *motor.Motor, gr *game.MemoryReader, p *percept.Percept
 			way = data.Position{X: way.X + ox*7/n, Y: way.Y + oy*7/n}
 		}
 	}
-	bx := int(float32((way.X-start.X)-(way.Y-start.Y))*19.8) + gr.GameAreaSizeX/2
-	by := int(float32((way.X-start.X)+(way.Y-start.Y))*9.9) + gr.GameAreaSizeY/2
-	if bx < 130 || by < 130 || bx > gr.GameAreaSizeX-130 || by > gr.GameAreaSizeY-170 {
+	bx, by := project(way)
+	if bx < 130 || by < 130 || bx > gr.GameAreaSizeX-130 || by > gr.GameAreaSizeY-170 || !aim.SafeLogical(bx, by) {
 		o.Result = ResRefused
 		o.Evidence = fmt.Sprintf("no walkable on-screen waystation toward (%d,%d)", cm.To.X, cm.To.Y)
+		if z := aim.ZoneAtLogical(bx, by); z != "" {
+			o.Evidence += " (hud: " + z + ")"
+		}
 		led.Append(o)
 		return o
 	}
@@ -156,7 +174,12 @@ func (cm ClickMove) Do(m *motor.Motor, gr *game.MemoryReader, p *percept.Percept
 	if hd := gr.GetData().HoverData; hd.IsHovered && (cm.CombatKey == 0 || isPortalHover(hd.UnitID)) {
 		// A unit under the click point turns the move into an attack/talk/ride —
 		// nudge the aim and re-check once; if still owned, refuse honestly.
-		by += 24
+		// The nudge goes DOWN (toward the feet) — unless down is the HUD.
+		if aim.SafeLogical(bx, by+24) {
+			by += 24
+		} else {
+			by -= 24
+		}
 		m.AimPhysical(bx, by)
 		time.Sleep(45 * time.Millisecond)
 		if hd2 := gr.GetData().HoverData; hd2.IsHovered && (cm.CombatKey == 0 || isPortalHover(hd2.UnitID)) {
@@ -167,9 +190,28 @@ func (cm ClickMove) Do(m *motor.Motor, gr *game.MemoryReader, p *percept.Percept
 		}
 	}
 	LastWaystation = way
+	// THE READBACK GUARD, MARCHING HAND (step 11): hoverstrike's tome guard
+	// never reached the march swing — with the Identify tome still armed on
+	// the right hand, the "walk-and-engage" right-click read a book and opened
+	// the inventory. Press, read RightSkill back, one corrective re-press;
+	// still a tome → walk with a plain left click instead. A right-click never
+	// fires without knowing what it will cast.
+	right := false
 	if cm.CombatKey != 0 {
 		m.PressKey(cm.CombatKey)
 		time.Sleep(50 * time.Millisecond)
+		rs := gr.GetData().PlayerUnit.RightSkill
+		if tomeSkill(rs) {
+			m.PressKey(cm.CombatKey)
+			time.Sleep(80 * time.Millisecond)
+			rs = gr.GetData().PlayerUnit.RightSkill
+		}
+		right = !tomeSkill(rs)
+		if !right {
+			o.Evidence = fmt.Sprintf("tome armed (skill=%d) — walked by left click; ", int(rs))
+		}
+	}
+	if right {
 		m.ClickRight(bx, by) // walk-and-engage: the march swings
 	} else {
 		m.BareClick(bx, by)
@@ -187,13 +229,13 @@ func (cm ClickMove) Do(m *motor.Motor, gr *game.MemoryReader, p *percept.Percept
 		}
 		if dx >= 3 || dy >= 3 {
 			o.Result = ResDone
-			o.Evidence = fmt.Sprintf("walked (%d,%d) -> (%d,%d)", start.X, start.Y, now.X, now.Y)
+			o.Evidence += fmt.Sprintf("walked (%d,%d) -> (%d,%d)", start.X, start.Y, now.X, now.Y)
 			led.Append(o)
 			return o
 		}
 	}
 	o.Result = ResBlocked
-	o.Evidence = fmt.Sprintf("click at (%d,%d) moved nothing in %dms", cm.To.X, cm.To.Y, hold.Milliseconds())
+	o.Evidence += fmt.Sprintf("click at (%d,%d) moved nothing in %dms", cm.To.X, cm.To.Y, hold.Milliseconds())
 	led.Append(o)
 	return o
 }
