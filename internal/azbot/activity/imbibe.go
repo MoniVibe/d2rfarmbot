@@ -40,6 +40,9 @@ func (im *Imbibe) rite(s *percept.Snapshot, ob data.Object) float64 {
 	if !ob.Selectable { // the freshness oracle: spent rites read false
 		return 0
 	}
+	if isQuestChest(ob.Name) {
+		return 0.95 // the quest artifact outranks every rite, whatever the bag room (quest.go)
+	}
 	switch {
 	case ob.IsShrine() && percept.GivingShrines[ob.Shrine.ShrineType]:
 		if ob.Shrine.ShrineType == object.ExperienceShrine {
@@ -66,7 +69,11 @@ func (im *Imbibe) find(ctx *Ctx) (data.Object, float64, bool) {
 	var best data.Object
 	bestW := 0.0
 	for _, ob := range ctx.GR.GetData().Objects {
-		if ob.ID == 0 || chebyshev(s.Me.Pos, ob.Position) > 25 {
+		reach := 25
+		if isQuestChest(ob.Name) {
+			reach = questReach
+		}
+		if ob.ID == 0 || chebyshev(s.Me.Pos, ob.Position) > reach {
 			continue
 		}
 		if until, banned := im.ban[ob.ID]; banned && time.Now().Before(until) {
@@ -115,7 +122,11 @@ func (im *Imbibe) Step(ctx *Ctx) Verdict {
 		if im.walkFor != ob.ID {
 			im.walkFor, im.walkAt = ob.ID, time.Now()
 		}
-		if time.Since(im.walkAt) > 30*time.Second {
+		pilgrimage := 30 * time.Second
+		if isQuestChest(ob.Name) {
+			pilgrimage = 90 * time.Second
+		}
+		if time.Since(im.walkAt) > pilgrimage {
 			im.ban[ob.ID] = time.Now().Add(5 * time.Minute)
 			im.walkFor = 0
 			return Running

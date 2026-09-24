@@ -424,3 +424,14 @@ func TestUniqueCharmCarriedOnceIsSkipped(t *testing.T) {
 		t.Fatalf("first unique charm must be taken: %+v", p)
 	}
 }
+
+func TestQuestGearClassifiesAsQuest(t *testing.T) {
+	for _, id := range []int{87, 91, 92, 173} { // Gidbinn, Horadric Staff, Staff of Kings, Khalim's Flail (mod rows = vanilla)
+		if c := Classify(id); c.Kind != KindQuest {
+			t.Fatalf("row %d (%s): want KindQuest, got %v", id, c.Code, c.Kind)
+		}
+	}
+	if c := Classify(1); c.Kind != KindGear {
+		t.Fatalf("an ordinary weapon row stays gear, got %v", c.Kind)
+	}
+}

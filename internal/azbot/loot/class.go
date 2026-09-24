@@ -119,6 +119,10 @@ func Classify(id int) Class {
 	if d.InventoryWidth > 0 && d.InventoryHeight > 0 {
 		c.W, c.H = d.InventoryWidth, d.InventoryHeight
 	}
+	if questGear[d.Code] {
+		c.Kind = KindQuest // quest artifacts that live in the weapon/armor tables
+		return c
+	}
 	if id < modMiscStart {
 		c.Kind = KindGear
 		return c
@@ -197,4 +201,17 @@ func Occupied(n int, at func(i int) (id, gx, gy int)) int {
 		}
 	}
 	return count
+}
+
+// questGear: quest items stored in the weapons/armor tables, which would otherwise
+// classify as plain gear (tier C, never picked). R14: the Staff of Kings chest was
+// the goal, and "msf" read as a staff. Codes are vanilla (the gear rows are unshifted).
+var questGear = map[string]bool{
+	"msf": true, // Staff of Kings
+	"hst": true, // Horadric Staff
+	"vip": true, // Amulet of the Viper
+	"g33": true, // The Gidbinn
+	"qf1": true, "qf2": true, // Khalim's Flail / Will
+	"leg": true, // Wirt's Leg
+	"hfh": true, // Hell Forge Hammer
 }

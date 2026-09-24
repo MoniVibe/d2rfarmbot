@@ -156,6 +156,9 @@ func CampaignItinerary(start area.ID) []Leg {
 }
 
 type Advance struct {
+	// quest legs (quest.go): per seed.area, when the hold began and whether it ended.
+	questSince map[string]time.Time
+	questDone  map[string]bool
 	Itinerary   []Leg
 	campaignAct int // saved frontier namespace; prevents Act 1 indices leaking into Act 2
 
@@ -574,6 +577,10 @@ func (a *Advance) Step(ctx *Ctx) Verdict {
 		out := data.Position{X: me.X + a.clearDir.X*14, Y: me.Y + a.clearDir.Y*14}
 		// item 4: the planner knows the fences the raw click walks into.
 		a.push(ctx, out, 1200*time.Millisecond)
+		return Running
+	}
+	// A quest leg holds its area until the artifact is taken (quest.go).
+	if a.questHold(ctx) {
 		return Running
 	}
 	if a.idx >= len(a.Itinerary)-1 && s.Me.Area == a.Itinerary[a.idx].Area {

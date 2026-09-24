@@ -261,9 +261,13 @@ var ManaWells = map[object.Name]bool{
 // well, or a CHEST (the owner, 05:32, night orders: "make sure it pops
 // chests"). Chests share the rites' honest machinery: Selectable until
 // opened, hover-clicked, yielded under pressure.
+// QuestChests: the Horadric quest chests (objects.txt rows 354 Cube, 355 Scroll,
+// 356 Staff of Kings). Imbibe opens them from further out and first (activity/quest.go).
+var QuestChests = map[object.Name]bool{354: true, 355: true, 356: true}
+
 func IsRite(ob data.Object) bool {
 	return (ob.IsShrine() && GivingShrines[ob.Shrine.ShrineType]) ||
-		HealthWells[ob.Name] || ManaWells[ob.Name] || ob.IsChest()
+		HealthWells[ob.Name] || ManaWells[ob.Name] || ob.IsChest() || QuestChests[ob.Name]
 }
 
 // AttachReport is the M0 epistemics gate verdict: behavioral probes over the channels
