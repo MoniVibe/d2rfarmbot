@@ -9,6 +9,7 @@
 //	T L=phase act=fence from=Seek to=Approach why="npc loaded" inPhase=1.2s tick=48213
 //	T L=nav act=advance from=following to=stuck why="no gain 1.5s" tick=48213
 //	T L=life act=fight ev=end why="abandoned/no-target: withdrawn while suspended" tick=48213
+//	T L=gate hold=fight why="foreign: right-panel" act="click 1788,18" tick=48213
 //	S 15:04:05 #48213 ses=InGame mode=World ui=- cur=- hold=fight held=7.2s gate=- phase=- hp=64 mp=30 pos=5012,4431 en=5
 package trace
 
@@ -58,6 +59,12 @@ func Life(act, ev, why string, tick uint64) string {
 // UI is a believed screen change from screen.Tracker.
 func UI(t screen.Transition, tick uint64, hold string) string {
 	return fmt.Sprintf("T L=ui from=%s to=%s why=%q tick=%d hold=%s", t.From, t.To, t.Evidence, tick, dash(hold))
+}
+
+// Gate is one janitor judgment worth a line: an action taken ("click 1788,18",
+// "key 0x1B", "drop 960,665"), or a change in why the holder is held ("-").
+func Gate(hold, why, act string, tick uint64) string {
+	return fmt.Sprintf("T L=gate hold=%s why=%q act=%q tick=%d", dash(hold), why, dash(act), tick)
 }
 
 // Phase re-heads a phase.Phaser log line ("phase act=... from=... to=...").
@@ -158,6 +165,7 @@ type Frame struct {
 	Phase      string    `json:"phase,omitempty"`
 	Screen     string    `json:"screen,omitempty"` // tracker belief
 	Seen       string    `json:"seen,omitempty"`   // last raw reading (with unsure)
+	Gate       string    `json:"gate,omitempty"`   // janitor gate: ok | blocked(<panels>) | wedge
 	Bids       int       `json:"bids"`
 }
 

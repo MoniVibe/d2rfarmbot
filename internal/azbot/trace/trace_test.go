@@ -35,6 +35,12 @@ func TestUI(t *testing.T) {
 	eq(t, UI(tr, 7, ""), `T L=ui from=world to=world+inventory why="right-half panel" tick=7 hold=-`)
 }
 
+func TestGateLine(t *testing.T) {
+	eq(t, Gate("fight", "foreign: right-panel", "click 1788,18", 5),
+		`T L=gate hold=fight why="foreign: right-panel" act="click 1788,18" tick=5`)
+	eq(t, Gate("", "clear", "", 6), `T L=gate hold=- why="clear" act="-" tick=6`)
+}
+
 func TestPhase(t *testing.T) {
 	var got string
 	p := &phase.Phaser[testPhase]{Act: "fence", Log: func(l string) { got = Phase(l, 12) }}

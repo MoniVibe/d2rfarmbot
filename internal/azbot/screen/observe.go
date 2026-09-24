@@ -38,6 +38,10 @@ type Hints struct {
 // memoryProven: panels a memory channel may assert on its own (0xF4 → NPC menu).
 const memoryProven = NPCMenu
 
+// MemoryProven is memoryProven for the executive's janitor: a panel in
+// Reading.Panels through one of these channels counts as positively observed.
+const MemoryProven = memoryProven
+
 // Point is a click target in capture pixel space.
 type Point struct{ X, Y int }
 
