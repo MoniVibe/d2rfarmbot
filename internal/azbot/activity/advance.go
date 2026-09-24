@@ -1461,7 +1461,7 @@ func (a *Advance) memoryEntranceClick(ctx *Ctx, start, hop area.ID, targetID dat
 	a.memoryEntranceN++
 	a.memoryEntranceAt = time.Now()
 	cx, cy := bx+off.X, by+off.Y
-	if cx < 20 || cy < 20 || cx > ctx.GR.GameAreaSizeX-20 || cy > ctx.GR.GameAreaSizeY-20 {
+	if !verbs.ClickableLogical(ctx.GR, cx, cy) {
 		ctx.Led.Append(verbs.Outcome{Verb: "cross", Holder: a.Name(), Result: verbs.ResRefused,
 			Evidence: fmt.Sprintf("memory entrance id=%d projected outside game area (%d,%d)", int(targetID), cx, cy)})
 		return true, false
@@ -1672,7 +1672,7 @@ func (a *Advance) cross(ctx *Ctx, d game.Data, me data.Position, tgt data.Positi
 		for _, dy := range []int{-40, -80, 0, -120, -160, -200, 40} {
 			for dx := -320; dx <= 320 && !found; dx += 32 {
 				cx, cy := bx+dx, by+dy
-				if cx < 20 || cy < 20 || cx > ctx.GR.GameAreaSizeX-20 || cy > ctx.GR.GameAreaSizeY-20 {
+				if !verbs.ClickableLogical(ctx.GR, cx, cy) {
 					continue
 				}
 				ctx.M.AimPhysical(cx, cy)
@@ -1692,7 +1692,7 @@ func (a *Advance) cross(ctx *Ctx, d game.Data, me data.Position, tgt data.Positi
 						if ctx.GR.GetData().PlayerUnit.Area != d.PlayerUnit.Area {
 							return
 						}
-						ctx.M.RealMenuClick(cx, cy)
+						realWorldClick(ctx, cx, cy)
 						time.Sleep(1400 * time.Millisecond)
 						if ctx.GR.GetData().PlayerUnit.Area != d.PlayerUnit.Area {
 							return
@@ -1720,7 +1720,7 @@ func (a *Advance) cross(ctx *Ctx, d game.Data, me data.Position, tgt data.Positi
 					if ctx.GR.GetData().PlayerUnit.Area != d.PlayerUnit.Area {
 						return // THE DOOR OPENED
 					}
-					ctx.M.RealMenuClick(cx, cy) // posted click deaf: one hardware click at the PROVEN spot
+					realWorldClick(ctx, cx, cy) // posted click deaf: one hardware click at the PROVEN spot
 					time.Sleep(1200 * time.Millisecond)
 					if ctx.GR.GetData().PlayerUnit.Area != d.PlayerUnit.Area {
 						return
@@ -1744,7 +1744,13 @@ func (a *Advance) cross(ctx *Ctx, d game.Data, me data.Position, tgt data.Positi
 			// FLIPS, past the visual door. Click the DOORWAY, not the fact.
 			for _, off := range []data.Position{{X: -290, Y: -10}, {X: -260, Y: -30},
 				{X: -310, Y: 10}, {X: 0, Y: 0}, {X: -20, Y: 10}} {
-				ctx.M.BareClick(bx+off.X, by+off.Y)
+				// Blind ground clicks up to ~310px out: pulled back along the
+				// ray from her until they are world, never HUD (step 11).
+				cx, cy, ok := verbs.ClampClickLogical(ctx.GR, bx+off.X, by+off.Y)
+				if !ok {
+					continue
+				}
+				ctx.M.BareClick(cx, cy)
 				time.Sleep(1400 * time.Millisecond)
 				if ctx.GR.GetData().PlayerUnit.Area != d.PlayerUnit.Area {
 					return // WALKED IN — the game pathed him through
@@ -1759,10 +1765,13 @@ func (a *Advance) cross(ctx *Ctx, d game.Data, me data.Position, tgt data.Positi
 	}
 	sp := spiral(a.clickTry)
 	a.clickTry++
-	ctx.M.AimPhysical(bx+sp.X, by+sp.Y)
+	spOK := verbs.ClickableLogical(ctx.GR, bx+sp.X, by+sp.Y) // the spiral never probes the HUD
+	if spOK {
+		ctx.M.AimPhysical(bx+sp.X, by+sp.Y)
+	}
 	time.Sleep(120 * time.Millisecond)
 	hd := ctx.GR.GetData().HoverData
-	if hd.IsHovered && (hd.UnitType == 5 || hd.UnitType == 2) {
+	if spOK && hd.IsHovered && (hd.UnitType == 5 || hd.UnitType == 2) {
 		ctx.M.BareClick(bx+sp.X, by+sp.Y)
 		time.Sleep(1000 * time.Millisecond) // the click starts a walk-and-enter
 	}
@@ -1801,7 +1810,8 @@ func (a *Advance) cross(ctx *Ctx, d game.Data, me data.Position, tgt data.Positi
 		for _, off := range []data.Position{{X: 0, Y: 0}, {X: 0, Y: -30}, {X: 0, Y: -60},
 			{X: -30, Y: -30}, {X: 30, Y: -30}, {X: -30, Y: 0}, {X: 30, Y: 0},
 			{X: -20, Y: -55}, {X: 20, Y: -55}} {
-			if !ctx.M.RealMenuClick(bx+off.X, by+off.Y) {
+			fired, focused := realWorldClick(ctx, bx+off.X, by+off.Y)
+			if !focused {
 				// The RealEsc law (20:54): with the owner at the desktop these
 				// hardware clicks were landing in THEIR windows — the "deaf
 				// mouth" was partly clicks that never reached the game. Waits
@@ -1809,6 +1819,9 @@ func (a *Advance) cross(ctx *Ctx, d game.Data, me data.Position, tgt data.Positi
 				ctx.Led.Append(verbs.Outcome{Verb: "cross", Holder: a.Name(), Result: verbs.ResRefused,
 					Evidence: "arch burst: foreground refused — the owner holds the desktop"})
 				break
+			}
+			if !fired {
+				continue // this arch point is HUD, not world
 			}
 			time.Sleep(700 * time.Millisecond)
 			if ctx.GR.GetData().PlayerUnit.Area != d.PlayerUnit.Area {
@@ -1819,6 +1832,25 @@ func (a *Advance) cross(ctx *Ctx, d game.Data, me data.Position, tgt data.Positi
 	if a.clickTry > 40 { // a full spiral with no confirmed hover: restart the ritual
 		a.contactAt, a.clickTry = time.Time{}, 0
 	}
+}
+
+// realWorldClick fires ONE hardware click (RealMenuClick) at a LOGICAL world-aim
+// point — the verbs' projection space. RealMenuClick takes SCREENSHOT px and
+// divides by the display scale; the door rituals used to hand it logical px, so
+// every "hardware click at the PROVEN spot" landed at ~80% of the aim (1/1.25,
+// toward the client's top-left) — nowhere near the door. verbs.ShotOfLogical
+// applies the same map the posted click's cursor goes through. A point on the
+// HUD is never fired. fired: the click went out; focused: false only when the
+// game could not be foregrounded (the RealEsc law — the caller stops).
+func realWorldClick(ctx *Ctx, x, y int) (fired, focused bool) {
+	if !verbs.ClickableLogical(ctx.GR, x, y) {
+		return false, true
+	}
+	sx, sy := verbs.ShotOfLogical(ctx.GR, x, y)
+	if !ctx.M.RealMenuClick(sx, sy) {
+		return false, false
+	}
+	return true, true
 }
 
 // nextHop BFSes the map-data area graph for the first hop on the route cur → to.
