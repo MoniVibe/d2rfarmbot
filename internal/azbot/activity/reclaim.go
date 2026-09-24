@@ -173,7 +173,7 @@ func (rc *Reclaim) Step(ctx *Ctx) Verdict {
 	by := int(float32((cp.X-cur.PlayerUnit.Position.X)+(cp.Y-cur.PlayerUnit.Position.Y))*9.9) + ctx.GR.GameAreaSizeY/2
 	for _, off := range []data.Position{{X: 0, Y: 0}, {X: 0, Y: -10}, {X: -10, Y: 0}, {X: 10, Y: 0}, {X: 0, Y: 10}, {X: 0, Y: -20}} {
 		cx, cy := bx+off.X, by+off.Y
-		if cx < 20 || cy < 20 || cx > ctx.GR.GameAreaSizeX-20 || cy > ctx.GR.GameAreaSizeY-20 {
+		if !verbs.ClickableLogical(ctx.GR, cx, cy) {
 			continue
 		}
 		ctx.M.AimPhysical(cx, cy)
@@ -194,7 +194,11 @@ func (rc *Reclaim) Step(ctx *Ctx) Verdict {
 			// Hover refuses to confirm and NOTHING stands on the body — corpses are
 			// BIG targets: click the projection blind. With any guard present a blind
 			// click is a punch, never a pickup.
-			ctx.M.BareClick(bx, by)
+			// Pulled off the HUD along the ray from her (step 11: a body just
+			// south of the bar made this a mini-menu click).
+			if cx, cy, ok := verbs.ClampClickLogical(ctx.GR, bx, by); ok {
+				ctx.M.BareClick(cx, cy)
+			}
 			rc.clickAt = time.Now()
 		case rc.rounds >= 4:
 			// This angle is spent: give the grant back honestly, cool briefly, and

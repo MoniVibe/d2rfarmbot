@@ -360,7 +360,9 @@ func (e *errand) step(ctx *Ctx, who string) errandStep {
 			// After 3 hover misses, click blind at the label; keep arcing too.
 			if e.hoverFails++; e.hoverFails >= 3 {
 				e.hoverFails = 0
-				ctx.M.BareClick(bx, by-30) // the label sits above the base
+				if cx, cy, ok := verbs.ClampClickLogical(ctx.GR, bx, by-30); ok {
+					ctx.M.BareClick(cx, cy) // the label sits above the base
+				}
 				e.clickAt = time.Now()
 				return errandStep{}
 			}

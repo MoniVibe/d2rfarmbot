@@ -1901,16 +1901,15 @@ func volleyAt(ctx *Ctx, pos data.Position, key byte, skipSelect bool) {
 	me := d.PlayerUnit.Position
 	bx := int(float32((pos.X-me.X)-(pos.Y-me.Y))*19.8) + ctx.GR.GameAreaSizeX/2
 	by := int(float32((pos.X-me.X)+(pos.Y-me.Y))*9.9) + ctx.GR.GameAreaSizeY/2 + game.UnitAimDY() // at the body, not the feet
-	// Clamp INSIDE the window preserving direction — the arrow flies the line anyway.
-	if bx < 20 {
-		bx = 20
-	} else if bx > ctx.GR.GameAreaSizeX-20 {
-		bx = ctx.GR.GameAreaSizeX - 20
-	}
-	if by < 20 {
-		by = 20
-	} else if by > ctx.GR.GameAreaSizeY-20 {
-		by = ctx.GR.GameAreaSizeY - 20
+	// Clamp onto clickable WORLD along the ray from her — the arrow flies the
+	// line anyway. The old per-axis clamp neither kept the direction nor knew
+	// the HUD: a target south of the screen became a shift/right-click at 20px
+	// from the bottom — on the skill buttons, the belt or the mini-menu (step 11).
+	bx, by, ok := verbs.ClampClickLogical(ctx.GR, bx, by)
+	if !ok {
+		ctx.Led.Append(verbs.Outcome{Verb: "volley", Holder: "volley", Result: verbs.ResRefused,
+			Evidence: fmt.Sprintf("at (%d,%d): no clickable world on the ray (HUD)", pos.X, pos.Y)})
+		return
 	}
 	ctx.M.MoveStop()
 	// EVERY VOLLEY WRITES (rule zero at death scale, 13:03: six Survive

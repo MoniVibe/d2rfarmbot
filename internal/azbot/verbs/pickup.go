@@ -182,7 +182,7 @@ sweep:
 	for _, dy := range []int{0, -8, 8, -16, -24} {
 		for _, dx := range []int{0, -10, 10, -20, 20} {
 			cx, cy := bx+dx, by+dy
-			if cx < 20 || cy < 20 || cx > gr.GameAreaSizeX-20 || cy > gr.GameAreaSizeY-20 {
+			if !ClickableLogical(gr, cx, cy) {
 				continue
 			}
 			m.AimPhysical(cx, cy)

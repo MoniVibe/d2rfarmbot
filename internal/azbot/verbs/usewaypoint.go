@@ -167,7 +167,7 @@ func (uw UseWaypoint) Do(m *motor.Motor, gr *game.MemoryReader, p *percept.Perce
 			for dy := -34; dy <= 34; dy += 6 {
 				for _, dx := range []int{0, -10, 10, -20, 20, -32, 32} {
 					cx, cy := bx+dx, by+dy
-					if cx < 20 || cy < 20 || cx > gr.GameAreaSizeX-20 || cy > gr.GameAreaSizeY-20 {
+					if !ClickableLogical(gr, cx, cy) {
 						continue
 					}
 					m.AimPhysical(cx, cy)
@@ -193,7 +193,7 @@ func (uw UseWaypoint) Do(m *motor.Motor, gr *game.MemoryReader, p *percept.Perce
 				// exact. Click it directly; OpenMenus.Waypoint (memory, not
 				// hover) is the honest confirmation below. Safe: town-only,
 				// portal-guarded (blindOK).
-				if bx >= 20 && by >= 20 && bx <= gr.GameAreaSizeX-20 && by <= gr.GameAreaSizeY-20 {
+				if ClickableLogical(gr, bx, by) {
 					m.ClickLeft(bx, by)
 					clicked = true
 				}
@@ -226,7 +226,7 @@ func (uw UseWaypoint) Do(m *motor.Motor, gr *game.MemoryReader, p *percept.Perce
 				// portals were eating every pad attempt).
 				m.AimPhysical(bx, by+30)
 				time.Sleep(50 * time.Millisecond)
-				if !gr.GetData().HoverData.IsHovered {
+				if !gr.GetData().HoverData.IsHovered && ClickableLogical(gr, bx, by+30) {
 					m.BareClick(bx, by+30)
 					time.Sleep(700 * time.Millisecond)
 				}
@@ -342,7 +342,7 @@ func (uw UseWaypoint) Do(m *motor.Motor, gr *game.MemoryReader, p *percept.Perce
 					rby := int(float32((wp.Position.X-me2.X)+(wp.Position.Y-me2.Y))*9.9) + gr.GameAreaSizeY/2
 					m.AimPhysical(rbx, rby)
 					time.Sleep(60 * time.Millisecond)
-					if hd := gr.GetData().HoverData; hd.IsHovered && hd.UnitID == wp.ID {
+					if hd := gr.GetData().HoverData; hd.IsHovered && hd.UnitID == wp.ID && ClickableLogical(gr, rbx, rby) {
 						m.ClickLeft(rbx, rby)
 						dl := time.Now().Add(2500 * time.Millisecond)
 						for time.Now().Before(dl) {

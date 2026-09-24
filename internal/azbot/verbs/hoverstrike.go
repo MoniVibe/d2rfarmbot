@@ -121,7 +121,7 @@ func (h HoverStrike) Do(m *motor.Motor, gr *game.MemoryReader, p *percept.Percep
 			}
 		}
 		cx, cy := bx+pr[0], by+pr[1]
-		if cx < 20 || cy < 20 || cx > gr.GameAreaSizeX-20 || cy > gr.GameAreaSizeY-20 {
+		if !ClickableLogical(gr, cx, cy) {
 			continue
 		}
 		inBounds++

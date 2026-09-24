@@ -135,7 +135,7 @@ func (im *Imbibe) Step(ctx *Ctx) Verdict {
 	for dy := -40; dy <= 12; dy += 8 {
 		for _, dx := range []int{0, -10, 10, -20, 20} {
 			cx, cy := bx+dx, by+dy
-			if cx < 20 || cy < 20 || cx > ctx.GR.GameAreaSizeX-20 || cy > ctx.GR.GameAreaSizeY-20 {
+			if !verbs.ClickableLogical(ctx.GR, cx, cy) {
 				continue
 			}
 			ctx.M.AimPhysical(cx, cy)
