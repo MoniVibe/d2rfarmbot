@@ -559,7 +559,7 @@ func ServicesPending(s *percept.Snapshot) bool {
 	if equippableCands(s) > 0 && equipWorks.Load() && s.Me.InvFree >= 6 {
 		return true
 	}
-	if s.Me.UnidentCount > 0 && identifyWorks.Load() && s.Me.IDScrolls > 0 {
+	if s.Me.UnidentCount > 0 && cainIDWorks.Load() { // Cain identifies (owner 2026-09-24); no tome charges needed
 		return true
 	}
 	// P-8.1: banked points are an errand — the march waited on every other
