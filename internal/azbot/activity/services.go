@@ -543,12 +543,17 @@ func servicesCooled() bool { return time.Now().Before(globalServiceCoolUntil) }
 // (the latent starvation bug) or at 37% straight back into the pack that chased her home
 // (measured 04:13:07: Breakout's portal landed her in town with zero gold and zero junk —
 // nothing pended, Advance marched her out wounded two seconds later).
-func ServicesPending(s *percept.Snapshot) bool {
+// ServicesPending: some town errand is due (Advance holds the march for it).
+func ServicesPending(s *percept.Snapshot) bool { return ServicesPendingWhy(s) != "" }
+
+// ServicesPendingWhy names the docket line that holds the march ("" = none) — logged
+// by the idle breaker so a deadlocked docket names itself (R15: 30 min idle in town).
+func ServicesPendingWhy(s *percept.Snapshot) string {
 	if servicesCooled() {
-		return false // the idle breaker handed the wheel to the march
+		return "" // the idle breaker handed the wheel to the march
 	}
 	if s.Me.HPPct <= 55 && healerHeals.Load() {
-		return true // Akara's refill is free; leaving town below the drink line is denial
+		return "heal" // Akara's refill is free; leaving town below the drink line is denial
 	}
 	// Dressing and identifying are errands too — Travel outranks Service by class,
 	// and without these lines Advance marched her out with a unique bow still bagged
@@ -557,42 +562,44 @@ func ServicesPending(s *percept.Snapshot) bool {
 	// (no landing room, nothing left to sell) must not gate the march — she idled
 	// in town 12 minutes on that deadlock.
 	if equippableCands(s) > 0 && equipWorks.Load() && s.Me.InvFree >= 6 {
-		return true
+		return "equip"
 	}
 	if s.Me.UnidentCount > 0 && cainIDWorks.Load() { // Cain identifies (owner 2026-09-24); no tome charges needed
-		return true
+		return "identify"
 	}
 	// P-8.1: banked points are an errand — the march waited on every other
 	// docket while 20 points sat in the bank and the unique stayed bagged
 	// (run 52: Advance took the actuator at 0.20 over Spend's 0.35 by class).
 	// Same escape clause: a retired spend belief does not gate the march.
 	if s.Me.StatPoints > 0 && spendWorks.Load() {
-		return true
+		return "spend-stats"
 	}
 	if s.Me.SkillPoints > 0 && skillSpendWorks.Load() {
-		return true // P-8.7: banked dps is an errand
+		return "spend-skills" // P-8.7: banked dps is an errand
 	}
 	// P-4.5: a near-empty tome is an errand too — marching out with no escape
 	// hatch is how retreats lose their destination (P-2.3), and an empty ID
 	// tome starves the whole judging pipeline.
-	if (s.Me.TPScrolls >= 0 && s.Me.TPScrolls <= 2 || s.Me.IDScrolls == 0) && scrollDeficit(s) > 0 {
-		return true
+	// TP only: identify is Cain's now (owner 2026-09-24), so an empty ID tome is not an
+	// errand — R15 idled 30 min in town on "pending=scrolls" with the ID tome at 0.
+	if s.Me.TPScrolls >= 0 && s.Me.TPScrolls <= 2 && scrollGap(s.Me.TPScrolls, s.Me.Gold) > 0 {
+		return "scrolls"
 	}
 	if s.Me.Gold >= 10 && s.Me.MinDurPct <= 25 {
-		return true
+		return "repair"
 	}
 	if s.Me.Gold >= 100 && time.Now().After(potionCoolUntil) {
 		if hp, mana := plan(s); hp+mana >= 2 {
-			return true
+			return "potions"
 		}
 	}
 	// The Fence's docket: broke with junk to sell, or a heavy bag either way.
 	// ...or a loot room trip (Haul): she came home to make room for a tier S
 	// drop, and every junk cell sold is room.
 	if s.Me.JunkCount > 0 && (s.Me.Gold < 500 || s.Me.JunkCount >= 4 || theLoot.hauling()) {
-		return true
+		return "fence"
 	}
-	return false
+	return ""
 }
 
 // ---------------------------------------------------------------- vendor errands on contract v2

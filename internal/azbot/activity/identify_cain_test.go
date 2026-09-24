@@ -44,3 +44,13 @@ func TestServicesPendingCainIgnoresTomeCharges(t *testing.T) {
 		t.Fatal("unidentified items gate town even with an empty ID tome (Cain identifies)")
 	}
 }
+
+func TestEmptyIDTomeIsNotAnErrand(t *testing.T) {
+	s := townSnap()
+	s.Me.IDScrolls = 0
+	s.Me.TPScrolls = 10
+	s.Me.Gold = 150000
+	if why := ServicesPendingWhy(s); why == "scrolls" {
+		t.Fatal("an empty ID tome must not hold the march (R15 idle deadlock)")
+	}
+}

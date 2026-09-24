@@ -2743,7 +2743,7 @@ func main() {
 					rx = o.Kind
 				}
 				logger.Warn("idle: nobody bids", "for", time.Since(idleSince).Round(time.Second),
-					"town", s.Me.InTown, "benched", strings.Join(benchedNow, " "), "rx", rx)
+					"town", s.Me.InTown, "benched", strings.Join(benchedNow, " "), "rx", rx, "pending", activity.ServicesPendingWhy(s))
 				// The town deadlock valve (a decision, not an actuation): an abandoned
 				// errand keeps ServicesPending true, so Travel stands down for it and
 				// nobody bids ("hangs on Akara"). Silencing services frees the march;
