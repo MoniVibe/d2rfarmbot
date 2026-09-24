@@ -189,6 +189,15 @@ type Advance struct {
 	memoryEntranceAt time.Time
 	memoryEntranceID data.UnitID
 	memoryEntranceN  int
+	// clicks: the per-entrance click budget, reset per leg (hop) — the trace's
+	// cap of 3 never reset and a door "deaf" at 1.4s was a door forever.
+	clicks route.ClickBudget
+	// seenArea/arrival: THE ARRIVAL DOOR (trace of 2ad968d: the stairs back up
+	// to Lair L1 were taken for the L3 exit; the Far Oasis door walked into by
+	// the search) — every area entry records where she landed and from where.
+	seenArea area.ID
+	arrival  arrivalDoor
+	pickNote string // last door-pick evidence logged (dedupe)
 	heading          int // search-mode tour bearing
 	// border-room cache (the room-graph read is a few hundred RPMs; 2s is plenty fresh)
 	extRooms map[area.ID][]game.TileRect
@@ -315,6 +324,8 @@ func (a *Advance) resetLeg(at data.Position) {
 	a.bestDist, a.bestAt = 1<<30, time.Now()
 	a.contactAt, a.clickTry = time.Time{}, 0
 	a.memoryEntranceAt, a.memoryEntranceID, a.memoryEntranceN = time.Time{}, 0, 0
+	a.clicks.Reset()
+	a.pickNote = ""
 	a.legStart = at
 	a.extRooms, a.extAt = nil, time.Time{}
 	// NIGHT-2 AUDIT FINDING 6: roadS was monotonic per key and never reset —
@@ -467,6 +478,7 @@ func (a *Advance) Step(ctx *Ctx) Verdict {
 	if a.lastArea == 0 {
 		a.lastArea = s.Me.Area
 	}
+	a.noteArrival(ctx, s.Me.Area, s.Me.Pos, s.Me.InTown)
 	// P-5.3a THE CROSSING DRIVE: between the door facts the AREA READ IS
 	// NOISE — the seam flickers faster than any push escapes it, and every
 	// read-driven reaction becomes an oscillator (00:58: push-pong, path 233,
@@ -670,6 +682,32 @@ func (a *Advance) Step(ctx *Ctx) Verdict {
 	// pad — the deepest level-lawful itinerary stop the panel shows lit. The
 	// panel's own list is the activation oracle; a spent or failed attempt
 	// cools 90 s and the gate march resumes unharmed.
+	// PORTAL FIRST (trace 2ad968d: after the unstick TP the return rode the
+	// waypoint and left her own portal standing): a live own portal in town
+	// goes back to where she was — the waypoint is only the fallback.
+	if s.Me.InTown && a.rerouteBegan.IsZero() && s.Me.HPPct >= 70 && !committedSeamHold() &&
+		!(s.Me.WeaponKind == "none" && s.Me.CorpseFound) { // Return's own guards
+		var best percept.PortalRef
+		bd := 1 << 30
+		for _, pt := range s.Portals {
+			if verbs.IsDeadDoor(pt.ID) {
+				continue
+			}
+			if dd := chebyshev(s.Me.Pos, pt.Pos); dd < bd {
+				best, bd = pt, dd
+			}
+		}
+		if route.PortalFirst(true, bd != 1<<30, time.Now().Before(hotPortalUntil), ServicesPending(s), false) {
+			if bd > 20 {
+				moveTo(ctx, best.Pos, moveto.Opts{Holder: a.Name(), Purpose: moveto.Travel, MaxHold: 1200 * time.Millisecond})
+				return Running
+			}
+			ctx.Led.Append(verbs.Outcome{Verb: "door", Holder: a.Name(), Result: verbs.ResDone,
+				Evidence: fmt.Sprintf("portal-first: own portal id=%d at %d — entering before any waypoint", int(best.ID), bd)})
+			verbs.EnterPortal{Target: best.ID, TargetPos: best.Pos}.Do(ctx.M, ctx.GR, ctx.P, ctx.Led, a.Name())
+			return Running
+		}
+	}
 	if s.Me.InTown && time.Since(a.wpAt) > 90*time.Second {
 		dd := ctx.GR.GetData()
 		// THE MAP ORACLE NAMES THE PAD (00:04: run 88 never rode — live
@@ -957,7 +995,7 @@ func (a *Advance) Step(ctx *Ctx) Verdict {
 		// explore. The search walks the coverage frontier and any unknown
 		// entrance on sight; a lying map hint still biases which frontier.
 		a.seedSearchBias(ctx, me, hop)
-		a.search(ctx, d, me)
+		a.search(ctx, d, me, hop)
 		return Running
 	}
 	a.marchGoal, a.marchGoalAt = tgt, time.Now() // P-5.7: the retreat may lean on this
@@ -1067,7 +1105,7 @@ func (a *Advance) Step(ctx *Ctx) Verdict {
 		// THE MAZE SEARCH RELAY: while armed, the coverage search owns the
 		// march — real streamed ground, the unseen frontier, no map lies.
 		if time.Now().Before(a.searchUntil) {
-			a.search(ctx, d, me)
+			a.search(ctx, d, me, hop)
 			return Running
 		}
 		// P-5.5b RETIRED AT 01:45 (nav.png: the map grid does not even COVER
@@ -1096,7 +1134,7 @@ func (a *Advance) Step(ctx *Ctx) Verdict {
 				a.searchUntil = time.Now().Add(20 * time.Second)
 				ctx.Led.Append(verbs.Outcome{Verb: "nav", Holder: a.Name(), Result: verbs.ResRefused,
 					Evidence: fmt.Sprintf("far journey blind at (%d,%d) — the maze search takes the march 20s", tgt.X, tgt.Y)})
-				a.search(ctx, d, me)
+				a.search(ctx, d, me, hop)
 				return Running
 			}
 			if time.Since(a.regridAt) > 8*time.Second && ctx.Regrid != nil {
@@ -1156,6 +1194,7 @@ func (a *Advance) borderTarget(ctx *Ctx, d game.Data, hop area.ID, me data.Posit
 	// named since attach). Mapped exits lie by a few tiles (the farmbot
 	// law), but the door band's drive and the entrance ritual absorb that.
 	var mapHint data.Position
+	goal := a.doorGoal(ctx, d, hop) // destination facts: arrival door, neighbours, wrong landings
 	if ad, ok := d.Areas[cur]; ok {
 		for _, lv := range ad.AdjacentLevels {
 			if lv.Area == hop && (lv.Position.X != 0 || lv.Position.Y != 0) {
@@ -1174,7 +1213,7 @@ func (a *Advance) borderTarget(ctx *Ctx, d game.Data, hop area.ID, me data.Posit
 				// not a plausible target for this hop. This catches the Sewer 3
 				// return-stairs collision: the map put 49->50 on the exact fact
 				// already measured for 49->48, so marching there simply ascended.
-				if a.mapHintConflictsWithKnownDoor(ctx, d, hop, lv.Position) {
+				if a.mapHintConflictsWithKnownDoor(ctx, d, hop, lv.Position) || goal.NearForeignFact(lv.Position) {
 					break
 				}
 				mapHint = lv.Position
@@ -1184,8 +1223,17 @@ func (a *Advance) borderTarget(ctx *Ctx, d game.Data, hop area.ID, me data.Posit
 				// live snapshot already exposes an entrance close to the hint,
 				// steer to that unit so the planner does not pin itself against
 				// the false map point and never reach cross().
-				if ent, ok := nearestLiveEntrance(d.Entrances, lv.Position, 96); ok {
-					cands = append(cands, route.Candidate{Src: "map-entrance", Pos: ent.Position})
+				// DESTINATION-AWARE (trace 2ad968d, Lair L2): the entrance nearest
+				// a false hint was the stairs BACK UP — never pick a door known or
+				// suspected to lead anywhere but the hop.
+				ent, note, ok := route.ChooseEntrance(entranceCands(d.Entrances), lv.Position, 96, goal)
+				if ok {
+					cands = append(cands, route.Candidate{Src: "map-entrance", Pos: ent.Pos})
+				}
+				if note != a.pickNote {
+					a.pickNote = note
+					ctx.Led.Append(verbs.Outcome{Verb: "door", Holder: a.Name(), Result: verbs.ResDone,
+						Evidence: fmt.Sprintf("%d->%d %s", int(cur), int(hop), note)})
 				}
 				cands = append(cands, route.Candidate{Src: "map", Pos: lv.Position})
 				break
@@ -1330,21 +1378,27 @@ func (a *Advance) mapHintConflictsWithKnownDoor(ctx *Ctx, d game.Data, hop area.
 // search tours the area for an unknown door: walk through any UNKNOWN entrance unit on
 // sight (crossings teach the cartographer both sides), otherwise hold a persistent
 // heading, turning 45° on walls — Explore's law, pointed at discovery.
-func (a *Advance) search(ctx *Ctx, d game.Data, me data.Position) {
+func (a *Advance) search(ctx *Ctx, d game.Data, me data.Position, hop area.ID) {
 	// Opportunistic door: the nearest entrance unit not yet explained by a fact.
 	var ent *data.Entrance
 	bd := 40
+	goal := a.doorGoal(ctx, d, hop)
 	for i := range d.Entrances {
 		e := &d.Entrances[i]
 		if a.knownDoor(ctx, d, e.Position) {
 			continue // already learned where this one goes (and it wasn't the hop)
+		}
+		// Never the way back (trace 2ad968d: the search walked out to Far
+		// Oasis through an unrecorded arrival door) nor a wrong landing.
+		if skip, _ := route.SearchSkip(e.Name, e.Position, goal); skip {
+			continue
 		}
 		if dd := chebyshev(me, e.Position); dd < bd {
 			ent, bd = e, dd
 		}
 	}
 	if ent != nil {
-		a.cross(ctx, d, me, ent.Position, 0) // unknown door: no far-side fact to aim at
+		a.cross(ctx, d, me, ent.Position, hop) // unknown door: a wrong landing is still recorded
 		return
 	}
 	if a.legStart == me || a.heading == 0 && a.legStart != (data.Position{}) {
@@ -1433,10 +1487,8 @@ func (a *Advance) memoryEntranceClick(ctx *Ctx, start, hop area.ID, targetID dat
 	if targetID == 0 || target == (data.Position{}) {
 		return false, false
 	}
-	if a.memoryEntranceID != targetID {
-		a.memoryEntranceID, a.memoryEntranceN = targetID, 0
-	}
-	if a.memoryEntranceN >= 3 || time.Since(a.memoryEntranceAt) < 1200*time.Millisecond {
+	// The budget is per leg (hop) and per entrance: a new leg starts fresh.
+	if !a.clicks.Allow(int(hop), targetID) || time.Since(a.memoryEntranceAt) < 1200*time.Millisecond {
 		return false, false
 	}
 	dd := ctx.GR.GetData()
@@ -1456,8 +1508,9 @@ func (a *Advance) memoryEntranceClick(ctx *Ctx, start, hop area.ID, targetID dat
 	// memory-derived offset; this is a tiny label-depth compensation, not a
 	// cursor hunt over arbitrary screen space.
 	offsets := []data.Position{{X: 0, Y: -28}, {X: 0, Y: -56}, {X: -18, Y: -28}}
-	off := offsets[a.memoryEntranceN]
-	a.memoryEntranceN++
+	off := offsets[a.clicks.N%len(offsets)]
+	a.clicks.N++
+	a.memoryEntranceID, a.memoryEntranceN = targetID, a.clicks.N
 	a.memoryEntranceAt = time.Now()
 	cx, cy := bx+off.X, by+off.Y
 	if !verbs.ClickableLogical(ctx.GR, cx, cy) {
@@ -1468,18 +1521,25 @@ func (a *Advance) memoryEntranceClick(ctx *Ctx, start, hop area.ID, targetID dat
 	// ClickLeft is the same background-safe world click used by Pickup. It sends
 	// the message to D2R and never calls FocusGame/RealMenuClick.
 	ctx.M.ClickLeft(cx, cy)
-	deadline := time.Now().Add(1400 * time.Millisecond)
-	for time.Now().Before(deadline) {
+	// THE VERDICT IS 3s (trace: a click logged deaf at 1.4s changed area ~2s
+	// later): poll the area until it changes or the window lapses.
+	clickAt := time.Now()
+	for {
 		time.Sleep(140 * time.Millisecond)
 		nowArea := ctx.GR.GetData().PlayerUnit.Area
-		if nowArea == 0 || nowArea == start {
+		done, _ := route.DoorVerdict(clickAt, time.Now(), nowArea != 0 && nowArea != start)
+		if !done {
 			continue
+		}
+		if nowArea == 0 || nowArea == start {
+			break
 		}
 		if hop != 0 && nowArea != hop {
 			// A transition is still real, but naming the wrong-way landing makes
 			// the route defect diagnosable instead of calling it a successful hop.
 			ctx.Led.Append(verbs.Outcome{Verb: "cross", Holder: a.Name(), Result: verbs.ResRefused,
-				Evidence: fmt.Sprintf("memory entrance id=%d landed wrong area %d (wanted %d)", int(targetID), int(nowArea), int(hop))})
+				Evidence: fmt.Sprintf("memory entrance id=%d landed wrong area %d (wanted %d) — recorded, never retaken", int(targetID), int(nowArea), int(hop))})
+			a.recordWrongDoor(ctx, start, nowArea, ent.Position)
 		} else {
 			ctx.Led.Append(verbs.Outcome{Verb: "cross", Holder: a.Name(), Result: verbs.ResDone,
 				Evidence: fmt.Sprintf("memory entrance id=%d transitioned %d -> %d", int(targetID), int(start), int(nowArea))})
@@ -1507,14 +1567,25 @@ func (a *Advance) cross(ctx *Ctx, d game.Data, me data.Position, tgt data.Positi
 			break
 		}
 	}
-	if td := chebyshev(me, tgt); td > 3 {
+	if td := chebyshev(me, tgt); !route.ContactReady(td, false) {
 		if td > 12 { // generous: a BOUNCE off the mouth must not zero the ritual timer
 			a.contactAt, a.clickTry = time.Time{}, 0
 		}
 		// item 4: walk the APPROACH to the door through the planner — the
-		// contact push below (td<=3, warp ritual) is a separate step.
-		moveTo(ctx, tgt, moveto.Opts{Holder: a.Name(), Purpose: moveto.Travel, Arrive: 3, MaxHold: 500 * time.Millisecond, Fallback: true})
-		return
+		// contact push below (warp ritual) is a separate step. THE DEAD ZONE
+		// (trace 2ad968d: pinned 19s, 0 cross lines): a stairs unit's own tile
+		// is unwalkable and the planner reports Arrived at the nearest walkable
+		// 4-5 tiles off — that IS contact; fall through to the push/click.
+		st := moveTo(ctx, tgt, moveto.Opts{Holder: a.Name(), Purpose: moveto.Travel, Arrive: 3, MaxHold: 500 * time.Millisecond, Fallback: true})
+		if st.State != moveto.Arrived {
+			return
+		}
+		me = ctx.GR.GetData().PlayerUnit.Position
+		if !route.ContactReady(chebyshev(me, tgt), true) {
+			return
+		}
+		ctx.Led.Append(verbs.Outcome{Verb: "cross", Holder: a.Name(), Result: verbs.ResDone,
+			Evidence: fmt.Sprintf("arrived %d from door (%d,%d) (%s) — contact", chebyshev(me, tgt), tgt.X, tgt.Y, st.Why)})
 	}
 	if a.contactAt.IsZero() {
 		a.contactAt = time.Now()
