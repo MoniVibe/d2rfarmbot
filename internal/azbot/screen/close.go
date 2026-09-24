@@ -65,6 +65,10 @@ var clickOrder = []Panel{SubPanel, PauseMenu, Shop, Stash, CharSheet, QuestLog, 
 const escCloses = NPCMenu | NPCDialog | Shop | Inventory | CharSheet | SkillTree |
 	QuestLog | Stash | Waypoint | Chat | SkillPicker | Mercenary | LeftPanel | RightPanel
 
+// EscCloses is escCloses for the executive's janitor: an ESC may target only
+// these (it re-checks every ESC CloseStep proposes before the motor sees it).
+const EscCloses = escCloses
+
 // CloseStep picks ONE next action to clear the screen; call it again on the
 // next Reading until it answers ActNone.
 //

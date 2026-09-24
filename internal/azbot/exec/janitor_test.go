@@ -164,98 +164,295 @@ func TestStable(t *testing.T) {
 	}
 }
 
+var jt0 = time.Date(2026, 9, 24, 12, 0, 0, 0, time.UTC)
+
+// ms: the fake clock.
+func ms(n int) time.Time { return jt0.Add(time.Duration(n) * time.Millisecond) }
+
+// obsAt: a reading published at ms n whose panels are also believed.
+func obsAt(n int, r screen.Reading) *Seen {
+	return &Seen{At: ms(n), State: screen.State{Mode: screen.World, Panels: r.Panels}, Reading: r}
+}
+
+var (
+	rtg      = map[screen.Panel]screen.Point{screen.PauseMenu: {X: 960, Y: 685}}
+	subX     = map[screen.Panel]screen.Point{screen.SubPanel: {X: 1413, Y: 81}}
+	pauseAt  = func() screen.Reading { return seen(screen.PauseMenu, rtg) }
+	survival = HolderNeeds{Mode: ModeOf(screen.World), Survival: true}
+)
+
 func TestJanitorRateFreshnessAndWedge(t *testing.T) {
-	t0 := time.Date(2026, 9, 24, 12, 0, 0, 0, time.UTC)
-	at := func(ms int) time.Time { return t0.Add(time.Duration(ms) * time.Millisecond) }
 	r := seen(screen.LeftPanel, nil)
-	obs := func(ms int) *Seen {
-		return &Seen{At: at(ms), State: screen.State{Mode: screen.World, Panels: screen.LeftPanel}, Reading: r}
-	}
 	j := NewJanitor()
-	if d := j.Decide(at(0), nil, worldOnly); !d.Open {
+	if d := j.Decide(ms(0), nil, worldOnly); !d.Open {
 		t.Fatal("no reading yet: the gate is open")
 	}
-	d := j.Decide(at(0), obs(0), worldOnly)
+	// One reading is a rumor: no ESC yet (JanitorEscFrames).
+	if d := j.Decide(ms(0), obsAt(0, r), worldOnly); d.Act || d.Open || !strings.Contains(d.Wait, "esc withheld") {
+		t.Fatalf("ESC on one reading: %+v", d)
+	}
+	d := j.Decide(ms(100), obsAt(100, r), worldOnly)
 	if !d.Act || d.Action.Kind != screen.ActKey {
 		t.Fatalf("first action: %+v", d)
 	}
-	j.Acted(at(150))
-	if d := j.Decide(at(300), obs(290), worldOnly); d.Act || d.Wait != "rate" || d.Open {
+	j.Acted(ms(150))
+	if d := j.Decide(ms(300), obsAt(290, r), worldOnly); d.Act || d.Wait != "rate" || d.Open {
 		t.Fatalf("400ms floor: %+v", d)
 	}
-	if d := j.Decide(at(600), obs(300), worldOnly); d.Act || d.Wait != "awaiting a fresh reading" {
+	if d := j.Decide(ms(600), obsAt(300, r), worldOnly); d.Act || d.Wait != "awaiting a fresh reading" {
 		t.Fatalf("a reading 150ms after the action does not judge it: %+v", d)
 	}
 	// Five more unanswered actions (six in all) inside 10s, then the wedge.
-	ms := 600
+	n := 600
 	for i := 0; i < 5; i++ {
-		ms += 500
-		if d := j.Decide(at(ms), obs(ms), worldOnly); !d.Act {
+		n += 500
+		if d := j.Decide(ms(n), obsAt(n, r), worldOnly); !d.Act {
 			t.Fatalf("action %d: %+v", i+2, d)
 		}
 	}
-	ms += 500
-	d = j.Decide(at(ms), obs(ms), worldOnly)
+	n += 500
+	d = j.Decide(ms(n), obsAt(n, r), worldOnly)
 	if d.Act || !d.Wedged || !d.NewWedge || d.Gate() != "wedge" {
 		t.Fatalf("seventh try must wedge: %+v", d)
 	}
-	ms += 500
-	if d := j.Decide(at(ms), obs(ms), worldOnly); d.Act || !d.Wedged || d.NewWedge || d.Open {
-		t.Fatalf("wedged: gate closed, no action, logged once: %+v", d)
+	// Wedged: no action, logged once — and the holder is NOT held on a side
+	// panel (the wedge gates on the pause menu only).
+	n += 500
+	if d := j.Decide(ms(n), obsAt(n, r), worldOnly); d.Act || !d.Wedged || d.NewWedge || !d.Open {
+		t.Fatalf("wedged on a side panel: open, no action: %+v", d)
+	}
+	n += 2000 // well past the last ESC's phantom window (this pause is the owner's)
+	if d := j.Decide(ms(n), obsAt(n, pauseAt()), worldOnly); d.Act || !d.Wedged || d.Open || d.Gate() != "wedge" {
+		t.Fatalf("wedged on the pause menu: held, no action: %+v", d)
 	}
 	// The wedge rests 60s, then the janitor tries again.
-	ms += 61_000
-	if d := j.Decide(at(ms), obs(ms), worldOnly); !d.Act {
+	n += 61_000
+	j.Decide(ms(n), obsAt(n, r), worldOnly)
+	n += 100
+	if d := j.Decide(ms(n), obsAt(n, r), worldOnly); !d.Act {
 		t.Fatalf("after the rest: %+v", d)
 	}
 }
 
-func TestJanitorShrinkResetsWedge(t *testing.T) {
-	t0 := time.Date(2026, 9, 24, 12, 0, 0, 0, time.UTC)
+// Real progress — every action peels a layer — is not a wedge.
+func TestJanitorProgressIsNotAWedge(t *testing.T) {
 	j := NewJanitor()
 	pts := map[screen.Panel]screen.Point{screen.SubPanel: {X: 1413, Y: 81}, screen.PauseMenu: {X: 960, Y: 685}}
-	// Slow but real progress: five tries per layer, each layer peeled shrinks
-	// the foreign set and opens a fresh window.
 	layers := []screen.Panel{screen.SubPanel | screen.PauseMenu | screen.LeftPanel, screen.PauseMenu | screen.LeftPanel, screen.LeftPanel}
-	ms := 0
+	n := 0
 	for _, p := range layers {
-		r := seen(p, pts)
-		for i := 0; i < 5; i++ {
-			ms += 500
-			at := t0.Add(time.Duration(ms) * time.Millisecond)
-			d := j.Decide(at, &Seen{At: at, State: screen.State{Mode: screen.World, Panels: p}, Reading: r}, worldOnly)
-			if !d.Act || d.Wedged {
-				t.Fatalf("%s try %d: %+v", p, i, d)
-			}
+		n += 500
+		d := j.Decide(ms(n), obsAt(n, seen(p, pts)), worldOnly)
+		if !d.Act || d.Wedged || d.Phantom != "" {
+			t.Fatalf("%s: %+v", p, d)
 		}
 	}
-	// A clear screen opens the gate.
-	at := t0.Add(time.Duration(ms+500) * time.Millisecond)
-	if d := j.Decide(at, &Seen{At: at, State: screen.State{Mode: screen.World}, Reading: seen(0, nil)}, worldOnly); !d.Open {
+	n += 500
+	if d := j.Decide(ms(n), obsAt(n, seen(0, nil)), worldOnly); !d.Open || d.Phantom != "" {
 		t.Fatalf("clear: %+v", d)
+	}
+	if q := j.Quarantined(ms(n)); q != 0 {
+		t.Fatalf("real panels quarantined: %s", q)
 	}
 }
 
-// A toggle loop (ESC raises the pause menu, the click drops it, the phantom
-// panel stays) never shrinks below its first set: it must wedge.
-func TestJanitorToggleLoopWedges(t *testing.T) {
-	t0 := time.Date(2026, 9, 24, 12, 0, 0, 0, time.UTC)
+// THE R9 LOOP: a phantom sub-panel appears, is clicked away, the gate opens,
+// it appears again — the foreign set never shrinks below its first and the
+// gate keeps reopening, so the 6-in-10s wedge never trips. The loop breaker
+// counts every action: the ninth inside 30s is a ui_wedge.
+func TestJanitorLoopBreakerR9(t *testing.T) {
 	j := NewJanitor()
-	right := seen(screen.RightPanel, nil)
-	pause := seen(screen.PauseMenu, map[screen.Panel]screen.Point{screen.PauseMenu: {X: 960, Y: 685}})
-	for i := 0; i < 7; i++ {
-		ms := 500 * (i + 1)
-		r := right
-		if i%2 == 1 {
-			r = pause
+	sub := seen(screen.SubPanel, subX)
+	acts := 0
+	n := 0
+	for i := 0; i < 9; i++ {
+		n += 1000
+		d := j.Decide(ms(n), obsAt(n, sub), worldOnly)
+		if i < 8 {
+			if !d.Act || d.Action.Panel != screen.SubPanel {
+				t.Fatalf("click %d: %+v", i+1, d)
+			}
+			acts++
+			j.Acted(ms(n + 10))
+			// The click "worked": the next reading is clear and the gate opens.
+			if d := j.Decide(ms(n+500), obsAt(n+500, seen(0, nil)), worldOnly); !d.Open {
+				t.Fatalf("clear after click %d: %+v", i+1, d)
+			}
+			continue
 		}
-		at := t0.Add(time.Duration(ms) * time.Millisecond)
-		d := j.Decide(at, &Seen{At: at, State: screen.State{Mode: screen.World, Panels: r.Panels}, Reading: r}, worldOnly)
-		if i < 6 && !d.Act {
-			t.Fatalf("toggle %d: %+v", i, d)
+		if d.Act || !d.NewWedge || !strings.Contains(d.Why, "loop breaker") || !d.Open {
+			t.Fatalf("ninth action in 30s must wedge (open: no pause): %+v", d)
 		}
-		if i == 6 && !d.NewWedge {
-			t.Fatalf("toggle loop not wedged: %+v", d)
+	}
+	if acts != JanitorLoopN {
+		t.Fatalf("acted %d times", acts)
+	}
+	// Wedged: the phantom holds nobody, the pause menu does, nothing is pressed.
+	n += 1000
+	if d := j.Decide(ms(n), obsAt(n, sub), worldOnly); d.Act || !d.Open || !d.Wedged {
+		t.Fatalf("wedged + sub-panel: %+v", d)
+	}
+	n += 1000
+	if d := j.Decide(ms(n), obsAt(n, pauseAt()), worldOnly); d.Act || d.Open {
+		t.Fatalf("wedged + pause: %+v", d)
+	}
+}
+
+// ESC needs the target positively seen in two consecutive readings; one
+// reading counted once however many ticks decide on it; a gap resets.
+func TestJanitorEscNeedsTwoReadings(t *testing.T) {
+	j := NewJanitor()
+	bag := seen(screen.Inventory, nil) // no X seen: ESC is the only close
+	s := obsAt(0, bag)
+	for k := 0; k < 3; k++ {
+		if d := j.Decide(ms(40*k), s, worldOnly); d.Act {
+			t.Fatalf("the same reading decided %d times sent ESC: %+v", k+1, d)
 		}
+	}
+	gap := seen(0, nil)
+	gap.Unsure = screen.Inventory
+	j.Decide(ms(200), obsAt(200, gap), worldOnly)
+	if d := j.Decide(ms(400), obsAt(400, bag), worldOnly); d.Act {
+		t.Fatalf("a gap resets the streak: %+v", d)
+	}
+	if d := j.Decide(ms(600), obsAt(600, bag), worldOnly); !d.Act || d.Action.Kind != screen.ActKey {
+		t.Fatalf("two consecutive readings: %+v", d)
+	}
+}
+
+// THE R9 ESC: a phantom shop (no X: the old grid fallback) earns an ESC, the
+// ESC raises the pause menu. The janitor convicts the shop detector, clicks
+// Return to Game once, and ignores the shop for five minutes.
+func TestJanitorPhantomEscR9(t *testing.T) {
+	for _, n := range []HolderNeeds{worldOnly, survival} {
+		j := NewJanitor()
+		shop := seen(screen.Shop, nil)
+		if n.Survival {
+			// A survival holder is never acted for off a pause menu, so the
+			// ESC comes from an earlier holder; the verdict still lands.
+			j.Decide(ms(0), obsAt(0, shop), worldOnly)
+			if d := j.Decide(ms(100), obsAt(100, shop), worldOnly); !d.Act {
+				t.Fatalf("setup ESC: %+v", d)
+			}
+		} else {
+			j.Decide(ms(0), obsAt(0, shop), n)
+			if d := j.Decide(ms(100), obsAt(100, shop), n); !d.Act || d.Action.Kind != screen.ActKey {
+				t.Fatalf("ESC: %+v", d)
+			}
+		}
+		j.Acted(ms(120))
+		d := j.Decide(ms(600), obsAt(400, pauseAt()), n)
+		want := "phantom: shop — ESC raised pause; quarantined 5m"
+		if !d.Act || d.Action.Kind != screen.ActClick || d.Action.X != 960 || d.Action.Y != 685 || d.Why != want {
+			t.Fatalf("survival=%v: Return to Game on the phantom's pause: %+v", n.Survival, d)
+		}
+		if q := j.Quarantined(ms(600)); q != screen.Shop {
+			t.Fatalf("quarantine %s", q)
+		}
+		j.Acted(ms(620))
+		// The phantom again: Unsure now — neither held nor acted on.
+		for k := 0; k < 3; k++ {
+			at := 2000 + 500*k
+			if d := j.Decide(ms(at), obsAt(at, shop), n); !d.Open || d.Act {
+				t.Fatalf("quarantined shop: %+v", d)
+			}
+		}
+		// Five minutes on, the detector is trusted again.
+		j.Decide(ms(301_000), obsAt(301_000, shop), worldOnly)
+		if d := j.Decide(ms(301_500), obsAt(301_500, shop), worldOnly); d.Open || !d.Act {
+			t.Fatalf("after the quarantine: %+v", d)
+		}
+	}
+}
+
+// An ESC that closes a real panel raises nothing: no conviction.
+func TestJanitorRealEscNoPhantom(t *testing.T) {
+	j := NewJanitor()
+	bag := seen(screen.Inventory, nil)
+	j.Decide(ms(0), obsAt(0, bag), worldOnly)
+	j.Decide(ms(100), obsAt(100, bag), worldOnly)
+	j.Acted(ms(120))
+	for _, at := range []int{600, 1000, 2000} {
+		if d := j.Decide(ms(at), obsAt(at, seen(0, nil)), worldOnly); !d.Open || d.Phantom != "" {
+			t.Fatalf("clear after a real ESC: %+v", d)
+		}
+	}
+	// A pause menu long after the ESC (the owner's) convicts nobody.
+	if d := j.Decide(ms(4000), obsAt(4000, pauseAt()), worldOnly); d.Phantom != "" || j.Quarantined(ms(4000)) != 0 {
+		t.Fatalf("late pause: %+v", d)
+	}
+}
+
+// A close click after which the panel still stands and nothing else changed:
+// the X was never there. A click that closes convicts nobody.
+func TestJanitorPhantomClick(t *testing.T) {
+	j := NewJanitor()
+	sub := seen(screen.SubPanel, subX)
+	if d := j.Decide(ms(0), obsAt(0, sub), worldOnly); !d.Act || d.Action.Kind != screen.ActClick {
+		t.Fatalf("click: %+v", d)
+	}
+	j.Acted(ms(50))
+	d := j.Decide(ms(500), obsAt(500, sub), worldOnly)
+	if d.Phantom != "phantom: subpanel — close click changed nothing; quarantined 5m" || !d.Open || d.Act {
+		t.Fatalf("phantom click: %+v", d)
+	}
+	if j.Quarantined(ms(500)) != screen.SubPanel {
+		t.Fatal("not quarantined")
+	}
+
+	j = NewJanitor()
+	j.Decide(ms(0), obsAt(0, sub), worldOnly)
+	j.Acted(ms(50))
+	if d := j.Decide(ms(500), obsAt(500, seen(0, nil)), worldOnly); d.Phantom != "" || !d.Open {
+		t.Fatalf("a click that closed: %+v", d)
+	}
+	// Something else changed (a pause menu surfaced under it): not convicted.
+	j = NewJanitor()
+	both := seen(screen.SubPanel|screen.LeftPanel, subX)
+	j.Decide(ms(0), obsAt(0, both), worldOnly)
+	j.Acted(ms(50))
+	if d := j.Decide(ms(500), obsAt(500, seen(screen.SubPanel, subX)), worldOnly); d.Phantom != "" {
+		t.Fatalf("the screen changed: %+v", d)
+	}
+}
+
+// A survival holder is never held or acted for, unless the game is paused.
+func TestJanitorSurvivalStandsDown(t *testing.T) {
+	j := NewJanitor()
+	for k, r := range []screen.Reading{seen(screen.Shop, nil), seen(screen.SubPanel, subX), seen(screen.RightPanel, nil)} {
+		at := 1000 * k
+		j.Decide(ms(at), obsAt(at, r), survival)
+		if d := j.Decide(ms(at+100), obsAt(at+100, r), survival); !d.Open || d.Act || d.Wait != "survival" {
+			t.Fatalf("%s: %+v", r.Panels, d)
+		}
+	}
+	cur := seen(0, nil)
+	cur.CursorItem = true
+	if d := j.Decide(ms(5000), obsAt(5000, cur), survival); !d.Open || d.Act {
+		t.Fatalf("cursor: %+v", d)
+	}
+	// The pause menu: the game is frozen, clicking cannot hurt the fight.
+	if d := j.Decide(ms(6000), obsAt(6000, pauseAt()), survival); d.Open || !d.Act || d.Action.Panel != screen.PauseMenu {
+		t.Fatalf("pause under a survival holder: %+v", d)
+	}
+}
+
+// A sub-panel ruled Unsure (unreachable, quarantined) withholds every ESC:
+// were it real, the ESC would land on it.
+func TestGateUnsureSubPanelWithholdsEsc(t *testing.T) {
+	r := seen(screen.Inventory, nil)
+	if g := Gate(r, worldOnly); g.Action.Kind != screen.ActKey {
+		t.Fatalf("baseline ESC: %+v", g)
+	}
+	r.Unsure = screen.SubPanel
+	r.Evidence[screen.SubPanel] = "sub-panel red X — no pause menu before it: unreachable"
+	if g := Gate(r, worldOnly); g.Acts() || g.Open || !strings.Contains(g.Action.Reason, "sub-panel reads Unsure") {
+		t.Fatalf("ESC under an Unsure sub-panel: %+v", g)
+	}
+	// A click on a seen X is still fine (it lands on its own button).
+	r = seen(screen.Inventory, map[screen.Panel]screen.Point{screen.Inventory: {X: 1788, Y: 18}})
+	r.Unsure = screen.SubPanel
+	if g := Gate(r, worldOnly); g.Action.Kind != screen.ActClick {
+		t.Fatalf("click under an Unsure sub-panel: %+v", g)
 	}
 }

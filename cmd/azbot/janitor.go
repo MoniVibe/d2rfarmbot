@@ -12,6 +12,7 @@ import (
 	"image/png"
 	"log/slog"
 	"os"
+	"strings"
 	"time"
 
 	"github.com/hectorgimenez/koolo/internal/azbot/activity"
@@ -96,8 +97,18 @@ func (g *gatekeeper) step(tick uint64, s *percept.Snapshot, arb *arbiter.Arbiter
 	who := holderWho(arb)
 	now := time.Now()
 	seen := g.sh.Eye.Latest()
-	d := g.j.Decide(now, seen, g.needs(who, s, roster))
+	n := g.needs(who, s, roster)
+	// Survival holders (Stand/Flee/Breakout/Dodge) are never held or acted
+	// for unless the pause menu is up (exec.Janitor rule 5).
+	n.Survival = arb.Current() != nil && arb.Current().Demand.Class == arbiter.ClassSurvive
+	d := g.j.Decide(now, seen, n)
 	g.sh.SetGate(d.Gate())
+	if d.Phantom != "" {
+		// A detector convicted without an action this tick (a close click
+		// that changed nothing): log it where the gate lines are.
+		g.logger.Warn("screen: phantom detector quarantined", "hold", who, "why", d.Phantom)
+		emit(trace.Gate(who, d.Phantom, "", tick))
+	}
 	if d.Open {
 		arb.SetBlocked(false)
 		if !g.blockedAt.IsZero() {
@@ -117,7 +128,7 @@ func (g *gatekeeper) step(tick uint64, s *percept.Snapshot, arb *arbiter.Arbiter
 			_ = png.Encode(f, g.gr.Screenshot())
 			f.Close()
 		}
-		g.logger.Warn("UI WEDGE — janitor actions are not clearing the screen; gating only for 60s",
+		g.logger.Warn("UI WEDGE — janitor actions are not clearing the screen; not acting for 60s, gating on the pause menu only",
 			"hold", who, "why", d.Why, "screen", shot)
 		emit(trace.Gate(who, "ui_wedge: "+d.Why, "", tick))
 		g.said = "ui_wedge"
@@ -125,7 +136,13 @@ func (g *gatekeeper) step(tick uint64, s *percept.Snapshot, arb *arbiter.Arbiter
 	if d.Act {
 		act := g.perform(d)
 		g.j.Acted(time.Now())
+		if strings.Contains(act, "refused") {
+			g.j.Refused()
+		}
 		g.sh.Kick() // judge the action on the next tick's photograph
+		if strings.HasPrefix(d.Why, "phantom") {
+			g.logger.Warn("screen: phantom detector quarantined", "hold", who, "why", d.Why, "act", act)
+		}
 		emit(trace.Gate(who, d.Why, act, tick))
 		g.said = d.Why
 		return false, 0
@@ -159,6 +176,9 @@ func (g *gatekeeper) settle(p *percept.Perceptor) int {
 		if d.Act {
 			act := g.perform(d)
 			g.j.Acted(time.Now())
+			if strings.Contains(act, "refused") {
+				g.j.Refused()
+			}
 			emit(trace.Gate("startup", d.Why, act, 0))
 			n++
 		}
