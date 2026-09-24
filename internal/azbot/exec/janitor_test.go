@@ -129,18 +129,40 @@ func TestGateMode(t *testing.T) {
 func TestGateCursor(t *testing.T) {
 	r := seen(0, nil)
 	r.CursorItem = true
-	g := Gate(r, worldOnly)
+	// Relay R10: only a KNOWN-junk item may be dropped, and only in the field.
+	field := worldOnly
+	field.CursorJunk = true
+	g := Gate(r, field)
 	if g.Open || !g.Drop || !g.Cursor || g.Action.Kind == screen.ActKey {
-		t.Fatalf("foreign cursor on clear ground: %+v", g)
+		t.Fatalf("foreign known-junk cursor on clear field ground: %+v", g)
+	}
+	for name, n := range map[string]HolderNeeds{
+		"field, not known junk": worldOnly,
+		"town, known junk":      {Mode: ModeOf(screen.World), Town: true, CursorJunk: true},
+		"town":                  {Mode: ModeOf(screen.World), Town: true},
+	} {
+		g := Gate(r, n)
+		if g.Open || g.Drop || g.Acts() || !g.CursorHold || !g.Cursor || !strings.Contains(g.Why, "HELD") {
+			t.Fatalf("%s: a cursor item must be HELD, never dropped: %+v", name, g)
+		}
 	}
 	if g := Gate(r, HolderNeeds{Mode: AnyMode, CursorOwn: true}); !g.Open {
 		t.Fatalf("an owned cursor is not foreign: %+v", g)
 	}
-	// Over an open bag: left alone — no drop, no ESC, not even for a foreign bag.
+	// Over the SEEN bag: parked in a free cell (town or field) — no drop, no ESC.
+	for _, town := range []bool{true, false} {
+		r = seen(screen.Inventory, map[screen.Panel]screen.Point{screen.Inventory: {X: 1788, Y: 18}})
+		r.CursorItem = true
+		g := Gate(r, HolderNeeds{Mode: ModeOf(screen.World), Town: town})
+		if g.Open || !g.Park || g.Drop || g.Action.Kind != screen.ActNone || !g.Acts() {
+			t.Fatalf("cursor over the bag (town=%v): %+v", town, g)
+		}
+	}
+	// Over a half panel that is not the bag: left alone — no park, no drop, no ESC.
 	r = seen(screen.RightPanel, map[screen.Panel]screen.Point{screen.RightPanel: {X: 1788, Y: 18}})
 	r.CursorItem = true
 	if g := Gate(r, worldOnly); g.Open || g.Acts() || !strings.Contains(g.Why, "left") {
-		t.Fatalf("cursor over bag: %+v", g)
+		t.Fatalf("cursor over a half panel: %+v", g)
 	}
 	// A foreign pause menu goes first; the item waits.
 	r = seen(screen.PauseMenu, map[screen.Panel]screen.Point{screen.PauseMenu: {X: 960, Y: 685}})
@@ -454,5 +476,41 @@ func TestGateUnsureSubPanelWithholdsEsc(t *testing.T) {
 	r.Unsure = screen.SubPanel
 	if g := Gate(r, worldOnly); g.Action.Kind != screen.ActClick {
 		t.Fatalf("click under an Unsure sub-panel: %+v", g)
+	}
+}
+
+// Relay R10, 09:20:43, tick 13841: the watchdog benched Equip mid-Dress with
+// an item on the cursor, Unstick took the grant, and the gate answered
+// "foreign cursor item: drop at feet" — the item hit the Lut Gholein floor.
+// The same tick now HOLDS Unstick (no action at all), and a ui_wedge never
+// lets the item loose either; a survival holder is still never delayed.
+func TestJanitorNeverDropsInTown(t *testing.T) {
+	cur := seen(0, nil)
+	cur.CursorItem = true
+	obs := func(n int) *Seen {
+		return &Seen{At: ms(n), State: screen.State{Mode: screen.World, CursorItem: true}, Reading: cur}
+	}
+	unstickTown := HolderNeeds{Mode: ModeOf(screen.World), Town: true} // needsWorld: CursorEmpty
+	j := NewJanitor()
+	for n := 0; n < 20000; n += 500 {
+		d := j.Decide(ms(n), obs(n), unstickTown)
+		if d.Act || d.Drop || d.Open || !d.CursorHold {
+			t.Fatalf("at %dms: %+v", n, d)
+		}
+	}
+	// Wedged (the parker spent its actions): still held.
+	j.wedgeUntil = ms(100000)
+	if d := j.Decide(ms(21000), obs(21000), unstickTown); d.Open || d.Act || !d.Wedged {
+		t.Fatalf("wedged with a cursor item: %+v", d)
+	}
+	sv := unstickTown
+	sv.Survival = true
+	if d := j.Decide(ms(21500), obs(21500), sv); !d.Open || d.Act {
+		t.Fatalf("wedged survival holder delayed: %+v", d)
+	}
+	// Control: the field drop still happens for known junk.
+	field := HolderNeeds{Mode: ModeOf(screen.World), CursorJunk: true}
+	if d := NewJanitor().Decide(ms(0), obs(0), field); !d.Act || !d.Drop {
+		t.Fatalf("known junk in the field: %+v", d)
 	}
 }

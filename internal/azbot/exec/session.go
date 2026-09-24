@@ -164,9 +164,9 @@ const (
 	SesWorldWait     = 45 * time.Second       // a valid world must return within (from the first Play)
 	SesWorldStable   = time.Second            // valid this long counts as back
 
-	WindCap    = 30 * time.Second // the Recall budget (-winddown): not in town this long after the request → Pause (or Hold)
-	WindClear  = 3 * time.Second  // WindDown/Pause: the screen not clear this long before the first ESC → Hold
-	WindSay    = 30 * time.Second // the hold reminder's period
+	WindCap   = 30 * time.Second // the Recall budget (-winddown): not in town this long after the request → Pause (or Hold)
+	WindClear = 3 * time.Second  // WindDown/Pause: the screen not clear this long before the first ESC → Hold
+	WindSay   = 30 * time.Second // the hold reminder's period
 )
 
 // WindAct is what a winding-down session asks of the executive this tick.

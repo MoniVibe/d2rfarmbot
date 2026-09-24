@@ -5,6 +5,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/hectorgimenez/d2go/pkg/data"
 	"github.com/hectorgimenez/d2go/pkg/data/item"
 	"github.com/hectorgimenez/koolo/internal/azbot/arbiter"
 	"github.com/hectorgimenez/koolo/internal/azbot/percept"
@@ -86,7 +87,16 @@ type Equip struct {
 	stage   dressStage
 	cx, cy  int  // the candidate cell of the gesture in flight
 	snapDue bool // photograph the first shift-click's result (equip_click.png)
+	// doorTry: doors opened this episode for an item riding the cursor (1:
+	// the tome cast, 2: the inventory key) — the bag must be SEEN before a
+	// place-click (relay R10: the cast did not raise the bag under a held
+	// item and the blind park click dropped it on the floor).
+	doorTry int
 }
+
+// equipCursorCool: Equip's cursor-parking bid rests until then after the bag
+// could not be seen open under the item (the gate holds the item meanwhile).
+var equipCursorCool time.Time
 
 var (
 	_ Life   = (*Equip)(nil)
@@ -118,8 +128,10 @@ func (eq *Equip) demand(s *percept.Snapshot) *arbiter.Demand {
 		return nil
 	}
 	// WARNING 9: a cursor item paralyzes every service — parking it is Equip's
-	// highest errand, above its own dressing and everyone's shopping.
-	if s.Me.CursorItem {
+	// highest errand, above its own dressing and everyone's shopping. (It never
+	// outbids a service at its own panel: that service owns the item — the
+	// panel lock, svcLife.keepBid.)
+	if s.Me.CursorItem && time.Now().After(equipCursorCool) {
 		return &arbiter.Demand{Who: eq.Name(), Class: arbiter.ClassService,
 			Urgency: 0.85,
 			Commit:  arbiter.Commitment{MinHold: 5 * time.Second}}
@@ -139,25 +151,40 @@ func (eq *Equip) demand(s *percept.Snapshot) *arbiter.Demand {
 }
 
 // cleanKeep: with an item riding the cursor an open bag is exactly what
-// parking needs — Clean leaves it (an ESC with a held item is no cure).
+// parking needs — Clean leaves it (an ESC with a held item is no cure). So is
+// a trade window beside it: closing the trade window takes the bag with it
+// (relay R10 ticks 94-99: the gate clicked the shop shut under Equip — "shop
+// gone", then "inventory gone" — and the bag never rose again under the held
+// item). The park is a plain place-click on a bag cell, never a shift-click:
+// the vendor is safe from it.
 func cleanKeep(cursorItem bool) screen.Panel {
 	if cursorItem {
-		return claimsBag
+		return claimsBag | claimsTrade
 	}
 	return 0
 }
 
-// Needs: the bag from the door on; in Clean only when an item rides the cursor.
+// claimsTrade: the vendor's trade frame (the left half).
+const claimsTrade = screen.Shop | screen.LeftPanel
+
+// Needs: the bag from the door on; in Clean only when an item rides the
+// cursor. While an item rides it (Clean, Dress) an open trade window is kept
+// too — it holds the bag open for the park.
 func (eq *Equip) Needs(s *percept.Snapshot) Needs {
+	cursor := s != nil && s.Me.CursorItem
 	if eq.life.clean() {
-		return needsService(cleanKeep(s != nil && s.Me.CursorItem))
+		return needsService(cleanKeep(cursor))
 	}
-	return eq.life.needs()
+	n := eq.life.needs()
+	if cursor && eq.life.ph.Phase() == eqDress {
+		n.Claims |= cleanKeep(true)
+	}
+	return n
 }
 
 func (eq *Equip) Begin(ctx *Ctx, resumed bool) {
 	eq.life.begin(resumed)
-	eq.door, eq.stage = false, dressPick
+	eq.door, eq.stage, eq.doorTry = false, dressPick, 0
 	if !resumed {
 		eq.lastN, eq.fails, eq.snapDue = -1, 0, false
 		return
@@ -171,15 +198,21 @@ func (eq *Equip) Suspend(ctx *Ctx, _ phase.Reason) { eq.life.suspend(ctx) }
 
 func (eq *Equip) End(ctx *Ctx, v phase.Verdict, why phase.Reason) {
 	eq.life.end(ctx, v, why)
-	eq.lastN, eq.fails, eq.door, eq.stage, eq.snapDue = -1, 0, false, dressPick, false
+	eq.lastN, eq.fails, eq.door, eq.stage, eq.snapDue, eq.doorTry = -1, 0, false, dressPick, false, 0
 }
 
-// parkRegion finds the first free region of the 10x4 grid a w×h item fits,
+// The bag grid of this mod: 10x8 (measured 2026-09-23, invCellPx; relay R10's
+// fence Ctrl+clicks at invCellPx lifted items at rows 4-5, identify touched
+// (9,5)). The vanilla 10x4 scan left rows 4-7 unseen: "would not park (no
+// room)" with half the bag free.
+const bagCols, bagRows = 10, 8
+
+// parkRegion finds the first free region of the bag grid a w×h item fits,
 // scanning rows top-down (occ[x][y] = occupied). Pure: the proven scan.
-func parkRegion(occ *[10][4]bool, w, h int) (gx, gy int, ok bool) {
-	for gy := 0; gy <= 4-h; gy++ {
+func parkRegion(occ *[bagCols][bagRows]bool, w, h int) (gx, gy int, ok bool) {
+	for gy := 0; gy <= bagRows-h; gy++ {
 	scan:
-		for gx := 0; gx <= 10-w; gx++ {
+		for gx := 0; gx <= bagCols-w; gx++ {
 			for x := gx; x < gx+w; x++ {
 				for y := gy; y < gy+h; y++ {
 					if occ[x][y] {
@@ -193,48 +226,97 @@ func parkRegion(occ *[10][4]bool, w, h int) (gx, gy int, ok bool) {
 	return 0, 0, false
 }
 
-// parkClick — WARNING 9's recovery: with the panel open, place the cursor
-// item into a free grid region its own footprint fits. The cursor-empty read
-// (dressParked, 350ms later) is the only proof. false: no region fits.
-func (eq *Equip) parkClick(ctx *Ctx) bool {
-	d := ctx.GR.GetData()
-	cur := d.Inventory.ByLocation(item.LocationCursor)
-	if len(cur) == 0 {
-		return true
-	}
-	w, h := cur[0].Desc().InventoryWidth, cur[0].Desc().InventoryHeight
+// footprint is an item's bag footprint (unknown sizes count 1x1).
+func footprint(it data.Item) (w, h int) {
+	w, h = it.Desc().InventoryWidth, it.Desc().InventoryHeight
 	if w <= 0 {
 		w = 1
 	}
 	if h <= 0 {
 		h = 1
 	}
-	var occ [10][4]bool
-	for _, it := range d.Inventory.ByLocation(item.LocationInventory) {
-		iw, ih := it.Desc().InventoryWidth, it.Desc().InventoryHeight
-		if iw <= 0 {
-			iw = 1
-		}
-		if ih <= 0 {
-			ih = 1
-		}
-		for x := it.Position.X; x < it.Position.X+iw && x < 10; x++ {
-			for y := it.Position.Y; y < it.Position.Y+ih && y < 4; y++ {
+	return w, h
+}
+
+// bagOccupancy: the bag grid's occupied cells, from memory.
+func bagOccupancy(items []data.Item) *[bagCols][bagRows]bool {
+	var occ [bagCols][bagRows]bool
+	for _, it := range items {
+		iw, ih := footprint(it)
+		for x := it.Position.X; x < it.Position.X+iw && x < bagCols; x++ {
+			for y := it.Position.Y; y < it.Position.Y+ih && y < bagRows; y++ {
 				if x >= 0 && y >= 0 {
 					occ[x][y] = true
 				}
 			}
 		}
 	}
-	gx, gy, ok := parkRegion(&occ, w, h)
-	if !ok {
-		return false // no region fits: the fence must make room first
+	return &occ
+}
+
+// regionFree: the w×h region at (gx,gy) lies in the grid and is empty.
+func regionFree(occ *[bagCols][bagRows]bool, gx, gy, w, h int) bool {
+	if gx < 0 || gy < 0 || gx+w > bagCols || gy+h > bagRows {
+		return false
 	}
-	// A place-click aims at the region's CENTER cell (the game anchors the
-	// held item by its center).
-	cx, cy := invCell(gx+(w-1)/2, gy+(h-1)/2)
-	ctx.M.UIClick(cx, cy)
+	for x := gx; x < gx+w; x++ {
+		for y := gy; y < gy+h; y++ {
+			if occ[x][y] {
+				return false
+			}
+		}
+	}
 	return true
+}
+
+// invFootPx: the physical client px of a w×h footprint's CENTRE whose top-left
+// cell is (gx,gy) — the game anchors a held item by its centre. The measured
+// grid (invCellPx) plus half the footprint in pitches.
+func invFootPx(ctx *Ctx, gx, gy, w, h int) (int, int) {
+	x, y := invCellPx(ctx, gx, gy)
+	k := shopScale(ctx)
+	return x + int(float64(w-1)*47.6/2*k), y + int(float64(h-1)*47.75/2*k)
+}
+
+// bagSeen: the bag is POSITIVELY seen open (sight, or a proven memory
+// channel). Without a reading it is not seen: a place-click is never blind.
+func bagSeen(ctx *Ctx) bool {
+	seen, ok := seenPanels(ctx)
+	return ok && seen&screen.Inventory != 0
+}
+
+// ParkCursor is THE place-click for an item riding the cursor, shared by
+// Equip and the executive's gate (relay R10): only with the bag SEEN open —
+// a place-click at a shut bag lands in the world and DROPS the item — into a
+// free region of the measured 10x8 grid its footprint fits (prefer: the
+// region it came from, when still free), as a real click at the measured
+// physical cell geometry. The cursor-empty read on a later tick is the only
+// proof. ok=false: nothing was clicked (why says what stood in the way).
+func ParkCursor(ctx *Ctx, prefer *data.Position) (act string, ok bool) {
+	if !bagSeen(ctx) {
+		return "no park: the bag is not seen open (a place-click there would drop the item)", false
+	}
+	d := ctx.GR.GetData()
+	cur := d.Inventory.ByLocation(item.LocationCursor)
+	if len(cur) == 0 {
+		return "no park: the cursor is empty in memory", false
+	}
+	w, h := footprint(cur[0])
+	occ := bagOccupancy(d.Inventory.ByLocation(item.LocationInventory))
+	gx, gy, fits := 0, 0, false
+	if prefer != nil && regionFree(occ, prefer.X, prefer.Y, w, h) {
+		gx, gy, fits = prefer.X, prefer.Y, true
+	} else {
+		gx, gy, fits = parkRegion(occ, w, h)
+	}
+	if !fits {
+		return fmt.Sprintf("no park: no free %dx%d region in the %dx%d bag", w, h, bagCols, bagRows), false
+	}
+	x, y := invFootPx(ctx, gx, gy, w, h)
+	if !ctx.M.RealMenuClick(x, y) {
+		return fmt.Sprintf("park at cell (%d,%d) refused: no foreground", gx, gy), false
+	}
+	return fmt.Sprintf("park %dx%d item at cell (%d,%d) px %d,%d", w, h, gx, gy, x, y), true
 }
 
 func cursorHeld(ctx *Ctx) bool {
@@ -258,6 +340,10 @@ func (eq *Equip) Step(ctx *Ctx) Status {
 		if ok, st := l.cleanScreen(ctx, cleanKeep(s.Me.CursorItem)); !ok {
 			return st
 		}
+		if s.Me.CursorItem && bagSeen(ctx) {
+			l.to(eqDress, "bag already open under a cursor item")
+			return l.running()
+		}
 		if !s.Me.CursorItem && equippableCands(s) == 0 {
 			return l.finish(ctx, phase.Done, phase.Completed, "docket empty")
 		}
@@ -268,10 +354,6 @@ func (eq *Equip) Step(ctx *Ctx) Status {
 					Evidence: "no ID-tome binding to open the panel with — equip belief retired"})
 			}
 			return l.finish(ctx, phase.Abandoned, phase.Precondition, "no ID-tome binding: no door to open, nothing safe to click")
-		}
-		if seen, _ := seenPanels(ctx); s.Me.CursorItem && seen&claimsBag != 0 {
-			l.to(eqDress, "bag already open under a cursor item")
-			return l.running()
 		}
 		l.to(eqDoor, "screen clear")
 		return l.running()
@@ -284,6 +366,17 @@ func (eq *Equip) Step(ctx *Ctx) Status {
 			l.to(eqClean, "interlock: "+f.String()+" up — no cast into it")
 			return l.running()
 		}
+		if s.Me.CursorItem && eq.doorTry >= 1 && ctx.InvKey != 0 {
+			// The second door under a held item: the cast did not raise the
+			// bag (R10). The inventory key, as a scancode — judged by sight in
+			// Dress like the cast; nothing is placed until the bag is seen.
+			eq.doorTry++
+			ctx.M.MoveStop()
+			ctx.M.RealKey(uint16(ctx.InvKey))
+			eq.door, eq.stage = false, dressPick
+			l.to(eqDress, "inventory key: the bag must be seen before the place-click")
+			return l.wait(900 * time.Millisecond)
+		}
 		if !eq.door {
 			ctx.M.MoveStop()
 			ctx.M.PressKey(ctx.Cap.Identify.Key)
@@ -294,6 +387,7 @@ func (eq *Equip) Step(ctx *Ctx) Status {
 		eq.door, eq.stage = false, dressPick
 		l.to(eqDress, "cast: the bag opens")
 		if s.Me.CursorItem {
+			eq.doorTry++
 			return l.wait(900 * time.Millisecond)
 		}
 		return l.wait(1200 * time.Millisecond)
@@ -334,6 +428,37 @@ func (eq *Equip) dress(ctx *Ctx, s *percept.Snapshot) Status {
 		return l.wait(1200 * time.Millisecond) // let the shift-click land before judging
 	}
 	// dressPick.
+	// WARNING 9: parking the cursor item precedes every ritual — including our
+	// own docket, and the vendor interlock below (the park is a plain
+	// place-click on a bag cell, not a shift-click: a trade window beside the
+	// bag is safe, and it is what holds the bag open). The cursor-empty read
+	// is the only proof; a bag with no room hands the problem to the fence.
+	if s.Me.CursorItem {
+		if !bagSeen(ctx) {
+			// NEVER A BLIND PLACE-CLICK (relay R10: the cast did not raise the
+			// bag under the held item; the park click landed in the world and
+			// the item lay on the Lut Gholein floor). Another door, or give
+			// the item to the gate, which HOLDS it — nothing is dropped.
+			if eq.doorTry >= 2 || (eq.doorTry >= 1 && ctx.InvKey == 0) {
+				ev := fmt.Sprintf("the bag was never seen open under the cursor item (%d door(s)) — no blind place-click: it would drop the item; the gate holds it", eq.doorTry)
+				ctx.Led.Append(verbs.Outcome{Verb: "equip", Holder: eq.Name(), Result: verbs.ResDeaf, Evidence: ev})
+				equipCursorCool = time.Now().Add(20 * time.Second)
+				return l.finish(ctx, phase.Abandoned, phase.Deaf, ev)
+			}
+			l.to(eqDoor, fmt.Sprintf("bag not seen under the cursor item: door %d", eq.doorTry+1))
+			return l.running()
+		}
+		act, ok := ParkCursor(ctx, nil)
+		ctx.Led.Append(verbs.Outcome{Verb: "equip", Holder: eq.Name(), Result: verbs.ResDone, Evidence: act})
+		if !ok {
+			if eq.fails++; eq.fails > 5 {
+				return eq.retire(ctx, "cursor item would not park: "+act+" — retiring")
+			}
+			return l.wait(900 * time.Millisecond)
+		}
+		eq.stage = dressParked
+		return l.wait(350 * time.Millisecond)
+	}
 	// SAFETY INTERLOCK: shift-click with a VENDOR up means SELL. Anything the
 	// bag phase does not claim (the trade window, an NPC menu) sends her back
 	// to Clean, which closes it — never a click into it.
@@ -344,19 +469,6 @@ func (eq *Equip) dress(ctx *Ctx, s *percept.Snapshot) Status {
 	if eq.snapDue {
 		eq.snapDue = false
 		snapPNG(ctx, "logs/equip_click.png")
-	}
-	// WARNING 9: parking the cursor item precedes every ritual — including our
-	// own docket. The cursor-empty read is the only proof; a bag with no room
-	// hands the problem to the fence.
-	if s.Me.CursorItem {
-		if !eq.parkClick(ctx) {
-			if eq.fails++; eq.fails > 5 {
-				return eq.retire(ctx, "cursor item would not park (no room or deaf panel) — retiring")
-			}
-			return l.wait(900 * time.Millisecond)
-		}
-		eq.stage = dressParked
-		return l.wait(350 * time.Millisecond)
 	}
 	if equippableCands(s) == 0 {
 		return l.finish(ctx, phase.Done, phase.Completed, "dressed, or all refused (P-4.4)")

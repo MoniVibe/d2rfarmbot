@@ -30,6 +30,13 @@ type HolderNeeds struct {
 	// janitor never delays it and never acts for it unless the pause menu is
 	// up (Janitor rule 5). The executive sets it from the grant's class.
 	Survival bool
+	// World facts the executive vouches for — THE CURSOR RULE (relay R10,
+	// 09:20:43: the gate dropped a benched parker's item on the town floor):
+	// Town: in town a cursor item is NEVER dropped. CursorJunk: the item on
+	// the cursor is KNOWN junk (the percept judged it merchandise while it lay
+	// in the bag) — only such an item may be dropped, and only in the field.
+	Town       bool
+	CursorJunk bool
 }
 
 // Holder is n seen by the gate. CursorAny (indifferent) counts as owning the
@@ -45,17 +52,25 @@ var NoHolder = HolderNeeds{Mode: AnyMode, CursorOwn: true}
 
 // GateResult is one gate judgment.
 type GateResult struct {
-	Open    bool          // the holder may Step
-	Action  screen.Action // janitor step toward a clear screen (ActClick/ActKey), else ActNone/ActUnknown
-	Drop    bool          // cursor rule: one plain click on the ground at her feet
-	Foreign screen.Panel  // positively observed blocking panels the holder does not claim
-	Cursor  bool          // a foreign item rides the cursor
-	Why     string
+	Open   bool          // the holder may Step
+	Action screen.Action // janitor step toward a clear screen (ActClick/ActKey), else ActNone/ActUnknown
+	Drop   bool          // cursor rule: one plain click on the ground at her feet (field, known junk only)
+	// Park: cursor rule — the bag is SEEN open: place the item in a free cell
+	// of the measured bag grid (the executive's parker reads the free region
+	// from memory); a later Reading judges it by CursorItem.
+	Park bool
+	// CursorHold: cursor rule — nothing safe to do for the item (the bag is
+	// shut, and dropping is forbidden): the holder is HELD and the executive
+	// hands the item back to whoever parks it (Equip in town) and logs it.
+	CursorHold bool
+	Foreign    screen.Panel // positively observed blocking panels the holder does not claim
+	Cursor     bool         // a foreign item rides the cursor
+	Why        string
 }
 
 // Acts reports whether the result asks the motor for something.
 func (g GateResult) Acts() bool {
-	return g.Drop || g.Action.Kind == screen.ActClick || g.Action.Kind == screen.ActKey
+	return g.Drop || g.Park || g.Action.Kind == screen.ActClick || g.Action.Kind == screen.ActKey
 }
 
 // Blocked is the state line's gate= spelling: "ok", or "blocked(<why>)".
@@ -86,11 +101,13 @@ const bag = screen.Inventory | screen.RightPanel
 // Gate judges the holder's Needs against a (stable) Reading.
 //
 // Order: the mode gate first (nothing acts for a holder in the wrong mode);
-// then a foreign cursor item over an open bag is LEFT (parking needs a free-cell
-// measure the janitor does not have; a blind click there could land in the
-// grid, an ESC could take the item with the panel); then foreign panels, closed
-// by screen.CloseStep restricted to them; then a foreign cursor item on clear
-// ground is dropped at her feet. Never an ESC for the cursor.
+// then a foreign cursor item over a SEEN bag is PARKED (the executive places it
+// in a free cell of the measured grid; an ESC could take the item with the
+// panel), or LEFT over a half panel that is not the bag; then foreign panels,
+// closed by screen.CloseStep restricted to them; then a foreign cursor item on
+// clear ground: dropped at her feet only in the field and only when it is
+// known junk — otherwise the holder is HELD (CursorHold) for the item's parker.
+// Never an ESC for the cursor, never a drop in town (relay R10).
 func Gate(r screen.Reading, n HolderNeeds) GateResult {
 	if !n.Mode.Allows(r.Mode) {
 		return GateResult{Why: "mode " + r.Mode.String() + " (holder needs " + n.Mode.String() + ")"}
@@ -102,8 +119,12 @@ func Gate(r screen.Reading, n HolderNeeds) GateResult {
 		g.Open, g.Why = true, "clear"
 		return g
 	}
+	if cursor && r.Mode == screen.World && r.Sight&screen.Inventory != 0 {
+		g.Park, g.Why = true, "foreign cursor item over the open bag: park in a free cell"
+		return g
+	}
 	if b := r.Sight & bag; cursor && b != 0 {
-		g.Why = "cursor item over open " + b.String() + ": left (no free-cell measure)"
+		g.Why = "cursor item over open " + b.String() + ": left (not the bag: no grid to park in)"
 		return g
 	}
 	if foreign != 0 {
@@ -143,7 +164,14 @@ func Gate(r screen.Reading, n HolderNeeds) GateResult {
 		g.Why = "foreign cursor item: mode " + r.Mode.String() + ", no drop"
 		return g
 	}
-	g.Drop, g.Why = true, "foreign cursor item: drop at feet"
+	switch {
+	case n.Town:
+		g.CursorHold, g.Why = true, "foreign cursor item in town: HELD — never dropped; the bag is shut, awaiting its parker"
+	case !n.CursorJunk:
+		g.CursorHold, g.Why = true, "foreign cursor item not known junk: HELD — never dropped; the bag is shut, awaiting its parker"
+	default:
+		g.Drop, g.Why = true, "foreign cursor item (known junk, field): drop at feet"
+	}
 	return g
 }
 
@@ -392,9 +420,15 @@ func (j *Janitor) wedge(now time.Time, d *Decision, why string) {
 	wedgeGate(d)
 }
 
-// wedgeGate: while wedged the holder is gated on the pause menu only.
+// wedgeGate: while wedged the holder is gated on the pause menu only — and on
+// a foreign cursor item, which is never let loose into the world (a holder
+// Stepping with it would click it onto the ground).
 func wedgeGate(d *Decision) {
-	if !d.Open && d.Foreign&screen.PauseMenu == 0 {
+	switch {
+	case d.Open || d.Foreign&screen.PauseMenu != 0:
+	case d.Cursor:
+		d.Why += " [ui_wedge: the cursor item is HELD]"
+	default:
 		d.Open = true
 		d.Why += " [ui_wedge: gating on the pause menu only]"
 	}
@@ -418,6 +452,9 @@ func (j *Janitor) Decide(now time.Time, s *Seen, n HolderNeeds) Decision {
 	if now.Before(j.wedgeUntil) {
 		d.Wedged, d.Wait = true, "ui_wedge"
 		wedgeGate(&d)
+		if !d.Open && n.Survival && !paused {
+			d.Open = true // rule 5: a survival holder is never delayed, not even for the cursor
+		}
 		return d
 	}
 	if n.Survival && !paused {

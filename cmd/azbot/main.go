@@ -2597,7 +2597,7 @@ func main() {
 		// janitor action; the holder's clock pauses and it does not Step. The
 		// monitors below are skipped too — a gated holder is not stuck.
 		if janitorOn {
-			open, was := gk.step(tick, s, arb, roster)
+			open, was := gk.step(tick, s, arb, roster, demands)
 			if was > 2*time.Second {
 				// A long block starved the position monitors: start them fresh
 				// (the refocus precedent) so the wait is not read as a wedge.
@@ -2834,12 +2834,19 @@ func main() {
 		// JANITOR ON: replaced by the gate's cursor rule — a foreign item on
 		// clear ground is dropped at the same spot, over an open bag it is left
 		// (logged), and the drop is judged by a later Reading. Never an ESC.
+		// RELAY R10: never in town, and in the field only a KNOWN-junk item
+		// (the gatekeeper's junk set) — anything else stays on the cursor.
 		if !janitorOn {
+			gk.junk.observe(gr, s)
 			if s.Me.CursorItem {
 				if cursorItemAt.IsZero() {
 					cursorItemAt = time.Now()
 				}
 				if time.Since(cursorItemAt) > 3*time.Second && time.Since(cursorDropAt) > 10*time.Second &&
+					m.Engage.Engaged() && (s.Me.InTown || !gk.junk.cursorJunk(gr)) {
+					logger.Warn("watchdog: CURSOR ITEM HELD — no drop (town, or not known junk)", "town", s.Me.InTown)
+					cursorDropAt = time.Now()
+				} else if time.Since(cursorItemAt) > 3*time.Second && time.Since(cursorDropAt) > 10*time.Second &&
 					m.Engage.Engaged() {
 					logger.Warn("watchdog: CURSOR-ITEM DROP — lmb at feet, esc the bag")
 					m.BareClick(gr.GameAreaSizeX/2, gr.GameAreaSizeY/2+140)

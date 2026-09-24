@@ -98,8 +98,22 @@ func TestBagClaims(t *testing.T) {
 			t.Errorf("equip %s claims %s", p, bagClaims(p))
 		}
 	}
-	if cleanKeep(true) != claimsBag || cleanKeep(false) != 0 {
-		t.Fatal("Equip's Clean keeps the bag only under a cursor item")
+	// Relay R10: under a cursor item Equip's Clean keeps the bag AND the
+	// trade frame beside it (closing the trade window takes the bag with it).
+	if cleanKeep(true) != claimsBag|screen.Shop|screen.LeftPanel || cleanKeep(false) != 0 {
+		t.Fatal("Equip's Clean keeps the bag (and a trade frame) only under a cursor item")
+	}
+	eq := NewEquip()
+	s := &percept.Snapshot{Valid: true}
+	s.Me.CursorItem = true
+	eq.life.begin(false)
+	eq.life.to(eqDress, "test")
+	if eq.Needs(s).Claims&screen.Shop == 0 {
+		t.Fatal("Dress under a cursor item keeps the trade window that holds the bag open")
+	}
+	s.Me.CursorItem = false
+	if eq.Needs(s).Claims&screen.Shop != 0 {
+		t.Fatal("Dress without a cursor item: a vendor is foreign (a shift-click would SELL)")
 	}
 }
 
@@ -187,7 +201,7 @@ func TestTransactionVerdicts(t *testing.T) {
 	if talkedRecently(time.Time{}, now) || talkedRecently(now.Add(-6*time.Second), now) || !talkedRecently(now.Add(-time.Second), now) {
 		t.Fatal("a menu is ours only within 5s of our talk click")
 	}
-	var occ [10][4]bool
+	var occ [bagCols][bagRows]bool
 	for x := 0; x < 10; x++ {
 		occ[x][0] = true
 	}
@@ -200,8 +214,24 @@ func TestTransactionVerdicts(t *testing.T) {
 			occ[x][y] = true
 		}
 	}
+	// Relay R10: the vanilla 10x4 scan read this bag as full ("would not
+	// park (no room)"); the mod's bag is 10x8 — rows 4-7 are room.
+	if gx, gy, ok := parkRegion(&occ, 2, 3); !ok || gx != 0 || gy != 4 {
+		t.Fatalf("parkRegion 2x3 under a full top half = (%d,%d,%v), want (0,4,true)", gx, gy, ok)
+	}
+	for x := 0; x < bagCols; x++ {
+		for y := 0; y < bagRows; y++ {
+			occ[x][y] = true
+		}
+	}
 	if _, _, ok := parkRegion(&occ, 1, 1); ok {
 		t.Fatal("a full bag has no region")
+	}
+	// The footprint the item came from is the preferred region when free.
+	occ = [bagCols][bagRows]bool{}
+	occ[3][5] = true
+	if regionFree(&occ, 2, 4, 2, 2) || !regionFree(&occ, 4, 4, 2, 2) || regionFree(&occ, 9, 7, 2, 1) {
+		t.Fatal("regionFree")
 	}
 }
 
