@@ -2411,8 +2411,10 @@ func main() {
 			wdCheckAt = time.Now()
 			// A volleying archer holds ground by design: fight + a target in bow range
 			// vouches for stillness (Stuck/Orbit suppressed; Thrash still watched).
+			// Stand holds ground by definition — convicting it mid-melee benched the
+			// survival holder while HP fell (R1 run u, 14:41).
 			stationaryOK := false
-			if holderName == "fight" {
+			if holderName == "fight" || holderName == "stand" {
 				for _, e := range s.Enemies {
 					if chebyshev(s.Me.Pos, e.Pos) <= 28 {
 						stationaryOK = true
