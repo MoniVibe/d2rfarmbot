@@ -1,5 +1,10 @@
 package gamedata
 
+import (
+	"fmt"
+	"strings"
+)
+
 // Difficulty indexes the per-difficulty arrays.
 type Difficulty int
 
@@ -72,7 +77,11 @@ type Monster struct {
 	Boss, PrimeEvil, NPC, Killable, InTown, Interact bool
 	Undead, Demon, Flying, IsMelee, NeverCount       bool
 
-	Size    MonSize
+	Size MonSize
+	// Skills: Skill1..Skill8 (the mod's own). Reviver: resurrects the dead or heals
+	// the pack (Resurrect/Resurrect2, *Heal*) — Fight kills these first.
+	Skills  []string
+	Reviver bool
 	HasSize bool // a monstats2 row was found
 }
 
@@ -133,6 +142,15 @@ func (db *DB) loadMonsters() {
 			Killable: r.bool("killable"), InTown: r.bool("inTown"), Interact: r.bool("interact"),
 			Undead: r.bool("lUndead") || r.bool("hUndead"), Demon: r.bool("demon"),
 			Flying: r.bool("flying"), IsMelee: r.bool("isMelee"), NeverCount: r.bool("neverCount")}
+		for k := 1; k <= 8; k++ {
+			if sk := r.str(fmt.Sprintf("Skill%d", k)); sk != "" {
+				m.Skills = append(m.Skills, sk)
+				l := strings.ToLower(sk)
+				if strings.HasPrefix(l, "resurrect") || strings.Contains(l, "heal") {
+					m.Reviver = true // SkeletonRaise is a skeleton's own rising: not a reviver
+				}
+			}
+		}
 		m.Name = db.Strings.NameIn("monsters.json", m.NameKey, firstNonEmpty(m.NameKey, m.Code))
 		for d := Normal; d <= Hell; d++ {
 			m.Level[d] = r.int("Level" + diffSuffix[d])

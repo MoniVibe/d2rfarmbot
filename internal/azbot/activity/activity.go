@@ -1460,6 +1460,23 @@ func (f *Fight) Step(ctx *Ctx) Verdict {
 			alive = false
 		}
 	}
+	// REVIVERS FIRST (owner, 2026-09-25: "bot should go for the rezzers and
+	// healers, otherwise its gonna be a long fight"): a sighted reviver/healer
+	// within 12 replaces a plain target — even in melee contact.
+	curRev := false
+	for _, e := range s.Enemies {
+		if e.ID == f.target {
+			curRev = e.Reviver
+		}
+	}
+	if alive && !curRev {
+		for _, e := range s.Enemies {
+			if e.Reviver && sighted(s, e) && chebyshev(s.Me.Pos, e.Pos) <= 12 {
+				alive = false // retarget: the reviver wins the pick below
+				break
+			}
+		}
+	}
 	if !alive || f.target == 0 {
 		f.target, f.noEvid = 0, 0
 		f.volleys, f.aimDX, f.aimDY = 0, 0, 0
@@ -1504,13 +1521,17 @@ func (f *Fight) Step(ctx *Ctx) Verdict {
 				continue
 			}
 			d := chebyshev(s.Me.Pos, e.Pos)
-			if d > radius || (engaged && d > 3) {
+			revNear := e.Reviver && d <= 12
+			if !revNear && (d > radius || (engaged && d > 3)) {
 				continue
 			}
 			// The pack penalty is BOW doctrine (don't charge the center of a
 			// 20-stack from range). In melee the center of the stack is exactly
 			// who is hitting you — nearest first.
 			sc := d
+			if revNear {
+				sc -= 40 // revivers and healers first: a raised pack is a fight that never ends
+			}
 			if !melee {
 				pack := 0
 				for _, o := range s.Enemies {

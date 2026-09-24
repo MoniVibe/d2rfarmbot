@@ -19,6 +19,7 @@ import (
 	"github.com/hectorgimenez/d2go/pkg/data/npc"
 	"github.com/hectorgimenez/d2go/pkg/data/object"
 	"github.com/hectorgimenez/d2go/pkg/data/stat"
+	"github.com/hectorgimenez/koolo/internal/azbot/gamedata"
 	"github.com/hectorgimenez/koolo/internal/azbot/inventory"
 	"github.com/hectorgimenez/koolo/internal/azbot/loot"
 	"github.com/hectorgimenez/koolo/internal/game"
@@ -139,6 +140,8 @@ type EnemyRef struct {
 	// a walled enemy is ABSENT to proximity counts, crowd bars, and strikes,
 	// and exists only to the planner that walks doors.
 	Walled bool
+	// Reviver: its monster row resurrects or heals (gamedata) — killed first.
+	Reviver bool
 }
 
 // ItemRef is a ground item: identity, position, name (mod-remapped names resolved by
@@ -463,7 +466,11 @@ func (p *Perceptor) Capture() *Snapshot {
 		if m.Mode == mode.NpcDeath || m.Mode == mode.NpcDead {
 			continue
 		}
-		s.Enemies = append(s.Enemies, EnemyRef{ID: m.UnitID, Pos: m.Position, Mode: uint32(m.Mode), NPC: m.Name})
+		rev := false
+		if mr := gamedata.Get().Monster(int(m.Name)); mr != nil {
+			rev = mr.Reviver
+		}
+		s.Enemies = append(s.Enemies, EnemyRef{ID: m.UnitID, Pos: m.Position, Mode: uint32(m.Mode), NPC: m.Name, Reviver: rev})
 	}
 	for _, it := range d.Inventory.ByLocation(item.LocationGround) {
 		s.Items = append(s.Items, ItemRef{ID: it.UnitID, Pos: it.Position, Name: string(it.Name), Quality: int(it.Quality),
