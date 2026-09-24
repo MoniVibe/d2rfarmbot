@@ -33,6 +33,7 @@ import (
 	"github.com/hectorgimenez/koolo/internal/azbot/journey"
 	"github.com/hectorgimenez/koolo/internal/azbot/memory"
 	"github.com/hectorgimenez/koolo/internal/azbot/motor"
+	"github.com/hectorgimenez/koolo/internal/azbot/moveto"
 	"github.com/hectorgimenez/koolo/internal/azbot/percept"
 	"github.com/hectorgimenez/koolo/internal/azbot/phase"
 	"github.com/hectorgimenez/koolo/internal/azbot/screen"
@@ -46,6 +47,13 @@ import (
 	"github.com/lxn/win"
 	"golang.org/x/sys/windows"
 )
+
+// drillMove is the manual drills' locomotion: MoveTo, the one mover, with the
+// grid the drill holds (nil = dead reckoning, the way the town drills always
+// walked — no grid is built for them).
+func drillMove(m *motor.Motor, gr *game.MemoryReader, p *percept.Perceptor, led *verbs.Ledger, grid *game.Grid, goal data.Position, o moveto.Opts) moveto.Status {
+	return moveto.Default.MoveTo(moveto.Game(m, gr, p, led, grid), goal, o)
+}
 
 func chebyshev(a, b data.Position) int {
 	dx, dy := a.X-b.X, a.Y-b.Y
@@ -558,7 +566,7 @@ func main() {
 			if chebyshev(s.Me.Pos, wp.Position) <= 2 {
 				break
 			}
-			verbs.Stride{To: wp.Position, Hold: 700 * time.Millisecond, MinGain: 1}.Do(m, gr, p, led, "wpcal")
+			drillMove(m, gr, p, led, nil, wp.Position, moveto.Opts{Holder: "wpcal", Purpose: moveto.Approach, MaxHold: 700 * time.Millisecond})
 		}
 		// A WAYPOINT IS A FLAT GROUND PAD, not a tall portal — its clickable
 		// hover sits AT the base, so the sweep centers on the projection
@@ -598,7 +606,7 @@ func main() {
 					}
 				}
 				logger.Info("wpcal: no WP hover this pass, re-approaching", "attempt", tryOpen+1)
-				verbs.Stride{To: wp.Position, Hold: 500 * time.Millisecond, MinGain: 1}.Do(m, gr, p, led, "wpcal")
+				drillMove(m, gr, p, led, nil, wp.Position, moveto.Opts{Holder: "wpcal", Purpose: moveto.Approach, MaxHold: 500 * time.Millisecond})
 			}
 		}()
 		time.Sleep(400 * time.Millisecond)
@@ -961,7 +969,7 @@ func main() {
 					if found || chebyshev(gr.GetData().PlayerUnit.Position, wp) <= 5 {
 						break
 					}
-					verbs.Stride{To: wp, MinGain: 1}.Do(m, gr, p, led, "akaratest/search")
+					drillMove(m, gr, p, led, nil, wp, moveto.Opts{Holder: "akaratest/search", Purpose: moveto.Errand, Arrive: 5})
 				}
 				if found {
 					break
@@ -990,14 +998,14 @@ func main() {
 				if dist < 4 {
 					me := d.PlayerUnit.Position
 					back := data.Position{X: me.X + (me.X-ak.Position.X)*3, Y: me.Y + (me.Y-ak.Position.Y)*3}
-					verbs.Stride{To: back, Hold: 400 * time.Millisecond}.Do(m, gr, p, led, "akaratest/backoff")
+					drillMove(m, gr, p, led, nil, back, moveto.Opts{Holder: "akaratest/backoff", Purpose: moveto.Errand, MaxHold: 400 * time.Millisecond})
 					continue
 				}
 				hold := 1600 * time.Millisecond
 				if dist < 14 {
 					hold = 500 * time.Millisecond
 				}
-				verbs.Stride{To: ak.Position, Hold: hold, MinGain: 1}.Do(m, gr, p, led, "akaratest/approach")
+				drillMove(m, gr, p, led, nil, ak.Position, moveto.Opts{Holder: "akaratest/approach", Purpose: moveto.Errand, MaxHold: hold, Arrive: 4})
 			}
 			m.MoveStop()
 			time.Sleep(600 * time.Millisecond)
@@ -1019,7 +1027,8 @@ func main() {
 		for attempt := 0; attempt < 6 && !shopOpen; attempt++ {
 			if attempt > 0 {
 				d0 := gr.GetData()
-				verbs.Stride{To: data.Position{X: d0.PlayerUnit.Position.X + 8, Y: d0.PlayerUnit.Position.Y + 8}, Hold: 700 * time.Millisecond}.Do(m, gr, p, led, "akaratest/reset")
+				drillMove(m, gr, p, led, nil, data.Position{X: d0.PlayerUnit.Position.X + 8, Y: d0.PlayerUnit.Position.Y + 8},
+					moveto.Opts{Holder: "akaratest/reset", Purpose: moveto.Errand, MaxHold: 700 * time.Millisecond})
 				approach()
 			}
 			d := gr.GetData()
@@ -1354,7 +1363,7 @@ func main() {
 					if found || chebyshev(d.PlayerUnit.Position, wp) <= 5 {
 						break
 					}
-					verbs.Stride{To: wp, MinGain: 1}.Do(m, gr, p, led, "charsitest/search")
+					drillMove(m, gr, p, led, nil, wp, moveto.Opts{Holder: "charsitest/search", Purpose: moveto.Errand, Arrive: 5})
 				}
 				if found {
 					break
@@ -1389,14 +1398,14 @@ func main() {
 				if dist < 4 { // too close — back off a step so her sprite is clickable
 					me := d.PlayerUnit.Position
 					back := data.Position{X: me.X + (me.X-ch.Position.X)*3, Y: me.Y + (me.Y-ch.Position.Y)*3}
-					verbs.Stride{To: back, Hold: 400 * time.Millisecond}.Do(m, gr, p, led, "charsitest/backoff")
+					drillMove(m, gr, p, led, nil, back, moveto.Opts{Holder: "charsitest/backoff", Purpose: moveto.Errand, MaxHold: 400 * time.Millisecond})
 					continue
 				}
 				hold := 1600 * time.Millisecond
 				if dist < 14 {
 					hold = 500 * time.Millisecond // short legs near her: land in the band, don't fly past it
 				}
-				verbs.Stride{To: ch.Position, Hold: hold, MinGain: 1}.Do(m, gr, p, led, "charsitest/approach")
+				drillMove(m, gr, p, led, nil, ch.Position, moveto.Opts{Holder: "charsitest/approach", Purpose: moveto.Errand, MaxHold: hold, Arrive: 4})
 			}
 			m.MoveStop()
 			time.Sleep(600 * time.Millisecond) // let both of us settle out of walk animations
@@ -1455,7 +1464,8 @@ func main() {
 			if attempt > 0 {
 				// The Akara lesson: stale-vantage clicks keep missing — step off and re-approach fresh.
 				d0 := gr.GetData()
-				verbs.Stride{To: data.Position{X: d0.PlayerUnit.Position.X + 8, Y: d0.PlayerUnit.Position.Y + 8}, Hold: 700 * time.Millisecond}.Do(m, gr, p, led, "charsitest/reset")
+				drillMove(m, gr, p, led, nil, data.Position{X: d0.PlayerUnit.Position.X + 8, Y: d0.PlayerUnit.Position.Y + 8},
+					moveto.Opts{Holder: "charsitest/reset", Purpose: moveto.Errand, MaxHold: 700 * time.Millisecond})
 				approach()
 			}
 			d := gr.GetData()
@@ -1633,7 +1643,7 @@ func main() {
 				"unit", int(best.ID), "pos", fmt.Sprintf("(%d,%d)", best.Pos.X, best.Pos.Y),
 				"dist", bd, "area", int(s.Me.Area))
 			if bd > 20 {
-				verbs.Stride{To: best.Pos, MinGain: 1}.Do(m, gr, p, led, "portaltest/approach")
+				drillMove(m, gr, p, led, nil, best.Pos, moveto.Opts{Holder: "portaltest/approach", Purpose: moveto.Travel})
 				continue
 			}
 			attempts++
@@ -1679,7 +1689,7 @@ func main() {
 				if chebyshev(s.Me.Pos, wp) <= 6 {
 					break
 				}
-				verbs.Stride{To: wp}.Do(m, gr, p, led, "fighttest/road")
+				drillMove(m, gr, p, led, nil, wp, moveto.Opts{Holder: "fighttest/road", Purpose: moveto.Travel, Arrive: 6})
 			}
 			if s := p.Capture(); s.Valid && int(s.Me.Area) == 2 {
 				break
@@ -1732,14 +1742,13 @@ func main() {
 					sweepIdx++
 					continue
 				}
-				verbs.Stride{To: wp}.Do(m, gr, p, led, "fighttest/sweep")
+				drillMove(m, gr, p, led, grid, wp, moveto.Opts{Holder: "fighttest/sweep", Purpose: moveto.Travel, Arrive: 8})
 				continue
 			}
 			if bd > 4 {
-				j := journey.New(gr, grid, best.Pos, "fighttest/approach")
-				st := j.Step(m, p, led)
-				if st.State == journey.Stalled || st.State == journey.NoPath {
-					logger.Info("fighttest: approach verdict", "state", st.State.String())
+				st := drillMove(m, gr, p, led, grid, best.Pos, moveto.Opts{Holder: "fighttest/approach", Purpose: moveto.Approach, Arrive: 4})
+				if st.State == moveto.Stalled || st.State == moveto.NoPath {
+					logger.Info("fighttest: approach verdict", "state", st.State.String(), "why", st.Why)
 				}
 				continue
 			}
@@ -1760,7 +1769,7 @@ func main() {
 		return
 	}
 
-	// ---- M3 journey test: one goal, one authority, honest verdicts ----
+	// ---- M3 journey test: one goal, the one mover (MoveTo), honest verdicts ----
 	if *jTest != "" {
 		var tx, ty int
 		if n, _ := fmt.Sscanf(*jTest, "%d,%d", &tx, &ty); n != 2 {
@@ -1776,19 +1785,19 @@ func main() {
 			logger.Error("jtest: live grid failed", "err", err)
 			return
 		}
-		j := journey.New(gr, grid, data.Position{X: tx, Y: ty}, "jtest")
+		goal := data.Position{X: tx, Y: ty}
 		deadline := time.Now().Add(3 * time.Minute)
 		for time.Now().Before(deadline) {
 			if !m.Engage.Engaged() {
 				time.Sleep(500 * time.Millisecond)
 				continue
 			}
-			st := j.Step(m, p, led)
-			if st.Note != "" {
-				logger.Info("journey", "state", st.State.String(), "note", st.Note)
+			st := drillMove(m, gr, p, led, grid, goal, moveto.Opts{Holder: "jtest", Purpose: moveto.Travel, Arrive: 5})
+			if st.Why != "" {
+				logger.Info("journey", "state", st.State.String(), "mode", st.Mode, "note", st.Why)
 			}
-			if st.State == journey.Arrived || st.State == journey.NoPath || st.State == journey.Stalled {
-				logger.Info("jtest: verdict", "state", st.State.String(), "note", st.Note)
+			if st.State == moveto.Arrived || st.State == moveto.NoPath || st.State == moveto.Stalled {
+				logger.Info("jtest: verdict", "state", st.State.String(), "note", st.Why)
 				break
 			}
 		}
@@ -1823,8 +1832,13 @@ func main() {
 					time.Sleep(500 * time.Millisecond) // human has the controls; wait politely
 					continue
 				}
-				o := verbs.Stride{To: wp}.Do(m, gr, p, led, "roadtest")
-				hist[o.Result.String()]++
+				st := drillMove(m, gr, p, led, nil, wp, moveto.Opts{Holder: "roadtest", Purpose: moveto.Travel, Arrive: 6})
+				k := st.State.String()
+				if st.Blocked {
+					k = "blocked"
+				}
+				hist[k]++
+
 			}
 		}
 		logger.Info("roadtest: histogram", "results", fmt.Sprintf("%v", hist))
@@ -1845,8 +1859,9 @@ func main() {
 		// owner's decisions, which are the story of WHERE she is going and why.
 		// Strike hits and fight summaries are the Carnage run's telemetry
 		// (2026-09-24): every one speaks.
+		// verb=move is MoveTo's status line — written on status changes only.
 		if o.Result != verbs.ResDone || o.Verb == "intent" || o.Verb == "escalate" ||
-			o.Verb == "strike" || o.Verb == "fight" {
+			o.Verb == "strike" || o.Verb == "fight" || o.Verb == "move" {
 			logger.Info("outcome", "verb", o.Verb, "holder", o.Holder, "tgt", o.Target, "result", o.Result.String(), "ev", o.Evidence)
 		}
 		// Nav follower transitions are ResDone too — the trace names every one.

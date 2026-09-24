@@ -4,6 +4,7 @@ import (
 	"time"
 
 	"github.com/hectorgimenez/koolo/internal/azbot/arbiter"
+	"github.com/hectorgimenez/koolo/internal/azbot/moveto"
 	"github.com/hectorgimenez/koolo/internal/azbot/percept"
 	"github.com/hectorgimenez/koolo/internal/azbot/verbs"
 )
@@ -87,7 +88,7 @@ func (h *Haul) Step(ctx *Ctx) Verdict {
 			return Abandoned
 		}
 		if bd > 20 {
-			verbs.Stride{To: best.Pos, Hold: 1200 * time.Millisecond, MinGain: 1}.Do(ctx.M, ctx.GR, ctx.P, ctx.Led, h.Name())
+			moveTo(ctx, best.Pos, moveto.Opts{Holder: h.Name(), Purpose: moveto.Travel, MaxHold: 1200 * time.Millisecond})
 		} else {
 			verbs.EnterPortal{Target: best.ID, TargetPos: best.Pos}.Do(ctx.M, ctx.GR, ctx.P, ctx.Led, h.Name())
 		}

@@ -17,9 +17,9 @@ import (
 	"github.com/hectorgimenez/d2go/pkg/data/npc"
 	"github.com/hectorgimenez/d2go/pkg/data/stat"
 	"github.com/hectorgimenez/koolo/internal/azbot/arbiter"
-	"github.com/hectorgimenez/koolo/internal/azbot/journey"
 	"github.com/hectorgimenez/koolo/internal/azbot/loot"
 	"github.com/hectorgimenez/koolo/internal/azbot/memory"
+	"github.com/hectorgimenez/koolo/internal/azbot/moveto"
 	"github.com/hectorgimenez/koolo/internal/azbot/percept"
 	"github.com/hectorgimenez/koolo/internal/azbot/phase"
 	"github.com/hectorgimenez/koolo/internal/azbot/screen"
@@ -62,11 +62,11 @@ type errand struct {
 	// vendor-stock oracle judges. What works is what's true.
 	trade      bool // this errand ends in a TRADE window; readable stock proves it open
 	menuTry    int
-	blocked    int              // consecutive blocked approach strides — the fire-pit-wall detector
-	hoverFails int              // consecutive hover-sweep misses — the torch-owns-this-bearing detector
-	j          *journey.Journey // the PLANNER for far movement — town walls live in the
-	// static grid, and local slides can never round a real wall (run 38: fence paced
-	// the north wall at y=4897 while every ring waypoint sat past y=4930)
+	blocked    int // consecutive blocked approach strides — the fire-pit-wall detector
+	hoverFails int // consecutive hover-sweep misses — the torch-owns-this-bearing detector
+	// Far movement goes by PLANNER (MoveTo) — town walls live in the static
+	// grid, and local slides can never round a real wall (run 38: fence paced
+	// the north wall at y=4897 while every ring waypoint sat past y=4930).
 	// adopt: the errand (name) whose trade window at THIS errand's NPC stood
 	// open when this episode began — Clean claims it and the first Step
 	// adopts it (vendorHandoff). "" = none.
@@ -146,7 +146,6 @@ func (e *errand) reset() {
 func (e *errand) resetTrip() {
 	e.ringIdx, e.tries, e.menuTry, e.blocked, e.hoverFails, e.parks = 0, 0, 0, 0, 0, 0
 	e.tradeSelected = false
-	e.j = nil
 }
 
 // resume re-verifies the phase after a preemption (errandResume).
@@ -177,24 +176,16 @@ func (e *errand) useNPCForArea(ar area.ID) {
 	}
 }
 
-// walkTo drives one planner step toward goal; falls back to a slide when the
-// planner has no grid or no route. Returns true when the journey says stop
-// (arrived handled by caller's distance checks; stalled/nopath = give up on goal).
+// walkTo drives one MoveTo step toward goal. Returns true when the planner
+// says stop (arrived is the caller's distance check; stalled/nopath = give up
+// on this goal — MoveTo already dropped the trip).
 func (e *errand) walkTo(ctx *Ctx, goal data.Position, who string) (exhausted bool) {
+	o := moveto.Opts{Holder: who, Purpose: moveto.Errand, Arrive: 4}
 	if ctx.Grid == nil {
-		clickStride(ctx, goal, 1100*time.Millisecond, who) // click gait: his town's fences are as invisible as hers (04:36)
-		return false
+		// No grid: the click gait — his town's fences are as invisible as hers (04:36).
+		o.Click, o.MaxHold = true, 1100*time.Millisecond
 	}
-	if e.j == nil || chebyshev(e.j.Goal, goal) > 4 {
-		e.j = journey.New(ctx.GR, ctx.Grid, goal, who)
-		e.j.Arrive = 4
-	}
-	st := e.j.Step(ctx.M, ctx.P, ctx.Led)
-	if st.State == journey.Stalled || st.State == journey.NoPath {
-		e.j = nil
-		return true
-	}
-	return false
+	return stalled(moveTo(ctx, goal, o))
 }
 
 // shopOpen: the trade window is up — the vendor stock reads AND the panel is
@@ -289,7 +280,7 @@ func (e *errand) step(ctx *Ctx, who string) errandStep {
 		wp := e.ring[e.ringIdx]
 		if chebyshev(s.Me.Pos, wp) <= 5 {
 			e.ringIdx++
-			e.j = nil
+			forgetMove(who) // the next ring waypoint is a new trip
 			return errandStep{}
 		}
 		if e.walkTo(ctx, wp, who) {
@@ -321,7 +312,7 @@ func (e *errand) step(ctx *Ctx, who string) errandStep {
 			// (2026-09-23 selftest: 75s of gain=0 arrived-early). Stride stops ~2 short,
 			// landing ~6 out: inside the 4..7 band.
 			back := data.Position{X: target.Position.X + adx*8/m, Y: target.Position.Y + ady*8/m}
-			verbs.Stride{To: back, Hold: 400 * time.Millisecond}.Do(ctx.M, ctx.GR, ctx.P, ctx.Led, who)
+			moveTo(ctx, back, moveto.Opts{Holder: who, Purpose: moveto.Errand, MaxHold: 400 * time.Millisecond, Fallback: true})
 			return errandStep{}
 		}
 		// FAR approach goes by PLANNER (real walls demand real routing); the last
@@ -343,22 +334,24 @@ func (e *errand) step(ctx *Ctx, who string) errandStep {
 		}
 		bandPt := data.Position{X: target.Position.X + adx*5/bm, Y: target.Position.Y + ady*5/bm}
 		hold := 500 * time.Millisecond
-		// SLIDE, and on a wall streak ARC: the camps put fire pits and tables between
+		// PLANNED, and on a wall streak ARC: the camps put fire pits and tables between
 		// her and the NPC — none of it in any collision grid. A straight stride beat
 		// its head on Akara's fire 28 times in a row (run 31, the owner: "she is
-		// circling akara... goes back and forth"). Three blocked slides = walk the
-		// arc 90° around the NPC and come at them from a new bearing.
-		o := slideStride(ctx, bandPt, hold, 1, who)
-		if o.Result == verbs.ResBlocked {
+		// circling akara... goes back and forth"). Blocked steps (a stride that
+		// moved nothing, or a planner refusal) = walk the arc 90° around the NPC
+		// and come at them from a new bearing. Planned pulses are short, so the
+		// streak is five, not the old three 1.5s slides.
+		st := moveTo(ctx, bandPt, moveto.Opts{Holder: who, Purpose: moveto.Errand, Arrive: 1, MaxHold: hold, Fallback: true})
+		if st.Blocked || stalled(st) {
 			e.blocked++
 		} else {
 			e.blocked = 0
 		}
-		if e.blocked >= 3 {
+		if e.blocked >= 5 {
 			e.blocked = 0
 			adx, ady := s.Me.Pos.X-target.Position.X, s.Me.Pos.Y-target.Position.Y
 			arc := data.Position{X: target.Position.X + ady, Y: target.Position.Y - adx}
-			slideStride(ctx, arc, 900*time.Millisecond, 1, who+"/arc")
+			moveTo(ctx, arc, moveto.Opts{Holder: who + "/arc", Purpose: moveto.Errand, MaxHold: 900 * time.Millisecond, Fallback: true})
 		}
 	case erTalk: // hover-confirm, BARE click, wait for the menu byte
 		// Clicking Akara opens a DIALOG (MenuOpen high) that the Menu phase

@@ -7,7 +7,8 @@
 // deadman/pacer TP that fired whoever held the grant.
 //
 // The decisions live in the pure unstick package; this file only performs the
-// one verb it names — Stride, CastSelf (town portal) or EnterPortal.
+// one act it names — a stride (walked by MoveTo, Purpose=escape), CastSelf
+// (town portal) or EnterPortal.
 package activity
 
 import (
@@ -15,6 +16,7 @@ import (
 
 	"github.com/hectorgimenez/koolo/internal/azbot/arbiter"
 	"github.com/hectorgimenez/koolo/internal/azbot/journey"
+	"github.com/hectorgimenez/koolo/internal/azbot/moveto"
 	"github.com/hectorgimenez/koolo/internal/azbot/nav"
 	"github.com/hectorgimenez/koolo/internal/azbot/percept"
 	"github.com/hectorgimenez/koolo/internal/azbot/phase"
@@ -146,8 +148,12 @@ func (u *Unstick) Step(ctx *Ctx) Status {
 	d := u.mc.Step(o)
 	switch d.Act.Kind {
 	case unstick.ActStride:
-		verbs.Stride{To: d.Act.To, Hold: d.Act.Hold, MinGain: d.Act.MinGain, Planned: d.Act.Planned}.
-			Do(ctx.M, ctx.GR, ctx.P, ctx.Led, u.Name())
+		// The machine picks the NOVEL bearing; the one mover walks it (A3). A
+		// bearing the grid calls clear is one committed escape stride; a blind
+		// one is planned small, and with no route takes nav's best clear step.
+		moveTo(ctx, d.Act.To, moveto.Opts{Holder: u.Name(), Purpose: moveto.Escape,
+			MaxHold: d.Act.Hold, MinGain: d.Act.MinGain})
+
 	case unstick.ActCast:
 		if d.Act.First {
 			// Cursed ground (a map door near two firings is disbelieved), and

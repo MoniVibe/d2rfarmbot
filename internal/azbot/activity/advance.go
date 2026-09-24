@@ -26,8 +26,8 @@ import (
 	"github.com/hectorgimenez/d2go/pkg/data/area"
 	"github.com/hectorgimenez/koolo/internal/azbot/arbiter"
 	"github.com/hectorgimenez/koolo/internal/azbot/coverage"
-	"github.com/hectorgimenez/koolo/internal/azbot/journey"
 	"github.com/hectorgimenez/koolo/internal/azbot/memory"
+	"github.com/hectorgimenez/koolo/internal/azbot/moveto"
 	"github.com/hectorgimenez/koolo/internal/azbot/percept"
 	"github.com/hectorgimenez/koolo/internal/azbot/route"
 	"github.com/hectorgimenez/koolo/internal/azbot/verbs"
@@ -176,7 +176,6 @@ type Advance struct {
 	burstAt   time.Time // one-shot door burst rate limit (22:44)
 	huntLogAt time.Time // unfiltered-hover naming rate limit (23:00)
 	legStart  data.Position
-	j         *journey.Journey
 	grid      *game.Grid // regrown grid (rooms stream in as she walks)
 	regridAt  time.Time
 	bestDist  int
@@ -311,7 +310,8 @@ func NewAdvance(legs []Leg) *Advance {
 func (a *Advance) Name() string { return "advance" }
 
 func (a *Advance) resetLeg(at data.Position) {
-	a.j, a.grid = nil, nil
+	forgetMove(a.Name()) // the next march step plans afresh
+	a.grid = nil
 	a.bestDist, a.bestAt = 1<<30, time.Now()
 	a.contactAt, a.clickTry = time.Time{}, 0
 	a.memoryEntranceAt, a.memoryEntranceID, a.memoryEntranceN = time.Time{}, 0, 0
@@ -485,7 +485,7 @@ func (a *Advance) Step(ctx *Ctx) Verdict {
 		default:
 			crossingBracketUntil = time.Now().Add(3 * time.Second)
 			NavDebug(ctx, a.driveTgt, "drive")
-			clickStride(ctx, a.driveTgt, 900*time.Millisecond, a.Name())
+			moveTo(ctx, a.driveTgt, marchOpts(ctx, a.Name(), 900*time.Millisecond))
 			return Running
 		}
 	}
@@ -560,11 +560,8 @@ func (a *Advance) Step(ctx *Ctx) Verdict {
 			return Done // adopted AND geometrically clear — the next leg re-bids fresh
 		}
 		out := data.Position{X: me.X + a.clearDir.X*14, Y: me.Y + a.clearDir.Y*14}
-		// item 4: the planner knows the fences the raw click walks into; keep the
-		// click-stride only when there is no grid (or the flag is off).
-		if !a.journeyPush(ctx, out) {
-			clickStride(ctx, out, 1200*time.Millisecond, a.Name())
-		}
+		// item 4: the planner knows the fences the raw click walks into.
+		a.push(ctx, out, 1200*time.Millisecond)
 		return Running
 	}
 	if a.idx >= len(a.Itinerary)-1 && s.Me.Area == a.Itinerary[a.idx].Area {
@@ -638,8 +635,7 @@ func (a *Advance) Step(ctx *Ctx) Verdict {
 				}
 				if bd < 1<<30 {
 					if bd > 20 {
-						verbs.Stride{To: best.Pos, Hold: 1200 * time.Millisecond, MinGain: 1}.
-							Do(ctx.M, ctx.GR, ctx.P, ctx.Led, a.Name())
+						moveTo(ctx, best.Pos, moveto.Opts{Holder: a.Name(), Purpose: moveto.Travel, MaxHold: 1200 * time.Millisecond})
 					} else {
 						verbs.EnterPortal{Target: best.ID, TargetPos: best.Pos}.Do(ctx.M, ctx.GR, ctx.P, ctx.Led, a.Name())
 					}
@@ -850,10 +846,9 @@ func (a *Advance) Step(ctx *Ctx) Verdict {
 						a.wpWalkAt = time.Time{}
 					} else {
 						NavDebug(ctx, ob.Position, "wp-touch")
-						if TravelVault(ctx, ob.Position) { // the pad is worth a leap too
-							return Running
-						}
-						clickStride(ctx, ob.Position, 1200*time.Millisecond, a.Name())
+						o := marchOpts(ctx, a.Name(), 1200*time.Millisecond)
+						o.AllowLeap = true // the pad is worth a leap too
+						moveTo(ctx, ob.Position, o)
 						return Running
 					}
 					break
@@ -947,10 +942,9 @@ func (a *Advance) Step(ctx *Ctx) Verdict {
 					// P-2.11(4): the road is the best possible runway — leap
 					// along it every 6s and walk the gaps (11:20: "run there
 					// and leap it").
-					if TravelVault(ctx, look) {
-						return Running
-					}
-					clickStride(ctx, look, 1100*time.Millisecond, a.Name())
+					o := marchOpts(ctx, a.Name(), 1100*time.Millisecond)
+					o.AllowLeap = true
+					moveTo(ctx, look, o)
 					return Running
 				}
 			}
@@ -1076,11 +1070,6 @@ func (a *Advance) Step(ctx *Ctx) Verdict {
 			a.search(ctx, d, me)
 			return Running
 		}
-		// P-2.11(4): the march leaps too — 12 tiles toward the door every 6s
-		// when the pool affords it; the journey walks the gaps.
-		if TravelVault(ctx, tgt) {
-			return Running
-		}
 		// P-5.5b RETIRED AT 01:45 (nav.png: the map grid does not even COVER
 		// her position — koolo-map world placement LIES on this mod, exactly
 		// as this file's header has always said: topology only, geometry
@@ -1089,17 +1078,16 @@ func (a *Advance) Step(ctx *Ctx) Verdict {
 		if a.grid == nil {
 			a.grid = ctx.Grid
 		}
-		if a.grid == nil { // no grid at all (build failed): walk by dead reckoning
-			verbs.Stride{To: tgt, Hold: 1200 * time.Millisecond, MinGain: 1}.
-				Do(ctx.M, ctx.GR, ctx.P, ctx.Led, a.Name())
+		// P-2.11(4): the march leaps too — ~12 tiles along the route to the door
+		// every 6s when the pool affords it; the journey walks the gaps. With no
+		// grid at all (build failed) MoveTo walks by dead reckoning; a door off
+		// the grid's frame is planned to the frame's edge.
+		st := moveToOn(ctx, a.grid, tgt, moveto.Opts{Holder: a.Name(), Purpose: moveto.Travel, Arrive: 5,
+			AllowLeap: true, MaxHold: 1200 * time.Millisecond})
+		if a.grid == nil {
 			return Running
 		}
-		goal := clampToGrid(tgt, a.grid)
-		if a.j == nil || chebyshev(a.j.Goal, goal) > 8 {
-			a.j = journey.New(ctx.GR, a.grid, goal, a.Name())
-		}
-		st := a.j.Step(ctx.M, ctx.P, ctx.Led)
-		if st.State == journey.NoPath || st.State == journey.Stalled {
+		if stalled(st) {
 			a.farBlockN++
 			if a.farBlockN >= 4 {
 				// Four refusals through unstreamed rooms: the planner is blind
@@ -1114,9 +1102,10 @@ func (a *Advance) Step(ctx *Ctx) Verdict {
 			if time.Since(a.regridAt) > 8*time.Second && ctx.Regrid != nil {
 				a.grid = ctx.Regrid()
 				a.regridAt = time.Now()
-				a.j = journey.New(ctx.GR, a.grid, clampToGrid(tgt, a.grid), a.Name())
+				forgetMove(a.Name())
 			}
-			clickStride(ctx, tgt, 1200*time.Millisecond, a.Name())
+			// No route (yet): the click gait — the game's pathfinder walks it.
+			moveToOn(ctx, a.grid, tgt, marchOpts(ctx, a.Name(), 1200*time.Millisecond))
 		} else {
 			a.farBlockN = 0
 		}
@@ -1374,9 +1363,8 @@ func (a *Advance) search(ctx *Ctx, d game.Data, me data.Position) {
 	// left: hold the heading, one 45° turn per wall — the doors seen so far
 	// were all crossed above, so keep walking the level's rim.
 	o := bearings[a.heading%len(bearings)]
-	res := verbs.Stride{To: data.Position{X: me.X + o.X, Y: me.Y + o.Y}, MinGain: 2}.
-		Do(ctx.M, ctx.GR, ctx.P, ctx.Led, a.Name())
-	if res.Result != verbs.ResDone {
+	st := moveTo(ctx, data.Position{X: me.X + o.X, Y: me.Y + o.Y}, moveto.Opts{Holder: a.Name(), Purpose: moveto.Travel, MinGain: 2})
+	if wallTurned(st) {
 		a.heading++ // walled: one 45° turn, then hold the new line
 	}
 }
@@ -1523,12 +1511,9 @@ func (a *Advance) cross(ctx *Ctx, d game.Data, me data.Position, tgt data.Positi
 		if td > 12 { // generous: a BOUNCE off the mouth must not zero the ritual timer
 			a.contactAt, a.clickTry = time.Time{}, 0
 		}
-		// item 4: walk the APPROACH to the door through the planner where a grid
-		// exists — the contact push below (td<=3, warp ritual) is untouched.
-		if !a.journeyPush(ctx, tgt) {
-			verbs.Stride{To: tgt, Hold: 500 * time.Millisecond, MinGain: 1}.
-				Do(ctx.M, ctx.GR, ctx.P, ctx.Led, a.Name())
-		}
+		// item 4: walk the APPROACH to the door through the planner — the
+		// contact push below (td<=3, warp ritual) is a separate step.
+		moveTo(ctx, tgt, moveto.Opts{Holder: a.Name(), Purpose: moveto.Travel, Arrive: 3, MaxHold: 500 * time.Millisecond, Fallback: true})
 		return
 	}
 	if a.contactAt.IsZero() {
@@ -1600,8 +1585,10 @@ func (a *Advance) cross(ctx *Ctx, d game.Data, me data.Position, tgt data.Positi
 			through = data.Position{X: tgt.X + dir.X*8, Y: tgt.Y + dir.Y*8}
 		}
 		// MinGain 1: a 300ms push covers 2-3 tiles by design — the default 4 branded
-		// every honest push "blocked" (cosmetic, but the log must not lie).
-		verbs.Stride{To: through, Hold: 300 * time.Millisecond, MinGain: 1}.Do(ctx.M, ctx.GR, ctx.P, ctx.Led, a.Name())
+		// every honest push "blocked" (cosmetic, but the log must not lie). Through
+		// MoveTo: a far side beyond the grid's frame is one stride off its edge;
+		// a walled line takes the best clear step instead of rubbing the wall.
+		moveTo(ctx, through, moveto.Opts{Holder: a.Name(), Purpose: moveto.Travel, Arrive: 1, MaxHold: 300 * time.Millisecond, Fallback: true})
 		return
 	}
 	// SPIRAL HOVER-CLICK for the rare click-to-open stairs — STAIRS ONLY: a
@@ -1957,24 +1944,20 @@ func clampToGrid(p data.Position, g *game.Grid) data.Position {
 	return data.Position{X: x, Y: y}
 }
 
-// journeyPush routes a short travel push through the clearance-inflated A*
-// follower (item 4: the raw clickStride/verbs.Stride in clearing and cross
-// bypassed Journey and walked into the mod's fences). It reuses a.j with the
-// same clamp + rebuild-on-move discipline as the far-march, and reports whether
-// the planner OWNED the move this tick. It returns false — leaving the caller's
-// legacy stride to run — when the flag is off, when Grid==nil (the ONLY case
-// the brief keeps the stride fallback for), or when the planner itself refuses
-// (NoPath/Stalled through unstreamed rooms). Inert unless the flag is armed.
-func (a *Advance) journeyPush(ctx *Ctx, tgt data.Position) bool {
-	if !deliberate || ctx.Grid == nil {
-		return false
+// push routes a short travel push (the post-crossing clear) through MoveTo
+// (item 4: the raw clickStride/verbs.Stride in clearing and cross bypassed
+// Journey and walked into the mod's fences). The deliberate marcher walks it
+// by planned strides; otherwise by the click gait on the route. A planner
+// refusal still pushes: the click (or nav's best clear step) carries it.
+func (a *Advance) push(ctx *Ctx, tgt data.Position, hold time.Duration) moveto.Status {
+	if !deliberate {
+		return moveTo(ctx, tgt, marchOpts(ctx, a.Name(), hold))
 	}
-	goal := clampToGrid(tgt, ctx.Grid)
-	if a.j == nil || chebyshev(a.j.Goal, goal) > 8 {
-		a.j = journey.New(ctx.GR, ctx.Grid, goal, a.Name())
+	st := moveTo(ctx, tgt, moveto.Opts{Holder: a.Name(), Purpose: moveto.Travel, MaxHold: hold, Fallback: true})
+	if stalled(st) && !st.Issued {
+		st = moveTo(ctx, tgt, marchOpts(ctx, a.Name(), hold))
 	}
-	st := a.j.Step(ctx.M, ctx.P, ctx.Led)
-	return st.State != journey.NoPath && st.State != journey.Stalled
+	return st
 }
 
 // stepDir reduces a→b to a unit step {-1,0,1} per axis — the leg's travel direction.
@@ -2098,8 +2081,7 @@ func (r *Return) Step(ctx *Ctx) Verdict {
 		return Abandoned // it closed while we walked to it — or died as a door
 	}
 	if bd > 20 {
-		verbs.Stride{To: best.Pos, Hold: 1200 * time.Millisecond, MinGain: 1}.
-			Do(ctx.M, ctx.GR, ctx.P, ctx.Led, r.Name())
+		moveTo(ctx, best.Pos, moveto.Opts{Holder: r.Name(), Purpose: moveto.Travel, MaxHold: 1200 * time.Millisecond})
 		return Running
 	}
 	verbs.EnterPortal{Target: best.ID, TargetPos: best.Pos}.Do(ctx.M, ctx.GR, ctx.P, ctx.Led, r.Name())
@@ -2118,19 +2100,17 @@ func (a *Advance) walkToPad(ctx *Ctx, padPos data.Position) bool {
 		a.wpAt, a.wpWalkAt = time.Now(), time.Time{}
 		return false
 	}
-	if ctx.Grid != nil {
-		goal := clampToGrid(padPos, ctx.Grid)
-		if a.j == nil || chebyshev(a.j.Goal, goal) > 6 {
-			a.j = journey.New(ctx.GR, ctx.Grid, goal, a.Name())
-			a.j.Arrive = 4
-		}
-		st := a.j.Step(ctx.M, ctx.P, ctx.Led)
-		if st.State == journey.Stalled || st.State == journey.NoPath {
-			clickStride(ctx, padPos, 1200*time.Millisecond, a.Name())
-			a.j = nil
-		}
-	} else {
-		clickStride(ctx, padPos, 1200*time.Millisecond, a.Name())
+	// By planner first (MoveTo drops the trip on a refusal); a refused plan —
+	// or no grid at all — walks by the click gait.
+	o := moveto.Opts{Holder: a.Name(), Purpose: moveto.Travel, Arrive: 4, MaxHold: 1200 * time.Millisecond}
+	if ctx.Grid == nil {
+		o = marchOpts(ctx, a.Name(), 1200*time.Millisecond)
+		o.Arrive = 4
+	}
+	if st := moveTo(ctx, padPos, o); stalled(st) {
+		o = marchOpts(ctx, a.Name(), 1200*time.Millisecond)
+		o.Arrive = 4
+		moveTo(ctx, padPos, o)
 	}
 	return true
 }

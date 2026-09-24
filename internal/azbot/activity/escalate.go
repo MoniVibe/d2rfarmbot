@@ -58,10 +58,11 @@ func (a *Advance) applyRung(ctx *Ctx) {
 	ev := ""
 	switch a.lad.Rung {
 	case route.Replan:
-		a.j, a.grid = nil, nil
+		forgetMove(a.Name()) // the next march step plans afresh
+		a.grid = nil
 		ev = "fresh plan"
 	case route.Alternate:
-		a.j = nil
+		forgetMove(a.Name())
 		if a.marchGoal != (data.Position{}) {
 			a.disbelief.Add(a.marchGoal, now.Add(3*time.Minute))
 			ev = fmt.Sprintf("door (%d,%d) disbelieved 3m", a.marchGoal.X, a.marchGoal.Y)
@@ -69,7 +70,8 @@ func (a *Advance) applyRung(ctx *Ctx) {
 			ev = "no door to disbelieve"
 		}
 	case route.Portal:
-		a.j, a.grid = nil, nil
+		forgetMove(a.Name()) // the next march step plans afresh
+		a.grid = nil
 		a.rerouteCool = time.Time{} // the reroute judges a network ride this tick
 		ev = "reroute cooldown lifted"
 	default:
@@ -77,7 +79,7 @@ func (a *Advance) applyRung(ctx *Ctx) {
 		a.disbelief.Blind(now.Add(w))
 		a.searchUntil = now.Add(w)
 		a.heading = route.TurnHeading(a.heading, len(bearings))
-		a.j = nil
+		forgetMove(a.Name())
 		ev = fmt.Sprintf("every door doubted %s; coverage search on bearing %d", w, a.heading%len(bearings))
 	}
 	if ctx != nil && ctx.Led != nil {

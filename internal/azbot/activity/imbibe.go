@@ -12,6 +12,7 @@ import (
 	"github.com/hectorgimenez/d2go/pkg/data"
 	"github.com/hectorgimenez/d2go/pkg/data/object"
 	"github.com/hectorgimenez/koolo/internal/azbot/arbiter"
+	"github.com/hectorgimenez/koolo/internal/azbot/moveto"
 	"github.com/hectorgimenez/koolo/internal/azbot/percept"
 	"github.com/hectorgimenez/koolo/internal/azbot/verbs"
 )
@@ -106,7 +107,7 @@ func (im *Imbibe) Step(ctx *Ctx) Verdict {
 	ob, _, ok := im.find(ctx)
 	if !ok {
 		im.coolAt = time.Now().Add(45 * time.Second) // the flag lied: cool before re-bidding
-		return Done // nothing worth a detour (or all spent/banned)
+		return Done                                  // nothing worth a detour (or all spent/banned)
 	}
 	d := chebyshev(s.Me.Pos, ob.Position)
 	if d > 5 {
@@ -119,7 +120,7 @@ func (im *Imbibe) Step(ctx *Ctx) Verdict {
 			im.walkFor = 0
 			return Running
 		}
-		slideStride(ctx, ob.Position, 1200*time.Millisecond, 1, im.Name())
+		moveTo(ctx, ob.Position, moveto.Opts{Holder: im.Name(), Purpose: moveto.Approach, Arrive: 5, MaxHold: 1200 * time.Millisecond})
 		return Running
 	}
 	if time.Since(im.clickAt) < 1500*time.Millisecond {

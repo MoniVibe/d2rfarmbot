@@ -20,8 +20,8 @@ import (
 	"github.com/hectorgimenez/d2go/pkg/data"
 	"github.com/hectorgimenez/d2go/pkg/data/area"
 	"github.com/hectorgimenez/koolo/internal/azbot/coverage"
-	"github.com/hectorgimenez/koolo/internal/azbot/journey"
 	"github.com/hectorgimenez/koolo/internal/azbot/memory"
+	"github.com/hectorgimenez/koolo/internal/azbot/moveto"
 	"github.com/hectorgimenez/koolo/internal/azbot/percept"
 	"github.com/hectorgimenez/koolo/internal/game"
 )
@@ -400,10 +400,9 @@ func liveTerrain(g *game.Grid, graph *game.LiveRoomGraph, lvl area.ID) *coverage
 	})
 }
 
-// covWalker walks coverage goals for one activity: one planner journey per
-// goal; the planner's verdicts feed the picker's blacklist.
+// covWalker walks coverage goals for one activity through MoveTo; the
+// planner's verdicts feed the picker's blacklist.
 type covWalker struct {
-	j        *journey.Journey
 	goal     data.Position
 	regridAt time.Time
 }
@@ -421,27 +420,21 @@ func (w *covWalker) step(ctx *Ctx, b coverage.Bias, who string) (st coverage.Sta
 		return st, false
 	}
 	if st != coverage.Exploring {
-		w.j = nil
 		return st, true
 	}
 	NavDebug(ctx, pk.Goal, who)
-	if ctx.Grid == nil {
-		slideStride(ctx, pk.Goal, 1500*time.Millisecond, 1, who)
-		return st, true
-	}
-	if w.j == nil || w.goal != pk.Goal {
-		w.j = journey.New(ctx.GR, ctx.Grid, pk.Goal, who)
-		w.j.Arrive = 2
+	if w.goal != pk.Goal {
+		forgetMove(who) // a new frontier goal is a new trip
 		w.goal = pk.Goal
 	}
-	switch res := w.j.Step(ctx.M, ctx.P, ctx.Led); res.State {
-	case journey.NoPath:
+	// No grid: MoveTo walks by dead reckoning (the frontier came from a
+	// tracker that saw the ground; the grid only failed to build).
+	switch res := moveTo(ctx, pk.Goal, moveto.Opts{Holder: who, Purpose: moveto.Travel, Arrive: 2, MaxHold: 1500 * time.Millisecond}); res.State {
+	case moveto.NoPath:
 		Cov.Fail(who, "planner NoPath")
-		w.j = nil
-	case journey.Stalled:
+	case moveto.Stalled:
 		Cov.Fail(who, "walk stalled")
-		w.j = nil
-	case journey.Arrived:
+	case moveto.Arrived:
 		// At the frontier: the rooms beyond stream in now — regrow the grid so
 		// the picker sees them instead of waiting out the executive's clock.
 		if ctx.Regrid != nil && time.Since(w.regridAt) > 3*time.Second {

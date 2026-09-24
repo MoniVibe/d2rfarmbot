@@ -19,9 +19,9 @@ import (
 	"github.com/hectorgimenez/koolo/internal/azbot/combat/policy"
 	"github.com/hectorgimenez/koolo/internal/azbot/coverage"
 	"github.com/hectorgimenez/koolo/internal/azbot/exec"
-	"github.com/hectorgimenez/koolo/internal/azbot/journey"
 	"github.com/hectorgimenez/koolo/internal/azbot/memory"
 	"github.com/hectorgimenez/koolo/internal/azbot/motor"
+	"github.com/hectorgimenez/koolo/internal/azbot/moveto"
 	"github.com/hectorgimenez/koolo/internal/azbot/percept"
 	"github.com/hectorgimenez/koolo/internal/azbot/screen"
 	"github.com/hectorgimenez/koolo/internal/azbot/verbs"
@@ -169,48 +169,6 @@ func leapAttackReady(s *percept.Snapshot) bool {
 	return s.Me.MPPct >= needPct
 }
 
-// clickStride is THE FISH CURE for travel movement: click the carrot, let the
-// game's own pathfinder walk — the only mover that knows the mod's invented
-// fences (panels exist in NO grid; the whole night of 2026-07-20 fought walls
-// the game routes around free). Force-slide remains the fallback for a
-// refused or dead click. Travel contexts only — combat footwork keeps the
-// force-move edge (a click near a monster is an attack).
-func clickStride(ctx *Ctx, to data.Position, hold time.Duration, who string) {
-	// P-5.9 for the brawler (the owner, 04:33): travel by RIGHT-click with
-	// the melee skill selected — the walk itself engages what it meets.
-	key := byte(0)
-	if brawlerMode && !ctx.Snap.Me.InTown && ctx.Cap != nil && ctx.Cap.Contact != nil && ctx.Snap.Me.MPPct > 10 {
-		key = ctx.Cap.Contact.Key // FIELD ONLY: a Double Swing near Charsi is not a greeting (04:36)
-	}
-	o := verbs.ClickMove{To: to, Hold: hold, CombatKey: key}.Do(ctx.M, ctx.GR, ctx.P, ctx.Led, who)
-	if o.Result != verbs.ResDone {
-		slideStride(ctx, to, hold, 1, who)
-	}
-}
-
-// slideStride is a stride that refuses to rub walls: a blocked line retries once
-// rotated +45°, then −45° — the wall-slide. For the PLANLESS strides (escapes,
-// sidesteps, blind pushes); planned movement belongs to Journey. The owner: "it
-// tries to walk through walls often, one of the main reasons it stops."
-func slideStride(ctx *Ctx, to data.Position, hold time.Duration, minGain int, who string) verbs.Outcome {
-	me := ctx.Snap.Me.Pos
-	o := verbs.Stride{To: to, Hold: hold, MinGain: minGain}.Do(ctx.M, ctx.GR, ctx.P, ctx.Led, who)
-	if o.Result != verbs.ResBlocked {
-		return o
-	}
-	dx, dy := to.X-me.X, to.Y-me.Y
-	for _, r := range []data.Position{
-		{X: me.X + (dx-dy)*7/10, Y: me.Y + (dx+dy)*7/10}, // rotated +45°
-		{X: me.X + (dx+dy)*7/10, Y: me.Y + (dy-dx)*7/10}, // rotated −45°
-	} {
-		o = verbs.Stride{To: r, Hold: hold, MinGain: minGain}.Do(ctx.M, ctx.GR, ctx.P, ctx.Led, who+"/slide")
-		if o.Result != verbs.ResBlocked {
-			return o
-		}
-	}
-	return o
-}
-
 // gridWalkable: one cell's truth from the live grid (optimistic on unknown ground,
 // same posture as the planner).
 func gridWalkable(g *game.Grid, p data.Position) bool {
@@ -228,7 +186,7 @@ func gridWalkable(g *game.Grid, p data.Position) bool {
 // open: straight anti-vector, then ±45°. Returns false when CORNERED — the caller
 // must fight, not donate more strides to the wall (the owner: "she ran to a corner
 // and it's taking hits, not doing much" — the blind anti-vector kite herded her
-// into masonry and kept pushing).
+// into masonry and kept pushing). The chosen bearing is walked by MoveTo (flee).
 func kiteAway(ctx *Ctx, s *percept.Snapshot, from data.Position, hold time.Duration) bool {
 	me := s.Me.Pos
 	dx, dy := me.X-from.X, me.Y-from.Y
@@ -239,8 +197,8 @@ func kiteAway(ctx *Ctx, s *percept.Snapshot, from data.Position, hold time.Durat
 	}
 	for _, c := range cands {
 		if gridWalkable(ctx.Grid, c) {
-			verbs.Stride{To: c, Hold: hold, MinGain: 2}.Do(ctx.M, ctx.GR, ctx.P, ctx.Led, "kite")
-			return true
+			st := moveTo(ctx, c, moveto.Opts{Holder: "kite", Purpose: moveto.Flee, MaxHold: hold, MinGain: 2})
+			return st.Issued
 		}
 	}
 	return false
@@ -801,7 +759,7 @@ func (f *Flee) Step(ctx *Ctx) Verdict {
 		}
 		if bd < 1<<30 {
 			if bd > 20 {
-				slideStride(ctx, best.Pos, 1500*time.Millisecond, 1, f.Name())
+				moveTo(ctx, best.Pos, moveto.Opts{Holder: f.Name(), Purpose: moveto.Flee, MaxHold: 1500 * time.Millisecond})
 			} else {
 				verbs.EnterPortal{Target: best.ID, TargetPos: best.Pos, Desperate: true}.Do(ctx.M, ctx.GR, ctx.P, ctx.Led, f.Name())
 			}
@@ -834,7 +792,9 @@ func (f *Flee) Step(ctx *Ctx) Verdict {
 			}
 		}
 	}
-	slideStride(ctx, away, 2*time.Second, 3, f.Name())
+	// Planned retreat (A3): a clear line commits at once; a walled one plans
+	// small; no route at all takes nav's best clear step — never the wall.
+	moveTo(ctx, reach(s.Me.Pos, away, 8), moveto.Opts{Holder: f.Name(), Purpose: moveto.Flee, MaxHold: 2 * time.Second, MinGain: 3})
 	return Running
 }
 
@@ -914,37 +874,6 @@ func noteVaultHunger() { vaultHungerUntil = time.Now().Add(4 * time.Second) }
 // travelVaultAt: one clock for the travel gait — leaps spent on distance never
 // starve the combat sites (they run their own cooldowns).
 var travelVaultAt time.Time
-
-// TravelVault — P-2.11(4) (the owner, 11:20: "if it's trying to get somewhere
-// it could run there and leap it"): one leap along the march every 6s when the
-// pool affords it, landing ~12 tiles toward the goal on grid-vouched ground.
-// The walk continues underneath either way; a false return costs nothing.
-func TravelVault(ctx *Ctx, toward data.Position) bool {
-	s := ctx.Snap
-	if s == nil || !s.Valid || s.Me.InTown || !canVault(ctx, s) ||
-		time.Since(travelVaultAt) < 6*time.Second {
-		return false
-	}
-	d := chebyshev(s.Me.Pos, toward)
-	if d < 10 {
-		return false // walking is faster than winding up a jump
-	}
-	hop := 12
-	if d-2 < hop {
-		hop = d - 2
-	}
-	land := data.Position{
-		X: s.Me.Pos.X + (toward.X-s.Me.Pos.X)*hop/d,
-		Y: s.Me.Pos.Y + (toward.Y-s.Me.Pos.Y)*hop/d,
-	}
-	if !vaultLandable(ctx, land) {
-		return false
-	}
-	travelVaultAt = time.Now()
-	verbs.Vault{To: land, Key: ctx.Cap.Vault.Key, SkillID: int(ctx.Cap.Vault.Skill)}.
-		Do(ctx.M, ctx.GR, ctx.P, ctx.Led, "travelvault")
-	return true
-}
 
 // vaultLandable: a leap landing must be ground the grid vouches for — leaping
 // into unknown terrain trades a known ring for an unknown wall (dodge is
@@ -1145,7 +1074,7 @@ func (b *Breakout) Step(ctx *Ctx) Verdict {
 			}
 		}
 		if bd > 20 {
-			verbs.Stride{To: best.Pos, Hold: 1500 * time.Millisecond, MinGain: 1}.Do(ctx.M, ctx.GR, ctx.P, ctx.Led, b.Name())
+			moveTo(ctx, best.Pos, moveto.Opts{Holder: b.Name(), Purpose: moveto.Escape, MaxHold: 1500 * time.Millisecond})
 		} else {
 			// P-2.10: a portal entered with a CROWD at the mouth is HOT — Return
 			// must not feed her back into the same jaws (the sortie loop,
@@ -1259,10 +1188,10 @@ func (b *Breakout) Step(ctx *Ctx) Verdict {
 		}
 	}
 	if gapCount == 0 && !pinned {
-		// Open gap: stride through it hard (sliding off any wall on the line).
+		// Open gap: stride through it hard (a walled line is planned around).
 		dir := sectorDir[gap]
 		out := data.Position{X: s.Me.Pos.X + dir.X*22, Y: s.Me.Pos.Y + dir.Y*22}
-		slideStride(ctx, out, 2*time.Second, 3, b.Name())
+		moveTo(ctx, out, moveto.Opts{Holder: b.Name(), Purpose: moveto.Escape, MaxHold: 2 * time.Second, MinGain: 3})
 		return Running
 	}
 	if gapCount == 0 && pinned {
@@ -1280,7 +1209,8 @@ func (b *Breakout) Step(ctx *Ctx) Verdict {
 			volleyAt(ctx, best, key, false)
 			b.lastStrikeAt = time.Now()
 		} else if bd > 4 {
-			slideStride(ctx, best, 1200*time.Millisecond, 1, b.Name()) // walk AT the enemy: off the wall
+			// walk AT the enemy: off the wall
+			moveTo(ctx, best, moveto.Opts{Holder: b.Name(), Purpose: moveto.Escape, MaxHold: 1200 * time.Millisecond, Arrive: 4})
 		}
 		return Running
 	}
@@ -1310,7 +1240,7 @@ func (b *Breakout) Step(ctx *Ctx) Verdict {
 	}
 	if n > 0 {
 		away := data.Position{X: s.Me.Pos.X + (s.Me.Pos.X - cx/n), Y: s.Me.Pos.Y + (s.Me.Pos.Y - cy/n)}
-		slideStride(ctx, away, 1500*time.Millisecond, 0, b.Name())
+		moveTo(ctx, reach(s.Me.Pos, away, 8), moveto.Opts{Holder: b.Name(), Purpose: moveto.Flee, MaxHold: 1500 * time.Millisecond})
 	}
 	return Running
 }
@@ -1320,7 +1250,6 @@ func (b *Breakout) Step(ctx *Ctx) Verdict {
 type Fight struct {
 	target    data.UnitID
 	targetPos data.Position
-	j         *journey.Journey
 	noEvid    int
 	swapAt    time.Time
 	blacklist map[data.UnitID]time.Time
@@ -1508,7 +1437,7 @@ func (f *Fight) Step(ctx *Ctx) Verdict {
 		}
 	}
 	if !alive || f.target == 0 {
-		f.target, f.j, f.noEvid = 0, nil, 0
+		f.target, f.noEvid = 0, 0
 		f.volleys, f.aimDX, f.aimDY = 0, 0, 0
 		// TARGET BY SIGHT FIRST (the owner: "prioritize enemies outside, only go
 		// inside when it can"): an enemy in a cabin reads '8 tiles away' THROUGH the
@@ -1672,13 +1601,10 @@ func (f *Fight) Step(ctx *Ctx) Verdict {
 			return Running
 		}
 		if d > 25 {
-			// HALF-STEP the approach — ~10 tiles per stride, reassess between (the
-			// owner: "charging headlong into 20+ stacks"). The reflexes (dodge, flee,
-			// breakout) get a bid between every step of a long approach now.
-			step := 10
-			mid := data.Position{X: s.Me.Pos.X + (f.targetPos.X-s.Me.Pos.X)*step/d,
-				Y: s.Me.Pos.Y + (f.targetPos.Y-s.Me.Pos.Y)*step/d}
-			verbs.Stride{To: mid, Hold: 700 * time.Millisecond}.Do(ctx.M, ctx.GR, ctx.P, ctx.Led, f.Name())
+			// HALF-STEP the approach — reassess between pulses (the owner: "charging
+			// headlong into 20+ stacks"). The reflexes (dodge, flee, breakout) get a
+			// bid between every planned pulse of a long approach (≤700ms each).
+			moveTo(ctx, f.targetPos, moveto.Opts{Holder: f.Name(), Purpose: moveto.Approach, MaxHold: 700 * time.Millisecond, Arrive: 5})
 			return Running
 		}
 		if !losClear(ctx.Grid, s.Me.Pos, f.targetPos) {
@@ -1687,14 +1613,10 @@ func (f *Fight) Step(ctx *Ctx) Verdict {
 			// planner walks the door ("only go inside when it can"); a wall-slide here
 			// was the cabin back-and-forth the owner watched. No route, or arrived
 			// still blind → blacklist and move on.
-			if f.j == nil || chebyshev(f.j.Goal, f.targetPos) > 6 {
-				f.j = journey.New(ctx.GR, ctx.Grid, f.targetPos, f.Name())
-			}
-			st := f.j.Step(ctx.M, ctx.P, ctx.Led)
-			if st.State == journey.Stalled || st.State == journey.NoPath ||
-				(st.State == journey.Arrived && !losClear(ctx.Grid, s.Me.Pos, f.targetPos)) {
+			st := moveTo(ctx, f.targetPos, moveto.Opts{Holder: f.Name(), Purpose: moveto.Approach, Arrive: 5})
+			if stalled(st) || (st.State == moveto.Arrived && !losClear(ctx.Grid, s.Me.Pos, f.targetPos)) {
 				f.blacklist[f.target] = time.Now().Add(30 * time.Second)
-				f.target, f.j = 0, nil
+				f.target = 0
 			}
 			return Running
 		}
@@ -1772,7 +1694,7 @@ func (f *Fight) Step(ctx *Ctx) Verdict {
 			ctx.Led.Append(verbs.Outcome{Verb: "fight", Holder: f.Name(), Result: verbs.ResRefused,
 				Evidence: fmt.Sprintf("P-2.10 quarantine: target %d silent 1.2s at d=%d — retargeting", int(f.target), d)})
 			f.blacklist[f.target] = time.Now().Add(2 * time.Second)
-			f.target, f.j = 0, nil
+			f.target = 0
 			return Running
 		}
 		// THE ATTACK COMMAND IS THE CHASE (the owner, 04:12: "make it a
@@ -1782,7 +1704,7 @@ func (f *Fight) Step(ctx *Ctx) Verdict {
 		// (HoverStrike, the M4 verb, finally reliable under the hover pump).
 		// Plain strides only close truly long gaps.
 		if d > 10 && contact > 10 {
-			verbs.Stride{To: f.targetPos, Hold: 700 * time.Millisecond}.Do(ctx.M, ctx.GR, ctx.P, ctx.Led, f.Name())
+			moveTo(ctx, f.targetPos, moveto.Opts{Holder: f.Name(), Purpose: moveto.Approach, MaxHold: 700 * time.Millisecond, Arrive: 10})
 			return Running
 		}
 		// THE RING IS THE QUEUE (the owner, 04:22: "a small delay after
@@ -1953,13 +1875,12 @@ func (f *Fight) Step(ctx *Ctx) Verdict {
 		return Running
 	}
 	if d > 4 {
-		if f.j == nil || chebyshev(f.j.Goal, f.targetPos) > 6 {
-			f.j = journey.New(ctx.GR, ctx.Grid, f.targetPos, f.Name())
-		}
-		st := f.j.Step(ctx.M, ctx.P, ctx.Led)
-		if st.State == journey.Stalled || st.State == journey.NoPath {
+		// Arrive 4: the strike below owns d<=4 (the old radius 5 read "arrived"
+		// at d=5 and walked nothing while the strike waited for 4).
+		st := moveTo(ctx, f.targetPos, moveto.Opts{Holder: f.Name(), Purpose: moveto.Approach, Arrive: 4})
+		if stalled(st) {
 			f.blacklist[f.target] = time.Now().Add(30 * time.Second)
-			f.target, f.j = 0, nil
+			f.target = 0
 		}
 		return Running
 	}
@@ -2054,7 +1975,7 @@ func (f *Fight) strike(ctx *Ctx, target data.UnitID, pos data.Position, key byte
 		// Eight fired volleys and the target never once flinched in the stream:
 		// phantom or unhittable — stop feeding it arrows.
 		f.blacklist[target] = time.Now().Add(30 * time.Second)
-		f.target, f.j, f.noEvid, f.volleys = 0, nil, 0, 0
+		f.target, f.noEvid, f.volleys = 0, 0, 0
 	}
 }
 
@@ -2122,7 +2043,7 @@ func (f *Fight) assess(o verbs.Outcome) {
 	f.noEvid++
 	if f.noEvid >= 4 {
 		f.blacklist[f.target] = time.Now().Add(30 * time.Second)
-		f.target, f.j, f.noEvid = 0, nil, 0
+		f.target, f.noEvid = 0, 0
 	}
 }
 
@@ -2158,7 +2079,6 @@ type Loot struct {
 	target   data.UnitID
 	failures map[data.UnitID]int
 	ban      map[data.UnitID]time.Time
-	j        *journey.Journey
 }
 
 func NewLoot() *Loot { return &Loot{failures: map[data.UnitID]int{}, ban: map[data.UnitID]time.Time{}} }
@@ -2279,12 +2199,11 @@ func (l *Loot) Step(ctx *Ctx) Verdict {
 	// grant/done churn and never walks toward a drop while a monster is still in the
 	// progress corridor.
 	if lootBlockedByHostile(s) {
-		l.j = nil
 		return Done
 	}
 	it, _, ok := l.pick(s)
 	if !ok {
-		l.j, l.target = nil, 0
+		l.target = 0
 		return Done
 	}
 	if it.ID != l.target {
@@ -2298,7 +2217,7 @@ func (l *Loot) Step(ctx *Ctx) Verdict {
 	// measured from the last pickup click, against that window's own best.
 	if l.prog.stuck(d, time.Now(), 4*time.Second) {
 		l.ban[it.ID] = time.Now().Add(60 * time.Second)
-		l.j, l.target = nil, 0
+		l.target = 0
 		ctx.Led.Append(verbs.Outcome{Verb: "loot", Holder: l.Name(), Result: verbs.ResBlocked,
 			Evidence: fmt.Sprintf("no progress to item %d in 4s (stuck at d=%d) — banned 60s", it.ID, d)})
 		return Running
@@ -2308,23 +2227,18 @@ func (l *Loot) Step(ctx *Ctx) Verdict {
 		// through the wall — she flicker-hovered it and moved on (the owner's report).
 		// The planner walks the door; proximity is not reachability.
 		if ctx.Grid != nil {
-			if l.j == nil || chebyshev(l.j.Goal, it.Pos) > 4 {
-				l.j = journey.New(ctx.GR, ctx.Grid, it.Pos, l.Name())
-				l.j.Arrive = 2
-			}
-			st := l.j.Step(ctx.M, ctx.P, ctx.Led)
-			if st.State == journey.Stalled || st.State == journey.NoPath {
+			st := moveTo(ctx, it.Pos, moveto.Opts{Holder: l.Name(), Purpose: moveto.Loot, Arrive: 2})
+			if stalled(st) {
 				l.ban[it.ID] = time.Now().Add(60 * time.Second)
-				l.j = nil
 			}
 		} else {
-			verbs.Stride{To: it.Pos}.Do(ctx.M, ctx.GR, ctx.P, ctx.Led, l.Name())
+			moveTo(ctx, it.Pos, moveto.Opts{Holder: l.Name(), Purpose: moveto.Loot, Arrive: 2}) // no grid: dead reckoning
 		}
 		return Running
 	}
 	// At hand, only a TAKE is clicked (a SWAP target waits for Discard's room).
 	if !theLoot.takeable(s, it) {
-		l.j, l.target = nil, 0
+		l.target = 0
 		return Done
 	}
 	// The policy approved it (any tier it TAKEs), so the verb's uniques-only
@@ -2427,8 +2341,7 @@ func (x *Explore) Step(ctx *Ctx) Verdict {
 	}
 	o := bearings[x.heading%len(bearings)]
 	tgt := data.Position{X: s.Me.Pos.X + o.X, Y: s.Me.Pos.Y + o.Y}
-	res := verbs.Stride{To: tgt}.Do(ctx.M, ctx.GR, ctx.P, ctx.Led, x.Name())
-	if res.Result != verbs.ResDone {
+	if st := moveTo(ctx, tgt, moveto.Opts{Holder: x.Name(), Purpose: moveto.Travel}); wallTurned(st) {
 		x.heading++ // walled: one 45° turn, then HOLD the new line
 	}
 	return Running
@@ -2523,7 +2436,7 @@ func (t *Travel) Step(ctx *Ctx) Verdict {
 		if chebyshev(s.Me.Pos, last) < 15 {
 			prev := t.Road[len(t.Road)-2]
 			inward := data.Position{X: last.X + (last.X-prev.X)*3, Y: last.Y + (last.Y-prev.Y)*3}
-			verbs.Stride{To: inward, Hold: 2 * time.Second}.Do(ctx.M, ctx.GR, ctx.P, ctx.Led, t.Name())
+			moveTo(ctx, inward, moveto.Opts{Holder: t.Name(), Purpose: moveto.Travel, MaxHold: 2 * time.Second, Fallback: true})
 			return Running
 		}
 		t.wp = 0
@@ -2541,7 +2454,7 @@ func (t *Travel) Step(ctx *Ctx) Verdict {
 	for t.wp < len(t.Road)-1 && chebyshev(s.Me.Pos, t.Road[t.wp]) <= 6 {
 		t.wp++
 	}
-	verbs.Stride{To: t.Road[t.wp]}.Do(ctx.M, ctx.GR, ctx.P, ctx.Led, t.Name())
+	moveTo(ctx, t.Road[t.wp], moveto.Opts{Holder: t.Name(), Purpose: moveto.Travel, Fallback: true})
 	return Running
 }
 

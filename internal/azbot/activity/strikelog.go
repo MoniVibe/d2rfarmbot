@@ -9,6 +9,7 @@ import (
 	"github.com/hectorgimenez/koolo/internal/azbot/combat"
 	"github.com/hectorgimenez/koolo/internal/azbot/combat/learn"
 	"github.com/hectorgimenez/koolo/internal/azbot/combat/policy"
+	"github.com/hectorgimenez/koolo/internal/azbot/moveto"
 	"github.com/hectorgimenez/koolo/internal/azbot/verbs"
 )
 
@@ -220,12 +221,12 @@ func (f *Fight) closeStrike(ctx *Ctx, r strikeRec, res string) {
 
 // approach closes a gap on foot (policy.Approach): the left skill cannot
 // strike beyond reach without a hover-confirmed monster under the cursor. A
-// stride that made ground counts as liveness for the P-2.10 watchdog — the
-// lock is being worked, not held hostage; a stride that gained nothing does
-// not, so a walled approach still quarantines.
+// step that made ground counts as liveness for the P-2.10 watchdog — the
+// lock is being worked, not held hostage; a step that gained nothing (or a
+// planner refusal) does not, so a walled approach still quarantines.
 func (f *Fight) approach(ctx *Ctx) {
-	o := verbs.Stride{To: f.targetPos, Hold: 700 * time.Millisecond}.Do(ctx.M, ctx.GR, ctx.P, ctx.Led, f.Name())
-	if o.Result == verbs.ResDone {
+	st := moveTo(ctx, f.targetPos, moveto.Opts{Holder: f.Name(), Purpose: moveto.Approach, MaxHold: 700 * time.Millisecond, Arrive: 1})
+	if st.Issued && !st.Blocked {
 		f.watchSince = time.Now()
 	}
 }
