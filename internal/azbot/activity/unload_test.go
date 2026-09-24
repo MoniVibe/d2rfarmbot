@@ -29,3 +29,18 @@ func TestUnloadGoesHomeWhenFullAndCalm(t *testing.T) {
 		t.Fatal("room left: keep working")
 	}
 }
+
+func TestRecallStandsForHimselfFirst(t *testing.T) {
+	r := NewRecall()
+	r.want = true
+	s := townSnap()
+	s.Me.InTown = false
+	s.Enemies = []percept.EnemyRef{{Pos: data.Position{X: s.Me.Pos.X + 3, Y: s.Me.Pos.Y}}}
+	if r.Demand(s) != nil {
+		t.Fatal("a monster at 3 tiles: fight first, no portal")
+	}
+	s.Enemies = nil
+	if r.Demand(s) == nil {
+		t.Fatal("a calm field: recall")
+	}
+}

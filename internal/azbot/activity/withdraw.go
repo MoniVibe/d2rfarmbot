@@ -171,6 +171,14 @@ func (r *Recall) Demand(s *percept.Snapshot) *arbiter.Demand {
 	if !townPortalBound && !r.door {
 		return nil // nothing to cast with, nothing to ride: Spent says so
 	}
+	// STAND FOR HIMSELF FIRST (owner, R34: "bot tried entering the portal but
+	// mobs prevented it"): monsters on him block the portal's hover and click.
+	// Fight clears the pocket; the wind-down budget still ends in the pause.
+	for _, e := range s.Enemies {
+		if !e.Walled && chebyshev(s.Me.Pos, e.Pos) <= 8 {
+			return nil
+		}
+	}
 	return &arbiter.Demand{Who: r.Name(), Class: arbiter.ClassRecover,
 		Urgency: 0.91, // over Reclaim (0.9), under Unstick (0.92) and Respawn (1.0)
 		Commit:  arbiter.Commitment{MinHold: 3 * time.Second}}

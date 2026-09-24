@@ -16,7 +16,8 @@ func TestRecallBidsOnlyWhenTheSessionAsks(t *testing.T) {
 	s := &percept.Snapshot{Valid: true}
 	s.Me.HPPct = 80
 	s.Me.Pos = data.Position{X: 100, Y: 100}
-	s.Enemies = []percept.EnemyRef{{Pos: data.Position{X: 103, Y: 100}}}
+	// far enough that the recall stands (a monster within 8 = fight first: owner, R34)
+	s.Enemies = []percept.EnemyRef{{Pos: data.Position{X: 120, Y: 100}}}
 	if d := r.Demand(s); d != nil {
 		t.Fatalf("bid unasked: %+v", d)
 	}

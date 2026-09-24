@@ -375,7 +375,16 @@ func (m *Motor) RealMenuShiftClick(shotX, shotY int) bool {
 	time.Sleep(250 * time.Millisecond)
 	sx := int(float64(shotX)/m.panelScale) + m.hid.WindowLeftX()
 	sy := int(float64(shotY)/m.panelScale) + m.hid.WindowTopY()
+	// THE HOOKS ANSWER FOR THE KEYBOARD (owner, R35: "i wonder if its
+	// overridden"): azbot patches the game's GetKeyState/GetAsyncKeyState, so
+	// a real modifier press is invisible to it while the patch is live — the
+	// click read as a plain click (the lift). The resident stub is told the
+	// modifier is held for the click, then disabled again.
+	_ = m.gi.OverrideGetKeyState(0x10)
+	_ = m.gi.OverrideGetAsyncKeyState(0x10)
 	game.SendShiftClickRealScreen(sx, sy)
+	_ = m.gi.RestoreGetKeyState()
+	_ = m.gi.RestoreGetAsyncKeyState()
 	return true
 }
 
@@ -392,7 +401,16 @@ func (m *Motor) RealMenuCtrlClick(shotX, shotY int) bool {
 	time.Sleep(250 * time.Millisecond)
 	sx := int(float64(shotX)/m.panelScale) + m.hid.WindowLeftX()
 	sy := int(float64(shotY)/m.panelScale) + m.hid.WindowTopY()
+	// THE HOOKS ANSWER FOR THE KEYBOARD (owner, R35: "i wonder if its
+	// overridden"): azbot patches the game's GetKeyState/GetAsyncKeyState, so
+	// a real modifier press is invisible to it while the patch is live — the
+	// click read as a plain click (the lift). The resident stub is told the
+	// modifier is held for the click, then disabled again.
+	_ = m.gi.OverrideGetKeyState(0x11)
+	_ = m.gi.OverrideGetAsyncKeyState(0x11)
 	game.SendCtrlClickRealScreen(sx, sy)
+	_ = m.gi.RestoreGetKeyState()
+	_ = m.gi.RestoreGetAsyncKeyState()
 	return true
 }
 
