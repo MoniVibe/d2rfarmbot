@@ -41,6 +41,37 @@ func TestRecallBidsOnlyWhenTheSessionAsks(t *testing.T) {
 	}
 }
 
+// NO TOWN PORTAL BINDING (calibration found none, or -tpkey=none): Recall is
+// spent before it ever bids — the wind-down goes straight to the pause rung —
+// unless a live door already stands on the field; Withdraw never bids.
+func TestNoTownPortalBindingSkipsThePortalRoad(t *testing.T) {
+	defer SetTownPortal(true)
+	SetTownPortal(false)
+	r := NewRecall()
+	r.Want(true)
+	s := &percept.Snapshot{Valid: true}
+	s.Me.HPPct = 30
+	if d := r.Demand(s); d != nil || !r.Spent() {
+		t.Fatalf("unbound, no door: demand %+v spent %v, want nil and spent", d, r.Spent())
+	}
+	w := NewWithdraw()
+	if d := w.Demand(s); d != nil {
+		t.Fatalf("withdraw bid with no binding and no door: %+v", d)
+	}
+	s.Portals = []percept.PortalRef{{ID: 4242, Pos: data.Position{X: 3, Y: 3}}}
+	if d := r.Demand(s); d == nil || r.Spent() {
+		t.Fatalf("a live door is still a road: demand %+v spent %v", d, r.Spent())
+	}
+	if d := w.Demand(s); d == nil {
+		t.Fatal("withdraw must ride a live door even unbound")
+	}
+	SetTownPortal(true)
+	s.Portals = nil
+	if d := r.Demand(s); d == nil || r.Spent() {
+		t.Fatalf("bound: demand %+v spent %v", d, r.Spent())
+	}
+}
+
 // No tome bound: the town road is abandoned at once and Spent tells the
 // session (its ladder pauses the game); Recall stops bidding while it cools.
 func TestRecallSpentWithoutATome(t *testing.T) {

@@ -15,6 +15,26 @@ import (
 	"github.com/hectorgimenez/koolo/internal/azbot/verbs"
 )
 
+// townPortalBound: calibration (or -tpkey) left a Town Portal binding. Set by
+// the executive after every calibration; true until told otherwise so a bare
+// roster behaves as before. Without it the portal road only exists through a
+// door already standing on the field — nothing casts, no key is pressed.
+var townPortalBound = true
+
+// SetTownPortal records whether a Town Portal binding exists (see
+// combat.NoTownPortalLine).
+func SetTownPortal(bound bool) { townPortalBound = bound }
+
+// liveDoor reports whether a usable (not dead) portal stands in the snapshot.
+func liveDoor(s *percept.Snapshot) bool {
+	for _, pt := range s.Portals {
+		if !verbs.IsDeadDoor(pt.ID) {
+			return true
+		}
+	}
+	return false
+}
+
 type Withdraw struct {
 	castAt    time.Time
 	castTries int // casts that produced no portal — the empty-tome (poverty) detector
@@ -34,6 +54,9 @@ func (w *Withdraw) Demand(s *percept.Snapshot) *arbiter.Demand {
 	}
 	if time.Now().Before(w.coolAt) {
 		return nil // tome proven empty moments ago — fighting on IS the plan
+	}
+	if !townPortalBound && !liveDoor(s) {
+		return nil // no binding and no door: there is no portal road to take
 	}
 	// Under pressure this is Flee/Breakout's moment, not a portal-cast window.
 	for _, e := range s.Enemies {
@@ -116,6 +139,7 @@ func (w *Withdraw) ride(ctx *Ctx, who string) Verdict {
 // ends the run).
 type Recall struct {
 	want bool
+	door bool // the last Demand saw a live portal on the field
 	w    Withdraw
 }
 
@@ -129,12 +153,22 @@ func (r *Recall) Want(on bool) { r.want = on }
 
 // Spent: the town road was abandoned — no tome bound, or three casts with no
 // portal (ride's empty-tome detector) — and Recall cools. The session reads it
-// as exec.SessionIn.RecallSpent: rung 2 is over, pause the game.
-func (r *Recall) Spent() bool { return time.Now().Before(r.w.coolAt) }
+// as exec.SessionIn.RecallSpent: rung 2 is over, pause the game. With NO
+// Town Portal binding (SetTownPortal(false)) and no door on the field Recall
+// is spent from the first tick — the ladder goes straight to the pause rung.
+func (r *Recall) Spent() bool {
+	return time.Now().Before(r.w.coolAt) || (!townPortalBound && !r.door)
+}
 
 func (r *Recall) Demand(s *percept.Snapshot) *arbiter.Demand {
+	if s.Valid {
+		r.door = liveDoor(s)
+	}
 	if !r.want || !s.Valid || s.Me.InTown || s.Me.HPPct <= 0 || time.Now().Before(r.w.coolAt) {
 		return nil
+	}
+	if !townPortalBound && !r.door {
+		return nil // nothing to cast with, nothing to ride: Spent says so
 	}
 	return &arbiter.Demand{Who: r.Name(), Class: arbiter.ClassRecover,
 		Urgency: 0.91, // over Reclaim (0.9), under Unstick (0.92) and Respawn (1.0)

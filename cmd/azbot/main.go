@@ -202,6 +202,8 @@ func main() {
 	meleeKeyF := flag.String("meleekey", "", "OWNER-DECLARED melee skill key (e.g. f1 for Jab) — config beats inference on a scrambled mod; overrides calibration")
 	rangedKeyF := flag.String("rangedkey", "", "OWNER-DECLARED bow skill key — overrides calibration (the flinch audit still verifies)")
 	leftSkillF := flag.String("leftskill", "auto", "LEFT-button primary strike (the owner's Carnage, 2026-09-24): auto = primary when calibration reads a non-basic, owned PlayerUnit.LeftSkill | on = force it primary whatever calibration saw | off = never (right-skill strikes only, the pre-Carnage order)")
+	tpKeyF := flag.String("tpkey", "", "OWNER-DECLARED Town Portal (tome) key, e.g. f1 — overrides calibration; none/off = no town portal (Recall, Unstick, Withdraw and Breakout skip their portal paths). Empty = calibration decides")
+	calKeysF := flag.String("calkeys", combat.DefaultExtraCalibrationKeys, "EXTRA skill hotkeys calibration probes after F1-F8 (comma list). Only F1-F11 are ever pressed — never the killswitch, never F12, never a letter/digit/Tab/Enter/Esc (panels, belt, chat)")
 	invKeyF := flag.String("invkey", "i", "inventory-panel toggle key (the Equip service's door; KeyBindings memory is dead, so declare it if rebound)")
 	roadTest := flag.Bool("roadtest", false, "M2 soak: walk the measured town road out and back on Stride verbs, print the outcome histogram, exit")
 	jTest := flag.String("jtest", "", "M3 soak: journey to world x,y on the live grid via the Journey authority, print the verdict, exit")
@@ -1884,7 +1886,11 @@ func main() {
 	// calibrate wraps probing + the owner's declared build: the owner KNOWS the char
 	// (classic-bot law — kolbot/koolo configs declared skills; nobody inferred them).
 	calibrate := func() combat.Capability {
-		c := combat.Calibrate(logger, gr, hid, mem, []string{"f1", "f2", "f3", "f4", "f5", "f6", "f7", "f8"})
+		calKeys, refused := combat.CalibrationKeys(*calKeysF, *killKey)
+		for _, r := range refused {
+			logger.Warn("capability: -calkeys key refused (never pressed)", "key", r)
+		}
+		c := combat.Calibrate(logger, gr, hid, mem, calKeys)
 		// Owner declaration sets the KEY; the proven SKILL for that key survives if
 		// calibration flipped it (P-8.7 skill-spend needs the skill ID for its tree
 		// seat — "skill 0 has no tree seat" was the bare-key binding, 12:48).
@@ -1910,6 +1916,32 @@ func main() {
 			c.Reach = &combat.Binding{Key: k, Skill: provenSkill(k)}
 			logger.Info("capability: owner-declared ranged key", "key", *rangedKeyF, "skill", int(c.Reach.Skill))
 		}
+		// -tpkey: the owner's word on the Town Portal tome key. Without a
+		// binding every portal path (Recall, Unstick, Withdraw, Breakout, the
+		// watchdog's portal remedy) is skipped — the wind-down goes straight
+		// to its pause rung instead of pressing a dead key.
+		switch tk := strings.ToLower(strings.TrimSpace(*tpKeyF)); tk {
+		case "":
+		case "none", "off", "false", "0":
+			c.TownTP = nil
+			logger.Info("capability: town portal DISABLED (-tpkey=none)")
+		default:
+			k := hid.GetASCIICode(tk)
+			sk := provenSkill(k)
+			if sk == 0 {
+				sk, _ = combat.OwnedTownPortal(c.Known)
+			}
+			c.TownTP = &combat.Binding{Key: k, Skill: sk}
+			logger.Info("capability: owner-declared town portal key", "key", tk,
+				"skill", int(sk), "skill_name", combat.SkillName(sk))
+		}
+		if c.TownTP == nil {
+			logger.Warn(combat.NoTownPortalLine, "why", combat.TownPortalDetail(c.Known))
+		} else {
+			logger.Info("capability: town portal binding", "key", int(c.TownTP.Key),
+				"skill", int(c.TownTP.Skill), "skill_name", combat.SkillName(c.TownTP.Skill))
+		}
+		activity.SetTownPortal(c.TownTP != nil)
 		// -leftskill: the owner's word on the LEFT-button primary when
 		// calibration cannot see it (on) or must not use it (off).
 		switch strings.ToLower(*leftSkillF) {

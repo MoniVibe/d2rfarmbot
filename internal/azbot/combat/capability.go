@@ -94,7 +94,15 @@ func Calibrate(log *slog.Logger, gr *game.MemoryReader, hid *game.HID, mem *memo
 	leftKeys := map[skill.ID]byte{} // keys observed to repaint the LEFT skill
 	leftBefore := d.PlayerUnit.LeftSkill
 	before := d.PlayerUnit.RightSkill
-	for _, name := range candidates {
+	initial := before
+	// THE SELF-SELECTION BLIND SPOT (relay R9, 08:13:36): a key bound to the
+	// skill ALREADY selected on the right flips nothing — F1 read "selected
+	// nothing" with Book of Townportal armed from the last session, and the
+	// recalibration two seconds later (selection then on Leap Attack) proved
+	// F1 = Book of Townportal. Silent keys get a second look below once the
+	// selection has moved off the initial skill.
+	var silent []string
+	probe := func(name string, second bool) {
 		key := hid.GetASCIICode(name)
 		hid.PressKey(key)
 		time.Sleep(120 * time.Millisecond)
@@ -107,6 +115,10 @@ func Calibrate(log *slog.Logger, gr *game.MemoryReader, hid *game.HID, mem *memo
 			leftBefore = pu.LeftSkill
 		}
 		if after != before {
+			if second {
+				log.Info("capability: second look — the key selects the skill that was armed at start",
+					"key", name, "skill", int(after), "skill_name", skillName(after))
+			}
 			b := Binding{Key: key, Skill: after}
 			cap.Proven = append(cap.Proven, b)
 			log.Info("capability: proven binding", "key", name, "skill", int(after), "skill_name", skillName(after))
@@ -151,8 +163,17 @@ func Calibrate(log *slog.Logger, gr *game.MemoryReader, hid *game.HID, mem *memo
 				cap.Vault = &v
 			}
 			before = after
-		} else {
+		} else if !second {
+			silent = append(silent, name)
 			log.Info("capability: key selected nothing (unbound or unusable)", "key", name)
+		}
+	}
+	for _, name := range candidates {
+		probe(name, false)
+	}
+	if NeedSecondLook(initial, before, cap.Proven) {
+		for _, name := range silent {
+			probe(name, true)
 		}
 	}
 	// Keep travel on an ordinary contact skill, but give combat the requested
