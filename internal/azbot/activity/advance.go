@@ -432,8 +432,12 @@ func (a *Advance) campIdx() int {
 	}
 	// An unfinished quest leg caps the campaign (quest.go): a frontier saved past
 	// Maggot Lair 3 must not skip the Staff of Kings chest.
-	if a.questCap >= 0 && a.questCap < c {
-		c = a.questCap
+	// Targets are campIdx+1, so the cap sits one BEFORE the quest leg.
+	if a.questCap >= 0 && a.questCap-1 < c {
+		c = a.questCap - 1
+		if c < 0 {
+			c = 0
+		}
 	}
 	return c
 }
@@ -476,7 +480,10 @@ func (a *Advance) syncFrontier(ctx *Ctx) {
 }
 
 func (a *Advance) Step(ctx *Ctx) Verdict {
-	a.questCap = a.questCapFor(ctx)
+	if qc := a.questCapFor(ctx); qc != a.questCap {
+		a.questCap = qc
+		a.logQuestCap(ctx)
+	}
 	s := ctx.Snap
 	if !s.Valid {
 		return Running

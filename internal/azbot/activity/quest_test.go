@@ -36,3 +36,16 @@ func TestQuestChestsAreRites(t *testing.T) {
 }
 
 func objName(n int) (o object.Name) { return object.Name(n) }
+
+func TestQuestCapTargetsTheQuestLeg(t *testing.T) {
+	a := NewAdvance(Act2Itinerary())
+	a.frontier = 13
+	for i, l := range a.Itinerary {
+		if l.Area == area.HallsOfTheDeadLevel3 {
+			a.questCap = i
+		}
+	}
+	if got := a.Itinerary[a.campIdx()+1].Area; got != area.HallsOfTheDeadLevel3 {
+		t.Fatalf("capped march must target the quest leg itself, targets %v", got)
+	}
+}

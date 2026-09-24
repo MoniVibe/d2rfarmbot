@@ -155,3 +155,16 @@ func (a *Advance) questCapFor(ctx *Ctx) int {
 	}
 	return -1
 }
+
+// logQuestCap: one ledger line per cap change, with what is held (the R16
+// question: "is the Cube really missing, or is the held check blind?").
+func (a *Advance) logQuestCap(ctx *Ctx) {
+	d := ctx.GR.GetData()
+	leg := area.ID(0)
+	if a.questCap >= 0 && a.questCap < len(a.Itinerary) {
+		leg = a.Itinerary[a.questCap].Area
+	}
+	ctx.Led.Append(verbs.Outcome{Verb: "quest", Holder: a.Name(), Result: verbs.ResDone,
+		Evidence: fmt.Sprintf("cap=%d (area %d) frontier=%d held: cube=%v staff=%v", a.questCap, int(leg), a.frontier,
+			questItemHeld(d.Data, "box"), questItemHeld(d.Data, "msf"))})
+}
