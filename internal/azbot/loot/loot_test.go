@@ -7,6 +7,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/hectorgimenez/koolo/internal/azbot/gamedata"
 )
 
 // The +15 shift, pinned to the measured anchors (relay flights and the R2 bag capture).
@@ -333,6 +335,25 @@ func TestCensusAndCatalog(t *testing.T) {
 	cat.Know(CatalogKey(626, QNormal))
 	if _, isNew := cat.Note(Item{ID: 626, Quality: QNormal}, c.Evaluate(Item{ID: 626}), 1, "bag", t0); isNew {
 		t.Fatal("a row remembered from memory is not new")
+	}
+	if e.RealName != "" {
+		t.Fatalf("no gamedata loaded, yet realname %q", e.RealName)
+	}
+}
+
+// With gamedata loaded, a catalog entry carries the mod's own name for the row
+// (synthetic fixture tables: row 7 is "Test Rune (#1)").
+func TestCatalogRealNameFromGamedata(t *testing.T) {
+	db, err := gamedata.Load(filepath.Join("..", "gamedata", "testdata", "flat"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	gamedata.Set(db)
+	defer gamedata.Set(nil)
+	it := Item{ID: 7, Quality: QNormal}
+	e, isNew := NewCatalog().Note(it, wide().Evaluate(it), 3, "ground", time.Unix(1000, 0))
+	if !isNew || e.RealName != "Test Rune (#1)" {
+		t.Fatalf("realname %q (new=%v)", e.RealName, isNew)
 	}
 }
 

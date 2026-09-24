@@ -1,0 +1,4 @@
+Name	Id	SelectX	SelectY	SelectDX	SelectDY	ExitWalkX	ExitWalkY	OffsetX	OffsetY	LitVersion	Tiles	NoInteract	Direction	UniqueId
+Test Cave Up	0	-30	-120	120	150	3	5	2	5	1	2	0	b	0
+Expansion
+Test Fields to Cave	1	-90	-100	90	110	5	0	1	-1	1	4	0	l	0

@@ -1,0 +1,20 @@
+[
+    {
+        "id": 90000,
+        "Key": "TestBeast",
+        "enUS": "Test Beast",
+        "deDE": "Test Beast (de)"
+    },
+    {
+        "id": 90001,
+        "Key": "TestBoss",
+        "enUS": "Boss of Tests",
+        "deDE": "Boss of Tests (de)"
+    },
+    {
+        "id": 90002,
+        "Key": "Test Chief",
+        "enUS": "Chief Tester",
+        "deDE": "Chief Tester (de)"
+    }
+]

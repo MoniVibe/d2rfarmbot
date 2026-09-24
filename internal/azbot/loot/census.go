@@ -5,6 +5,8 @@ import (
 	"sort"
 	"strings"
 	"time"
+
+	"github.com/hectorgimenez/koolo/internal/azbot/gamedata"
 )
 
 // Census counts what the loot policy saw, picked and skipped, by tier, over
@@ -110,6 +112,7 @@ func ReasonClass(p Plan) string {
 type CatalogEntry struct {
 	ID        int    `json:"id"`
 	Name      string `json:"name"`               // d2go's (scrambled) table name
+	RealName  string `json:"realname,omitempty"` // the mod's own name (gamedata, when loaded)
 	VanillaID int    `json:"vanilla_id"`         // -1: a mod row past the vanilla table
 	Code      string `json:"code,omitempty"`     // the vanilla code after the +15 shift
 	Type      string `json:"type,omitempty"`     // the vanilla type code
@@ -149,6 +152,9 @@ func (c *Catalog) Note(it Item, v Verdict, area int, where string, now time.Time
 	e := CatalogEntry{ID: it.ID, Name: it.Name, VanillaID: v.Class.VanillaID, Code: v.Class.Code,
 		Type: v.Class.Type, Kind: v.Class.Kind.String(), Quality: QualityName(it.Quality),
 		Tier: v.Tier.String(), Why: v.Why, Area: area, Where: where, First: now.Format(time.RFC3339)}
+	if db := gamedata.Get(); db != nil {
+		e.RealName = db.ItemName(it.ID)
+	}
 	if v.Class.Kind == KindModUnknown || strings.Contains(v.Why, "table is wrong") {
 		e.TagHint = fmt.Sprintf("ids: { %d: S }   # or A/B/C once you know what it is", it.ID)
 	}

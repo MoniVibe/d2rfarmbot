@@ -241,6 +241,7 @@ func main() {
 	logger := slog.New(slog.NewTextHandler(os.Stdout, nil))
 
 	flag.Parse()
+	loadGameData(logger, *moddataF) // cmd/azbot/gamedata.go: the mod's tables, once
 	switch strings.ToLower(*combatLearnF) {
 	case "off", "false", "0", "none":
 		activity.SetCombatLearn(false, 0)

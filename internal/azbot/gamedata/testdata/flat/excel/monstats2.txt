@@ -1,0 +1,4 @@
+Id	Height	SizeX	SizeY	MeleeRng	htLeft	htTop	htWidth	htHeight	noGfxHitTest	isSel	isAtt	small	large
+testbeast	2	2	2	1	-16	-60	32	64	0	1	1	1	0
+Expansion
+testbossgfx	5	3	3	4	-40	-150	80	150	1	1	1	0	1

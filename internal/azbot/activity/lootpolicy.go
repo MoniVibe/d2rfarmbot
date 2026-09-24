@@ -330,7 +330,7 @@ func (m *lootMind) noteRow(it loot.Item, ar area.ID, where string, now time.Time
 			}
 		}
 	}
-	m.say("outcome", "verb", "lootcatalog", "item", e.ID, "name", e.Name, "q", e.Quality, "kind", e.Kind,
+	m.say("outcome", "verb", "lootcatalog", "item", e.ID, "name", e.Name, "realname", e.RealName, "q", e.Quality, "kind", e.Kind,
 		"code", e.Code, "tier", e.Tier, "where", where, "hint", e.TagHint)
 }
 

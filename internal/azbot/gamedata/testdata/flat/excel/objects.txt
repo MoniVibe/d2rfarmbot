@@ -1,0 +1,10 @@
+Class	Name	*ID	Selectable0	SizeX	SizeY	IsDoor	Left	Top	Width	Height	OperateFn	SubClass
+Null	Dummy	0	0	0	0	0	0	0	0	0	0	0
+TestChest	chest	1	1	2	1	0	15	0	0	0	4	8
+TestWaypoint	Waypoint	2	1	5	5	0	0	0	0	0	23	64
+Expansion
+TestCubeChest	chest	3	1	1	1	0	18	0	0	0	39	8
+TestBank	bank	4	1	2	2	0	0	0	0	0	32	0
+TestDoor	Door	5	1	1	2	1	0	0	0	0	8	0
+TestPortal	Portal	6	1	4	4	0	-40	-100	80	110	15	4
+TestPlank	plank	7	1	1	1	1	0	0	0	0	0	0

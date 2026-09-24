@@ -1,0 +1,5 @@
+Id	*hcIdx	BaseId	NameStr	MonStatsEx	enabled	Level	Level(N)	Level(H)	boss	npc	killable	primeevil	ResDm	ResMa	ResFi	ResLi	ResCo	ResPo	ResDm(N)	ResMa(N)	ResFi(N)	ResLi(N)	ResCo(N)	ResPo(N)	ResDm(H)	ResMa(H)	ResFi(H)	ResLi(H)	ResCo(H)	ResPo(H)
+testbeast	0	testbeast	TestBeast	testbeast	1	3	30	60	0	0	1	0	0	0	0	0	0	0	0	0	50	0	0	0	0	0	75	0	0	100
+Expansion
+testboss	1	testboss	TestBoss	testbossgfx	1	12	40	70	1	0	1	0	0	0	0	110	0	0	0	0	100	110	0	0	100	0	100	110	0	0
+testvendor	2	testvendor	Missing Key		1	1	1	1	0	1	0	0	0	0	0	0	0	0	0	0	0	0	0	0	0	0	0	0	0	0

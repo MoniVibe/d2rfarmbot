@@ -1,0 +1,5 @@
+name	code	namestr	minac	maxac	reqstr	levelreq	invwidth	invheight	type	type2	belt
+Padded Vest	tvs	tvs	5	9	12	0	2	3	tors		0
+
+Expansion
+Plated Vest	tpv	tpv	40	55	60	20	2	3	tors		3
