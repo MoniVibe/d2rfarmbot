@@ -79,17 +79,18 @@ func stashClaims(p stPhase) screen.Panel {
 
 // Stash is the town errand that empties the bag of keepers into the stash.
 type Stash struct {
-	life   svcLife[stPhase]
-	clickT time.Time
-	target data.UnitID // the keeper being moved
-	tgtW   int
-	tgtH   int
-	tgtGX  int
-	tgtGY  int
-	pages  int // page turns this lift
-	moved  int
-	fails  int
-	coolAt time.Time
+	life      svcLife[stPhase]
+	clickT    time.Time
+	target    data.UnitID // the keeper being moved
+	tgtW      int
+	tgtH      int
+	tgtGX     int
+	tgtGY     int
+	pages     int // page turns this lift
+	moved     int
+	fails     int
+	coolAt    time.Time
+	fullUntil time.Time // a stash with no room for the keeper: stand down (no retry loop)
 	// the chest hover sweep (one aim per tick)
 	aimIdx     int
 	aimX, aimY int
@@ -138,7 +139,7 @@ func (st *Stash) Demand(s *percept.Snapshot) *arbiter.Demand {
 }
 
 func (st *Stash) demand(s *percept.Snapshot, now time.Time) *arbiter.Demand {
-	if servicesCooled() || !s.Valid || !s.Me.InTown || !stashWorks.Load() || now.Before(st.coolAt) {
+	if servicesCooled() || !s.Valid || !s.Me.InTown || !stashWorks.Load() || now.Before(st.coolAt) || now.Before(st.fullUntil) {
 		return nil
 	}
 	// R28: a 2x3 keeper (a unique bow) rode the cursor in town with no 2x3 hole
@@ -298,6 +299,7 @@ func (st *Stash) Step(ctx *Ctx) Status {
 					ctx.M.RealMenuClick(cx, cy)
 				}
 				st.clickT = time.Now()
+				st.fullUntil = time.Now().Add(30 * time.Minute) // R29: "stash full" retried every 10s
 				return l.finish(ctx, phase.Abandoned, phase.Refused, fmt.Sprintf("stash full on %d pages — keeper put back", st.pages))
 			}
 			k := shopScale(ctx)
