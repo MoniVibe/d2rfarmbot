@@ -47,7 +47,6 @@ const (
 	stashNextPgY   = 752.0
 	stashMaxPages  = 5
 	stashEmptyMax  = 22 // every sampled channel at or below this = an empty cell
-	stashTightFree = 10 // below this many free bag cells, charms are stashed too
 )
 
 // stashWorks: the live belief that the stash ritual moves items on this mod. Two
@@ -117,31 +116,19 @@ func NewStash() *Stash {
 func (st *Stash) Name() string      { return "stash" }
 func (st *Stash) PhaseName() string { return st.life.ph.Phase().String() }
 
-// stashable: the bag's keepers, in bag order. Pure over the snapshot and policy.
+// stashable: the bag's items the ONE bag plan (loot/plan.go) sends to the
+// stash, in bag order — the same plan percept's sell list comes from.
 func stashable(s *percept.Snapshot, c *loot.Config) []percept.BagItem {
 	if c == nil {
 		return nil
 	}
+	p := c.NewPlanner(s.Me.InvFree)
 	var out []percept.BagItem
 	for _, b := range s.Bag {
-		if b.Upgrade {
-			continue
-		}
-		v, pinned := c.EvaluateCarried(loot.Carried{Item: loot.Item{ID: b.ID, Quality: b.Qual}, GX: b.GX, GY: b.GY, Identified: b.Ident})
-		// Charms work in the bag, so they stay — until the bag is tight: R21 carried
-		// 15 charms (~26 of 80 cells) and ran all hour at bag_free=0 with 0 pickups.
-		if v.Class.Kind == loot.KindCharm && s.Me.InvFree < stashTightFree {
+		d, _ := p.Dispose(loot.Carried{Unit: uint32(b.Unit), Item: loot.Item{ID: b.ID, Name: b.Name, Quality: b.Qual}, GX: b.GX, GY: b.GY, Identified: b.Ident, Upgrade: b.Upgrade})
+		if d == loot.DispStash {
 			out = append(out, b)
-			continue
 		}
-		if pinned || v.Tier != loot.TierS {
-			continue
-		}
-		switch v.Class.Kind {
-		case loot.KindCharm, loot.KindCube, loot.KindTome, loot.KindQuest, loot.KindScroll, loot.KindPotion, loot.KindGold:
-			continue
-		}
-		out = append(out, b)
 	}
 	return out
 }

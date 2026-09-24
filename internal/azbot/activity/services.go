@@ -596,7 +596,13 @@ func ServicesPendingWhy(s *percept.Snapshot) string {
 	// The Fence's docket: broke with junk to sell, or a heavy bag either way.
 	// ...or a loot room trip (Haul): she came home to make room for a tier S
 	// drop, and every junk cell sold is room.
-	if s.Me.JunkCount > 0 && (s.Me.Gold < 500 || s.Me.JunkCount >= 4 || theLoot.hauling()) {
+	// R27: haul's return leg left before the stash ran, so every tier-S drop
+	// cost a town trip that emptied nothing. Keepers waiting = an errand.
+	if stashWorks.Load() && len(stashable(s, loot.Active())) > 0 {
+		return "stash"
+	}
+	// OWNER (R27): the bag must be CLEARED every visit — any item the bag plan sells.
+	if s.Me.JunkCount > 0 {
 		return "fence"
 	}
 	return ""
@@ -899,8 +905,8 @@ func (r *Restock) Step(ctx *Ctx) Status {
 			r.beltFrozen++
 		}
 		if r.beltFrozen >= 3 {
-			potionCoolUntil = time.Now().Add(5 * time.Minute)
-			r.nextAt = time.Now().Add(5 * time.Minute)
+			potionCoolUntil = time.Now().Add(60 * time.Minute) // R27: frozen belt -> bottles land in the bag and the fence sells them back
+			r.nextAt = time.Now().Add(60 * time.Minute)
 			ctx.Led.Append(verbs.Outcome{Verb: "buy", Holder: r.Name(), Result: verbs.ResDeaf,
 				Evidence: "belt frozen through 3 buys — bottles land in the bag; trip ended, potions cooled 5m"})
 			return e.finish(ctx, phase.Abandoned, phase.Refused, "belt frozen through 3 buys")
@@ -1131,9 +1137,7 @@ func (fc *Fence) demand(s *percept.Snapshot) *arbiter.Demand {
 	if !s.Valid || !s.Me.InTown || s.Me.JunkCount == 0 || time.Now().Before(fc.coolAt) {
 		return nil
 	}
-	if s.Me.Gold >= 500 && s.Me.JunkCount < 4 && !theLoot.hauling() {
-		return nil // solvent and light: selling can wait for a fuller bag
-	}
+	// OWNER (R27): every town visit clears the bag — no "solvent and light" wait.
 	return &arbiter.Demand{Who: fc.Name(), Class: arbiter.ClassService,
 		Urgency: 0.45 + float64(minInt(s.Me.JunkCount, 8))/20, // poverty + full bags push it up
 		Commit:  arbiter.Commitment{MinHold: 5 * time.Second}}

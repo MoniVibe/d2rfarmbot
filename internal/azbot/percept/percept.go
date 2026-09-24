@@ -86,6 +86,8 @@ type PlayerState struct {
 	// service's reason to exist. The classic bots' law: loot → sell → gold →
 	// repair/potions; a bot with an empty purse cannot take care of itself.
 	JunkCount int
+	// StashCount: bag items the plan sends to the stash (loot/plan.go).
+	StashCount int
 	// InvFree: free inventory grid cells (vanilla 10x4 frame; item footprints from
 	// the static Desc table). Loot consults it — a full bag turns every pickup into
 	// a 3-fail ban cycle (the owner: "it tries to pick up things but its full").
@@ -663,9 +665,9 @@ func (p *Perceptor) Capture() *Snapshot {
 	occupied := loot.Occupied(len(bag), func(i int) (int, int, int) {
 		return int(bag[i].ID), bag[i].Position.X, bag[i].Position.Y
 	})
-	bagPct := occupied * 100 / loot.BagCells
 	policy := loot.Active()
 	potSpares := map[potionKind]int{} // bag potions per kind — the reserve audit (P-4.5)
+	planner := policy.NewPlanner(loot.BagCells - occupied)
 	for _, it := range bag {
 		id := int(it.ID)
 		up := isUpgrade(it)
@@ -705,30 +707,21 @@ func (p *Perceptor) Capture() *Snapshot {
 				s.Junk = append(s.Junk, InvItem{ID: id, GX: it.Position.X, GY: it.Position.Y, Qual: int(it.Quality)})
 			}
 			continue
-		case int(it.Quality) >= 4 && !it.Identified:
-			// UNIDENTIFIED goes to the docket FIRST — rares and uniques included.
-			// (The old ordering filed rare+ under 'keeper' before this check ever
-			// ran: the owner's unique bow could never be identified.)
-			s.Unid = append(s.Unid, InvItem{ID: id, GX: it.Position.X, GY: it.Position.Y, Qual: int(it.Quality)})
-			continue
-		case policy.Keep(id, int(it.Quality)):
-			// THE LOOT POLICY'S KEEPERS (runes, gems, jewels, charms, the mod's
-			// unknown rows, anything config/loot.yaml tags S/A): never merchandise.
-			// The recorded sell list carried a magic charm (618), an Eld rune (626)
-			// and the cube itself (564).
-			continue
-		case int(it.Quality) >= 6:
-			// Identified rare+: keepers (equip/stash decide) — until the bag passes
-			// the policy's sell line, when a rare that is not an upgrade has shown
-			// its hand and becomes Fence stock (no proven stash routine exists).
-			if !policy.SellGrade(loot.Carried{Item: loot.Item{ID: id, Name: string(it.Name), Quality: int(it.Quality)},
-				Identified: true}, bagPct) {
+		default:
+			// THE BAG PLAN (loot/plan.go): one disposition per item — the sell list
+			// is exactly the plan's "sell" (R27: the old rules kept rares and blues
+			// the plan now sells, and the fence cleared 3-4 items a visit).
+			disp, _ := planner.Dispose(loot.Carried{Unit: uint32(it.UnitID), Item: loot.Item{ID: id, Name: string(it.Name), Quality: int(it.Quality)},
+				GX: it.Position.X, GY: it.Position.Y, Identified: it.Identified})
+			switch disp {
+			case loot.DispIdentify:
+				s.Unid = append(s.Unid, InvItem{ID: id, GX: it.Position.X, GY: it.Position.Y, Qual: int(it.Quality)})
 				continue
-			}
-		case int(it.Quality) >= 4:
-			// Identified magic she could actually draw (bow/javelin/quiver types) is
-			// held for the equip flow; identified magic she cannot use is MERCHANDISE.
-			if t := it.Desc().Type; t == "bow" || t == "jave" || t == "bowq" || t == "tpot" {
+			case loot.DispStash:
+				s.Me.StashCount++
+				continue
+			case loot.DispSell:
+			default:
 				continue
 			}
 		}
