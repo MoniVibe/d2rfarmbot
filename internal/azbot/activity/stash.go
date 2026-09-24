@@ -37,16 +37,17 @@ import (
 // Stash-panel geometry in screenshot px at the 1050-px reference (measured on the
 // R2 capture, 1920x1050): a 16x13 grid, column 0 center x=183, row 0 center y=129.
 const (
-	stashCols     = 16
-	stashRows     = 13
-	stashCell0X   = 183.0
-	stashCell0Y   = 129.0
-	stashPitchX   = 47.5
-	stashPitchY   = 47.7
-	stashNextPgX  = 615.0 // the page arrow right of "Page n / 5"
-	stashNextPgY  = 752.0
-	stashMaxPages = 5
-	stashEmptyMax = 22 // every sampled channel at or below this = an empty cell
+	stashCols      = 16
+	stashRows      = 13
+	stashCell0X    = 183.0
+	stashCell0Y    = 129.0
+	stashPitchX    = 47.5
+	stashPitchY    = 47.7
+	stashNextPgX   = 615.0 // the page arrow right of "Page n / 5"
+	stashNextPgY   = 752.0
+	stashMaxPages  = 5
+	stashEmptyMax  = 22 // every sampled channel at or below this = an empty cell
+	stashTightFree = 10 // below this many free bag cells, charms are stashed too
 )
 
 // stashWorks: the live belief that the stash ritual moves items on this mod. Two
@@ -127,6 +128,12 @@ func stashable(s *percept.Snapshot, c *loot.Config) []percept.BagItem {
 			continue
 		}
 		v, pinned := c.EvaluateCarried(loot.Carried{Item: loot.Item{ID: b.ID, Quality: b.Qual}, GX: b.GX, GY: b.GY, Identified: b.Ident})
+		// Charms work in the bag, so they stay — until the bag is tight: R21 carried
+		// 15 charms (~26 of 80 cells) and ran all hour at bag_free=0 with 0 pickups.
+		if v.Class.Kind == loot.KindCharm && s.Me.InvFree < stashTightFree {
+			out = append(out, b)
+			continue
+		}
 		if pinned || v.Tier != loot.TierS {
 			continue
 		}
@@ -159,6 +166,11 @@ func (st *Stash) Needs(*percept.Snapshot) Needs { return st.life.needs() }
 
 func (st *Stash) Begin(ctx *Ctx, resumed bool) {
 	st.life.begin(resumed)
+	if !resumed {
+		sn := ctx.Snap
+		ctx.Led.Append(verbs.Outcome{Verb: "stash", Holder: st.Name(), Result: verbs.ResDone,
+			Evidence: fmt.Sprintf("bag census: free=%d bag=%d keepers=%d unid=%d junk=%d", sn.Me.InvFree, len(sn.Bag), len(stashable(sn, loot.Active())), sn.Me.UnidentCount, sn.Me.JunkCount)})
+	}
 	if resumed && st.life.ph.Phase() != stClose {
 		st.life.to(stClean, "resumed: re-verify from a clean screen")
 	}
