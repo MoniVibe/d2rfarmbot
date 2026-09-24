@@ -1,0 +1,41 @@
+time=2026-09-24T08:13:05.632+03:00 level=INFO msg="azbot attaching" pid=34076
+[d2go] PATTERN NOT FOUND (memlen=41508864): 44 88 25 00 00 00 00 66 44 89 25 00 00 00 00
+[d2go] PATTERN NOT FOUND (memlen=41508864): 48 8b 05 00 00 00 00 48 8b d9 f3 0f 10 50 00
+[d2go] PATTERN NOT FOUND (memlen=41508864): 02 45 33 d2 4d 8b
+[d2go] PATTERN NOT FOUND (memlen=41508864): 48 8b 0d 00 00 00 00 4c 8d 44 24 00 48 03 c2
+[d2go] PATTERN NOT FOUND (memlen=41508864): 48 89 05 00 00 00 00 0f 11 00
+time=2026-09-24T08:13:09.545+03:00 level=INFO msg="aim calibration loaded" kx=1.1125320679211068 ky=1.1293540875695656 ox=2.951161121414657 oy=-27.490030603728087
+time=2026-09-24T08:13:09.546+03:00 level=INFO msg="world scale" scale=1.25 client=1536x840 dpi=1.25
+time=2026-09-24T08:13:09.546+03:00 level=INFO msg="navigation mode" deliberate=false
+time=2026-09-24T08:13:09.546+03:00 level=INFO msg="ui mode" janitor=false
+[sendinput] structSize=40 n=1 injected=1 err=The operation completed successfully.
+[sendinput] structSize=40 n=1 injected=1 err=The operation completed successfully.
+[sendinput] structSize=40 n=1 injected=1 err=The operation completed successfully.
+[sendinput] structSize=40 n=1 injected=1 err=The operation completed successfully.
+[sendinput] structSize=40 n=1 injected=1 err=The operation completed successfully.
+[sendinput] structSize=40 n=1 injected=1 err=The operation completed successfully.
+[interception] create_context failed — driver not installed? (using SendInput fallback)
+time=2026-09-24T08:13:09.578+03:00 level=INFO msg="attach report" verdict="position=true stats=true uibytes=true mode=true"
+time=2026-09-24T08:13:14.686+03:00 level=INFO msg="sentinel live" killswitch=f10 drinkAt=60
+time=2026-09-24T08:13:14.686+03:00 level=INFO msg=director goal=farm
+time=2026-09-24T08:13:17.986+03:00 level=INFO msg="map data fetched" seed=466817790 areas=136
+==== azbot preflight self-test ====
+PASS focus              D2R foreground=true (focused mode is the operating contract)
+time=2026-09-24T08:13:18.041+03:00 level=INFO msg=selftest result="PASS focus              D2R foreground=true (focused mode is the operating contract)"
+FAIL in-town            valid=true town=false area=43 — self-test only runs in town
+time=2026-09-24T08:13:18.041+03:00 level=INFO msg=selftest result="FAIL in-town            valid=true town=false area=43 — self-test only runs in town"
+==== 1/2 passed ====
+[sendinput] structSize=40 n=1 injected=1 err=The operation completed successfully.
+[sendinput] structSize=40 n=1 injected=1 err=The operation completed successfully.
+[sendinput] structSize=40 n=1 injected=1 err=The operation completed successfully.
+[sendinput] structSize=40 n=1 injected=1 err=The operation completed successfully.
+[sendinput] structSize=40 n=1 injected=1 err=The operation completed successfully.
+[sendinput] structSize=40 n=1 injected=1 err=The operation completed successfully.
+time=2026-09-24T08:13:18.063+03:00 level=INFO msg="healed input fn" fn=GetPhysicalCursorPos
+time=2026-09-24T08:13:18.063+03:00 level=INFO msg="healed input fn" fn=GetCursorPos
+time=2026-09-24T08:13:18.063+03:00 level=INFO msg="healed input fn" fn=GetCursorInfo
+time=2026-09-24T08:13:18.063+03:00 level=INFO msg="healed input fn" fn=SetCursorPos
+time=2026-09-24T08:13:18.063+03:00 level=INFO msg="healed input fn" fn=GetKeyState
+time=2026-09-24T08:13:18.063+03:00 level=INFO msg="healed input fn" fn=GetAsyncKeyState
+time=2026-09-24T08:13:18.063+03:00 level=INFO msg="healed input fn" fn=GetKeyboardState
+time=2026-09-24T08:13:18.063+03:00 level=INFO msg="healed input fn" fn=TrackMouseEvent
