@@ -112,16 +112,16 @@ func TestHalfPanels(t *testing.T) {
 	// field, the dimmed pause menu); the named panels may (they are framed).
 	leftSide := Shop | CharSheet | QuestLog | Waypoint | Mercenary | Stash
 	rightSide := Inventory | SkillTree
-	for _, n := range r2 {
-		img := loadAny(t, "r2/"+n, false)
+	for _, n := range relayFixtures() {
+		img := loadAny(t, n, false)
 		ls, rs := LeftPanelScore(img), RightPanelScore(img)
-		t.Logf("r2/%-28s left in=%.2f/%.2f out=%.2f/%.2f %-5v  right in=%.2f/%.2f out=%.2f/%.2f %v",
+		t.Logf("%-31s left in=%.2f/%.2f out=%.2f/%.2f %-5v  right in=%.2f/%.2f out=%.2f/%.2f %v",
 			n, ls.In[0], ls.In[1], ls.Out[0], ls.Out[1], ls.Present(), rs.In[0], rs.In[1], rs.Out[0], rs.Out[1], rs.Present())
-		if truth["r2/"+n]&leftSide == 0 && ls.Present() {
-			t.Errorf("r2/%s: left frame with nothing on the left", n)
+		if truth[n]&leftSide == 0 && ls.Present() {
+			t.Errorf("%s: left frame with nothing on the left", n)
 		}
-		if truth["r2/"+n]&rightSide == 0 && rs.Present() {
-			t.Errorf("r2/%s: right frame with nothing on the right", n)
+		if truth[n]&rightSide == 0 && rs.Present() {
+			t.Errorf("%s: right frame with nothing on the right", n)
 		}
 	}
 	if x, y, _ := RightPanelX(load(t, "shop_open")); x != 1788 || y != 18 {

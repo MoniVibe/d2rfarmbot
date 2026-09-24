@@ -58,9 +58,40 @@ func (t *Tracker) State() State { return t.cur }
 // Since: when the current belief last changed (zero before the first change).
 func (t *Tracker) Since() time.Time { return t.since }
 
+// Plausible applies the transition rules (REACHABILITY rule 2, at TownOnly) to a raw
+// Reading against the current belief: a sub-panel seen while the belief holds
+// neither the pause menu nor a sub-panel is unreachable — Unsure, not Sight.
+// The executive publishes the result, so the gate and the logs judge the same
+// reading the Tracker votes on. Pure; r's maps are copied before any change.
+func (t *Tracker) Plausible(r Reading) Reading {
+	if r.Panels&SubPanel == 0 || t.cur.Panels&SubPanelFrom != 0 {
+		return r
+	}
+	r = r.clone()
+	r.demote(SubPanel, "no pause menu before it: unreachable (sub-panels open from the pause menu)")
+	return r
+}
+
+// clone copies the Reading's maps (Evidence, Close) so a derived Reading
+// never writes into the one it came from.
+func (r Reading) clone() Reading {
+	ev := make(map[Panel]string, len(r.Evidence))
+	for k, v := range r.Evidence {
+		ev[k] = v
+	}
+	cl := make(map[Panel]Point, len(r.Close))
+	for k, v := range r.Close {
+		cl[k] = v
+	}
+	r.Evidence, r.Close = ev, cl
+	return r
+}
+
 // Update folds one observation in; it returns the transition when the belief
-// changed on this observation.
+// changed on this observation. The transition rules apply first (Plausible):
+// an unreachable panel casts no vote.
 func (t *Tracker) Update(at time.Time, r Reading) (Transition, bool) {
+	r = t.Plausible(r)
 	n := t.need()
 	next := t.cur
 	var ev []string

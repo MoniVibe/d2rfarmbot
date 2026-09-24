@@ -18,8 +18,9 @@ import (
 
 // ---------------------------------------------------------------- Relay R2 fixtures
 //
-// THE 26 RELAY R2 CAPTURES (branch relay-results, relay/R2/*.png, 1920x1050,
-// ~2.7 MB each as PNG) ARE STORED AS TWO FILES EACH, ~0.25 MB together:
+// THE 27 RELAY R2 CAPTURES AND THE R9 FRAME (branch relay-results,
+// relay/R2/*.png and relay/R9/esc_loop_now.png, 1920x1050, ~2.7 MB each as
+// PNG) ARE STORED AS TWO FILES EACH, ~0.25 MB together:
 //
 //	testdata/<name>.jpg      the full frame, JPEG q65 — the world behind the UI
 //	testdata/<name>.roi.png  RGBA, lossless where alpha=255: EXACTLY the pixels
@@ -36,16 +37,53 @@ import (
 //
 // Regenerate (after changing a detector's sample points):
 //
-//	git archive origin/relay-results relay/R2 | tar -x -C /tmp/r2
-//	AZBOT_R2_DIR=/tmp/r2/relay/R2 AZBOT_WRITE_FIXTURES=1 go test ./internal/azbot/screen -run TestWriteFixtures
+//	git archive origin/relay-results relay/R2 relay/R9 | tar -x -C /tmp/r2
+//	AZBOT_R2_DIR=/tmp/r2/relay/R2 AZBOT_R9_DIR=/tmp/r2/relay/R9 AZBOT_WRITE_FIXTURES=1 \
+//	  go test ./internal/azbot/screen -run TestWriteFixtures
 const fixtures = "testdata/"
 
 // r2 lists the relay R2 captures (README.md there maps each to its content).
 var r2 = []string{"automap_overlay", "charsheet", "chat", "hireling", "inv_and_sheet", "inventory",
 	"inventory_2", "inventory_act1", "inventory_act1_2", "npc_dialog_text", "npc_menu_2", "npc_menu_3",
 	"npc_menu_4", "npc_talk", "pause_menu", "questlog", "skill_picker", "skill_picker_2", "skilltree",
-	"stash", "waypoint", "waypoint_act1_and_inventory", "world_field_night", "world_town", "world_town_2",
-	"world_town_act1"}
+	"stash", "waypoint", "waypoint_act1_and_inventory", "world_cave", "world_field_night", "world_town",
+	"world_town_2", "world_town_act1"}
+
+// r9: the relay R9 frame that stood while the janitor looped (2026-09-24,
+// Maggot Lair level 1, mid-fight): the pause menu over the dimmed lair — the
+// ESC the phantom shop earned raised it. The only panel on it is the pause
+// menu; no shop, no sub-panel, no side panel may read there.
+var r9 = []string{"esc_loop_now"}
+
+// relayFixtures: every stored fixture as "<relay>/<name>".
+func relayFixtures() []string {
+	var out []string
+	for _, n := range r2 {
+		out = append(out, "r2/"+n)
+	}
+	for _, n := range r9 {
+		out = append(out, "r9/"+n)
+	}
+	return out
+}
+
+// relayDir: the originals' directory for a fixture name ("" when unset).
+func relayDir(name string) string {
+	if strings.HasPrefix(name, "r9/") {
+		return os.Getenv("AZBOT_R9_DIR")
+	}
+	return os.Getenv("AZBOT_R2_DIR")
+}
+
+// cutRelay splits "r2/<name>" / "r9/<name>".
+func cutRelay(name string) (string, bool) {
+	for _, pre := range []string{"r2/", "r9/"} {
+		if n, ok := strings.CutPrefix(name, pre); ok {
+			return n, true
+		}
+	}
+	return name, false
+}
 
 // truth: what each capture shows, verified by eye (relay/R2/README.md, and the
 // old captures above). The old shop shots had the automap up — the area name
@@ -64,22 +102,22 @@ var truth = map[string]Panel{
 	"r2/npc_menu_2": NPCMenu, "r2/npc_menu_3": NPCMenu, "r2/npc_menu_4": NPCMenu,
 	"r2/stash": Stash | Inventory, "r2/waypoint": Waypoint, "r2/pause_menu": PauseMenu,
 	"r2/waypoint_act1_and_inventory": Waypoint | Inventory,
+	// Dark negatives: the Pit cave draws its area name top-right (the
+	// automap's, non-blocking) and nothing else; the R9 lair frame is the
+	// pause menu alone.
+	"r2/world_cave": Automap, "r9/esc_loop_now": PauseMenu,
 }
 
-// allCaptures: old names first, then "r2/<name>".
+// allCaptures: old names first, then "r2/<name>", then "r9/<name>".
 func allCaptures() []string {
-	out := append([]string(nil), captures...)
-	for _, n := range r2 {
-		out = append(out, "r2/"+n)
-	}
-	return out
+	return append(append([]string(nil), captures...), relayFixtures()...)
 }
 
 // loadAny loads an old capture in place or an R2 fixture (or, with
 // AZBOT_R2_DIR set and orig, the untouched R2 PNG).
 func loadAny(t testing.TB, name string, orig bool) image.Image {
 	t.Helper()
-	n, ok := strings.CutPrefix(name, "r2/")
+	n, ok := cutRelay(name)
 	if !ok {
 		return load(t.(*testing.T), name)
 	}
@@ -94,7 +132,7 @@ func loadAny(t testing.TB, name string, orig bool) image.Image {
 	}
 	var img image.Image
 	if orig {
-		img = decodeRGBA(t, filepath.Join(os.Getenv("AZBOT_R2_DIR"), n+".png"))
+		img = decodeRGBA(t, filepath.Join(relayDir(name), n+".png"))
 	} else {
 		img = loadFixture(t, n)
 	}
@@ -152,15 +190,16 @@ var detectors = []struct {
 	{Automap, func(i image.Image) bool { return AutomapSight(i).Seen }},
 }
 
-// THE VALIDATION MATRIX: every detector on every capture (8 old + 26 R2). A
+// THE VALIDATION MATRIX: every detector on every capture (8 old + 27 R2 +
+// the R9 lair frame). A
 // detector must fire exactly on the captures that show its panel — the clear
 // towns of both acts, the dark field, both pause menus and the shops included.
 func TestValidationMatrix(t *testing.T) { validationMatrix(t, false) }
 
 // TestMatrixOnOriginals: the same matrix on the untouched R2 PNGs.
 func TestMatrixOnOriginals(t *testing.T) {
-	if os.Getenv("AZBOT_R2_DIR") == "" {
-		t.Skip("AZBOT_R2_DIR not set (relay/R2 originals)")
+	if os.Getenv("AZBOT_R2_DIR") == "" || os.Getenv("AZBOT_R9_DIR") == "" {
+		t.Skip("AZBOT_R2_DIR / AZBOT_R9_DIR not set (relay/R2, relay/R9 originals)")
 	}
 	validationMatrix(t, true)
 }
@@ -273,11 +312,11 @@ func BenchmarkObserve(b *testing.B) {
 	}
 }
 
-// BenchmarkObserveAll: the mean over all 34 captures, reported per frame.
+// BenchmarkObserveAll: the mean over all 36 captures, reported per frame.
 func BenchmarkObserveAll(b *testing.B) {
 	var imgs []image.Image
 	for _, name := range allCaptures() {
-		if n, ok := strings.CutPrefix(name, "r2/"); ok {
+		if n, ok := cutRelay(name); ok {
 			imgs = append(imgs, loadFixture(b, n))
 			continue
 		}
@@ -321,16 +360,16 @@ func (r *recImg) At(x, y int) color.Color {
 }
 
 func TestWriteFixtures(t *testing.T) {
-	dir := os.Getenv("AZBOT_R2_DIR")
-	if dir == "" || os.Getenv("AZBOT_WRITE_FIXTURES") != "1" {
-		t.Skip("set AZBOT_R2_DIR and AZBOT_WRITE_FIXTURES=1 to regenerate testdata/")
+	if os.Getenv("AZBOT_R2_DIR") == "" || os.Getenv("AZBOT_R9_DIR") == "" || os.Getenv("AZBOT_WRITE_FIXTURES") != "1" {
+		t.Skip("set AZBOT_R2_DIR, AZBOT_R9_DIR and AZBOT_WRITE_FIXTURES=1 to regenerate testdata/")
 	}
 	if err := os.MkdirAll(fixtures, 0o755); err != nil {
 		t.Fatal(err)
 	}
 	var total int64
-	for _, n := range r2 {
-		src := decodeRGBA(t, filepath.Join(dir, n+".png"))
+	for _, name := range relayFixtures() {
+		n, _ := cutRelay(name)
+		src := decodeRGBA(t, filepath.Join(relayDir(name), n+".png"))
 		rec := &recImg{RGBA: src, on: true, seen: map[image.Point]bool{}}
 		// Every fixed-position detector, recorded. The NPC-box scan is not: it
 		// sweeps the central band, which stays JPEG except for a real box.
@@ -385,7 +424,7 @@ func TestWriteFixtures(t *testing.T) {
 
 // TestSightScores logs every raw measurement behind the matrix (the numbers
 // quoted in the detectors' comments) and pins the margins: the weakest
-// positive vs the strongest non-positive over all 34 captures.
+// positive vs the strongest non-positive over all 36 captures.
 func TestSightScores(t *testing.T) {
 	type row struct {
 		name string
@@ -417,12 +456,13 @@ func TestSightScores(t *testing.T) {
 		{"bag chrome /24", Inventory, chrome(chromeBag), 24, 3},
 		{"vendor chrome /16", Shop, chrome(chromeVendor), 16, 1},
 		{"chat weakest rule", Chat, chatMin, 1, 0.25},
-		{"automap name px", Automap, autoText, 144, 0},
+		{"automap name px", Automap, autoText, 117, 0}, // "PIT LEVEL 1" is a short name
 		{"bag X red", Inventory, xBag.redFrac, 0.78, 0},
-		{"stash X red", Stash, xStash.redFrac, 0.78, 0},
+		{"stash X red", Stash, xStash.redFrac, 0.78, 0.16}, // the paused Maggot Lair: red scenery under the dim
 		{"tree X red", SkillTree, xTree.redFrac, 0.78, 0},
 		{"left X red", left, xLeft.redFrac, 0.78, 0},
 		{"sub X red", SubPanel, xSub.redFrac, 0.78, 0},
+		{"sub frame /16", SubPanel, chrome(chromeSub), 16, 0},
 	}
 	for _, r := range rows {
 		lo, hi := 1e9, -1e9

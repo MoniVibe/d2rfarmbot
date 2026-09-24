@@ -77,33 +77,20 @@ func ReturnToGameAt(img image.Image) (int, int) {
 
 // THE TRADE PANEL IS ALSO A SCREEN FACT (2026-09-23: vendor stock LINGERS in
 // memory after the window closes, so "stock readable" passed while the right-click
-// cast a skill in town — "Fableboi says: Impossible."). An open vendor panel shows
-// its grid of near-black empty cells on the left; sampled cells (cols 5-8, rows
-// 6-9 — empty on both the Misc and Armor tabs) measured 15-16/16 dark with the
-// shop open, at most 2/16 otherwise. The panel is LEFT-anchored and scales with
-// client height.
-// A sub-panel covers the same cells with its own dark interior over a dimmed
-// town (Chronicle and Loot Filter both read 12+/16 dark), so the grid yields
-// to the sub-panel's X — a covered vendor takes no clicks anyway.
-// DARK WORLDS READ AS AN EMPTY GRID (relay R2, 2026-09-24): the Act 1 camp, the
-// night field, the dimmed chat/NPC scenes and the stash's empty cells read
-// 12+/16 dark with no vendor anywhere — 15 false shops over 26 captures. The
-// grid now counts only inside the left frame: its red X up (xLeft) and none of
-// the other panels that share that frame named by its title.
+// cast a skill in town — "Fableboi says: Impossible."). The vendor's proof is its
+// own artwork (ShopOpenX: the red X plus chromeVendor, 16/16 vs <=1/16).
+//
+// THE EMPTY-GRID FALLBACK IS GONE (relay R9, 2026-09-24). It counted near-black
+// cells (cols 5-8, rows 6-9) under a red X at (657,120) and named that a shop.
+// Dark worlds read as an empty grid (world_cave 16/16, the night field 13/16,
+// the paused Maggot Lair 16/16), and dark red scenery passes the red-tile test
+// (max 19x19 red fraction 0.71 on the cave's torches, 0.84 on the night field)
+// — so in the Maggot Lair, mid-fight, it read "vendor empty grid", the janitor
+// pressed ESC at nothing, and ESC raised the pause menu. TradePanelVisible is
+// now only a stock measure ON a proven vendor panel: the vendor chrome first.
 func TradePanelVisible(img image.Image) bool {
-	if !usable(img) {
+	if _, _, ok := ShopOpenX(img); !ok {
 		return false
-	}
-	if _, _, ok := SubPanelX(img); ok {
-		return false
-	}
-	if _, _, ok := xLeft.find(img); !ok {
-		return false
-	}
-	for _, sig := range []glyphSig{titleCharSheet, titleQuestLog, titleWaypoint, titleMercenary} {
-		if sig.match(sig.score(img)) {
-			return false
-		}
 	}
 	k := float64(img.Bounds().Dy()) / RefH
 	dark := 0
@@ -121,10 +108,39 @@ func TradePanelVisible(img image.Image) bool {
 }
 
 // SubPanelX reports the centered sub-panel's red close X. Chronicle / Loot
-// Filter / Options share one frame whose X sits at (1413,81) — identical color
-// on both, never red elsewhere (measured 2026-09-23; red tile 0.78 vs 0.00 over
-// all 34 captures, 2026-09-24).
-func SubPanelX(img image.Image) (int, int, bool) { return xSub.find(img) }
+// Filter / Options share one frame whose X sits at (1413,81).
+//
+// A RED TILE IS NOT A SUB-PANEL (relay R9, 2026-09-24): in the Maggot Lair the
+// 19x19 red test at (1413,81) fired on dark red scenery, the janitor's "close"
+// click landed in the world, 98 times in 90s. The X now counts only inside the
+// sub-panel's own stone frame (chromeSub: top rim and title band, both side
+// edges, the bottom rim — never the title, which names the sub-panel):
+// measured 16/16 on chronicle and loot_filter (15/16 shifted one pixel, 10/16
+// at two), 0/16 on all 34 other captures, including the paused lair
+// (esc_loop_now), the Pit cave and the night field.
+func SubPanelX(img image.Image) (int, int, bool) {
+	x, y, ok := xSub.find(img)
+	return x, y, ok && chromeSub.score(img) >= chromeSub.min
+}
+
+// SubPanelScore is the raw measurement behind SubPanelX (evidence and tests).
+func SubPanelScore(img image.Image) (red float64, chrome int) {
+	if !usable(img) {
+		return 0, 0
+	}
+	return xSub.redFrac(img), chromeSub.score(img)
+}
+
+// chromeSub: the sub-panel frame's stone (x 488-1432, y 62-855, centered),
+// 5x5 means where chronicle and loot_filter agree within 6 and no other
+// capture comes within the tolerance. Seen at >= 12.
+var chromeSub = chromeSig{name: "sub-panel frame", a: center, tol: 14, min: 12, pts: [][5]int{
+	{620, 66, 111, 110, 100}, {860, 66, 114, 113, 104}, {1100, 66, 118, 117, 106}, {1340, 66, 107, 107, 98},
+	{740, 84, 106, 106, 98}, {980, 84, 109, 109, 101}, {1220, 84, 103, 103, 97},
+	{508, 220, 77, 76, 71}, {490, 320, 56, 55, 52}, {508, 470, 57, 55, 54},
+	{1428, 220, 67, 67, 65}, {1410, 320, 76, 73, 67}, {1428, 520, 68, 67, 61},
+	{680, 834, 66, 64, 58}, {890, 834, 60, 58, 53}, {1280, 834, 61, 58, 53},
+}}
 
 // UIBlocker identifies a screen that swallows world input and where to click to
 // dismiss it — ALWAYS a click, never ESC (ESC toggles the pause menu). Measured
@@ -159,15 +175,12 @@ func ShopOpenX(img image.Image) (int, int, bool) {
 	return x, y, ok && chromeVendor.score(img) >= chromeVendor.min
 }
 
-// ShopVisible: the vendor panel is on screen — its red close X (stock-independent)
-// OR the dark empty-grid signature. A fully stocked tab (a blacksmith's armor
-// wall) fills the sampled cells, so the grid test alone read "closed" on open
-// shops (2026-09-23: fence and repair burned 45s each on a shop that WAS open).
+// ShopVisible: the vendor panel is on screen — its red close X inside the
+// vendor's own chrome (stock-independent: a fully stocked tab shows it too).
+// The dark empty-grid fallback is gone (relay R9, see TradePanelVisible).
 func ShopVisible(img image.Image) bool {
-	if _, _, ok := ShopOpenX(img); ok {
-		return true
-	}
-	return TradePanelVisible(img)
+	_, _, ok := ShopOpenX(img)
+	return ok
 }
 
 // ---------------------------------------------------------------- Half panels

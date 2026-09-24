@@ -128,7 +128,9 @@ func (sh *shadow) observeHints(tick uint64, hints screen.Hints, hold string) {
 	}
 	if sh.cad.Due(tick, now) {
 		t0 := time.Now()
-		r := screen.Observe(sh.gr.Screenshot(), hints)
+		// The REACHABILITY rules (screen.TownOnly) apply before anything
+		// downstream sees the reading: an unreachable panel is Unsure.
+		r := sh.tr.Plausible(screen.Observe(sh.gr.Screenshot(), hints))
 		sh.lat.Add(time.Since(t0))
 		cx, cy := game.OSCursorPos()
 		if tr, ok := sh.tr.Update(now, r); ok {

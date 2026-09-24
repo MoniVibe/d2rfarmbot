@@ -206,12 +206,56 @@ func Observe(img image.Image, h Hints) Reading {
 	if h.WaypointFlag && r.Panels&Waypoint == 0 {
 		r.unsure(Waypoint, "memory Waypoint flag (lingers after close — not proof)")
 	}
+	if !h.InTown {
+		// REACHABILITY rule 1 (at TownOnly): town-only panels.
+		for _, q := range All {
+			if TownOnly&q != 0 && r.Panels&q != 0 {
+				r.demote(q, "outside town: unreachable")
+			}
+		}
+	}
 	return r
+}
+
+// REACHABILITY: THE SCREEN IS A STATE MACHINE, NOT A BAG OF DETECTORS.
+// A detector answers "does this frame look like panel P?"; the oracle also
+// asks "could P be up from where we are?". Relay R9 (2026-09-24): in the
+// Maggot Lair, mid-fight, the old grid fallback saw a vendor and the red-tile
+// test saw a Chronicle — neither can exist there. A detector firing on an
+// unreachable state is a phantom by construction, so it is reported Unsure
+// (no vote, never foreign), never Sight:
+//
+//  1. TownOnly — Shop, NPCMenu, NPCDialog, Stash need an NPC or the stash
+//     chest, and both live only in town: outside town (Hints.InTown false)
+//     they are Unsure (Observe).
+//  2. SubPanel — Options, Loot Filter and Chronicle open only from the pause
+//     menu: a sub-panel is plausible only when the Tracker's previous stable
+//     belief held PauseMenu or SubPanel; otherwise Unsure (Tracker.Plausible).
+//
+// Everything else (the side panels, chat, the picker, the pause menu itself)
+// opens from the world by a key and is reachable everywhere.
+const TownOnly = Shop | NPCMenu | NPCDialog | Stash
+
+// SubPanelFrom: the believed panels a sub-panel can open from (rule 2).
+const SubPanelFrom = PauseMenu | SubPanel
+
+// demote moves a positively observed panel to Unsure with the reason: a
+// reachability rule overrides the detector, it does not erase the evidence.
+func (r *Reading) demote(p Panel, why string) {
+	if r.Panels&p == 0 {
+		return
+	}
+	r.Panels &^= p
+	r.Sight &^= p
+	r.Unsure |= p
+	r.Evidence[p] += " — " + why
+	delete(r.Close, p)
 }
 
 func observeSight(r *Reading, img image.Image) {
 	if x, y, ok := SubPanelX(img); ok {
-		r.see(SubPanel, "sub-panel red X")
+		red, chrome := SubPanelScore(img)
+		r.see(SubPanel, fmt.Sprintf("sub-panel red X %.2f + frame %d/%d", red, chrome, len(chromeSub.pts)))
 		r.Close[SubPanel] = Point{x, y}
 	}
 	if PauseMenuVisible(img) {
@@ -219,17 +263,10 @@ func observeSight(r *Reading, img image.Image) {
 		x, y := ReturnToGameAt(img)
 		r.Close[PauseMenu] = Point{x, y}
 	}
-	xx, xy, xok := ShopOpenX(img)
-	grid := TradePanelVisible(img)
-	switch {
-	case xok && grid:
-		r.see(Shop, "vendor red X + chrome + empty grid")
-	case xok:
-		r.see(Shop, "vendor red X + chrome")
-	case grid:
-		r.see(Shop, "vendor empty grid")
-	}
-	if xok {
+	// The vendor only by its own chrome — the "vendor empty grid" fallback read
+	// every dark dungeon as a shop (relay R9; see TradePanelVisible).
+	if xx, xy, ok := ShopOpenX(img); ok {
+		r.see(Shop, fmt.Sprintf("vendor red X + chrome %d/%d", chromeVendor.score(img), len(chromeVendor.pts)))
 		r.Close[Shop] = Point{xx, xy}
 	}
 
@@ -253,7 +290,9 @@ func observeSight(r *Reading, img image.Image) {
 	}
 
 	// Half panels: a framed panel no detector names (a panel never photographed)
-	// still reads as "something is open on this side", closable by its X.
+	// still reads as "something is open on this side", closable by its X. The
+	// frame is the proof; a red tile alone is scenery until shown otherwise
+	// (relay R9: dark red dungeon pixels pass the red test) — Unsure, never Sight.
 	if r.Panels&leftNamed == 0 {
 		ls := LeftPanelScore(img)
 		x, y, xok := xLeft.find(img)
@@ -263,7 +302,7 @@ func observeSight(r *Reading, img image.Image) {
 		case ls.Present():
 			r.see(LeftPanel, fmt.Sprintf("left-half panel (frame %.2f/%.2f)", ls.In[0], ls.In[1]))
 		case xok:
-			r.see(LeftPanel, "red X at the left panels' spot")
+			r.unsure(LeftPanel, "red tile at the left panels' X, no frame")
 		}
 		if xok && r.Panels&LeftPanel != 0 {
 			r.Close[LeftPanel] = Point{x, y}
@@ -281,7 +320,7 @@ func observeSight(r *Reading, img image.Image) {
 		case rs.Present():
 			r.see(RightPanel, fmt.Sprintf("right-half panel (frame %.2f/%.2f)", rs.In[0], rs.In[1]))
 		case xok:
-			r.see(RightPanel, "red X at a right panel's spot")
+			r.unsure(RightPanel, "red tile at a right panel's X, no frame")
 		}
 		if xok && r.Panels&RightPanel != 0 {
 			r.Close[RightPanel] = Point{x, y}

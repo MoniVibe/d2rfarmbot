@@ -19,7 +19,7 @@ func PauseMenuVisible(img image.Image) bool { return screen.PauseMenuVisible(img
 // ReturnToGameAt: the Return-to-Game button in img's pixel space.
 func ReturnToGameAt(img image.Image) (int, int) { return screen.ReturnToGameAt(img) }
 
-// TradePanelVisible: the vendor's dark empty-grid signature.
+// TradePanelVisible: an empty stock grid on a proven vendor panel (never the shop proof).
 func TradePanelVisible(img image.Image) bool { return screen.TradePanelVisible(img) }
 
 // UIBlocker: a pause menu or sub-panel and where to click it away (never ESC).
@@ -28,5 +28,5 @@ func UIBlocker(img image.Image) (kind string, x, y int, ok bool) { return screen
 // ShopOpenX reports the vendor panel's red close X.
 func ShopOpenX(img image.Image) (int, int, bool) { return screen.ShopOpenX(img) }
 
-// ShopVisible: the vendor panel is on screen (X or empty grid).
+// ShopVisible: the vendor panel is on screen (red X inside the vendor chrome).
 func ShopVisible(img image.Image) bool { return screen.ShopVisible(img) }
