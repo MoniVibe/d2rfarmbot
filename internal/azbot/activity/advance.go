@@ -26,6 +26,7 @@ import (
 	"github.com/hectorgimenez/d2go/pkg/data/area"
 	"github.com/hectorgimenez/koolo/internal/azbot/arbiter"
 	"github.com/hectorgimenez/koolo/internal/azbot/coverage"
+	"github.com/hectorgimenez/koolo/internal/azbot/gamedata"
 	"github.com/hectorgimenez/koolo/internal/azbot/memory"
 	"github.com/hectorgimenez/koolo/internal/azbot/moveto"
 	"github.com/hectorgimenez/koolo/internal/azbot/percept"
@@ -105,6 +106,14 @@ var areaMlvl = map[area.ID]int{
 // it paying ground). Outgrown ground is corridor: radius 10, march doubled.
 func ExpWorthwhile(clvl int, ar area.ID) bool {
 	ml, ok := areaMlvl[ar]
+	if !ok {
+		// The mod's levels.txt knows every area (owner, R44: "it then went to rampage
+		// on the map" — Act 2 areas were missing from the table, so every Act 2 fight
+		// read as worth the 45-tile hunt at clvl 30 against mlvl 16-18).
+		if lv := gamedata.Get().Level(int(ar)); lv != nil && lv.MonLvl[0] > 0 {
+			ml, ok = lv.MonLvl[0], true
+		}
+	}
 	if !ok {
 		return true // unknown ground: assume it pays
 	}
