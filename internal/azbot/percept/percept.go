@@ -724,7 +724,7 @@ func (p *Perceptor) Capture() *Snapshot {
 				}
 			}
 			continue
-		case it.Desc().Type == item.TypeQuest:
+		case it.Desc().Type == item.TypeQuest || loot.Classify(id).Kind == loot.KindQuest:
 			// Quest items are IRREPLACEABLE and the audit's old posture — "everything
 			// I don't recognize is stock" — fenced the cube (the owner: "she also lost
 			// her cube somehow, what the hell"). Type by numeric ID cannot be lied to

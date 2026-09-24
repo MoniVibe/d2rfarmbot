@@ -237,6 +237,7 @@ type Advance struct {
 	wpHoldUntil time.Time // failed town ride quarantines the gate march until a retry is due
 	wpFailN     int
 	wpTouched   map[area.ID]time.Time
+	wpNoted     area.ID // the area whose waypoint objective was last announced
 	// P-5.3a THE CROSSING DRIVE: between the door facts the area read is
 	// NOISE — while driving, geometry is the only truth.
 	driving   bool
@@ -901,11 +902,27 @@ func (a *Advance) Step(ctx *Ctx) Verdict {
 		if ctx.Mem != nil {
 			ctx.Mem.GetJSON(LitKey(ctx.GR.GetData().PlayerUnit.Name, s.Me.Area), &litHere)
 		}
+		// WAYPOINT OBJECTIVE (the owner, 2026-09-25: "we're missing wp so we need
+		// the bot to be aware of wp taking as we progress" — Dry Hills, Halls 2,
+		// Sewers 2 and the Palace Cellar were walked unlit): an area whose mod
+		// levels.txt row carries a waypoint and which the ledger does not know as
+		// lit makes its pad an OBJECTIVE — any distance on the map, a longer walk
+		// budget — not a 70-tile convenience.
+		wpObjective := !litHere && areaHasWaypoint(s.Me.Area)
+		reach, budget := 70, 60*time.Second
+		if wpObjective {
+			reach, budget = 1<<30, 150*time.Second
+			if a.wpNoted != s.Me.Area {
+				a.wpNoted = s.Me.Area
+				ctx.Led.Append(verbs.Outcome{Verb: "waypoint", Holder: a.Name(), Result: verbs.ResDone,
+					Evidence: fmt.Sprintf("objective: area %d has an unlit waypoint — touching it before the march", int(s.Me.Area))})
+			}
+		}
 		for _, ob := range mapPads {
 			if litHere {
 				break // in the ledger — no ritual needed, ever again
 			}
-			if ob.IsWaypoint() && chebyshev(s.Me.Pos, ob.Position) <= 70 {
+			if ob.IsWaypoint() && chebyshev(s.Me.Pos, ob.Position) <= reach {
 				// Radius 40→70, budget 30s→60s (the owner, 13:14: "it also
 				// didn't take the stony waypoint, had enough time to do that"
 				// — he died in the moor an hour later and had to WALK back;
@@ -919,9 +936,11 @@ func (a *Advance) Step(ctx *Ctx) Verdict {
 					if a.wpWalkAt.IsZero() {
 						a.wpWalkAt = time.Now()
 					}
-					if time.Since(a.wpWalkAt) > 60*time.Second {
+					if time.Since(a.wpWalkAt) > budget {
 						a.wpTouched[s.Me.Area] = time.Now()
 						a.wpWalkAt = time.Time{}
+						ctx.Led.Append(verbs.Outcome{Verb: "waypoint", Holder: a.Name(), Result: verbs.ResRefused,
+							Evidence: fmt.Sprintf("area %d: pad at %d tiles not reached in %s — conceded for 10 min", int(s.Me.Area), chebyshev(s.Me.Pos, ob.Position), budget)})
 					} else {
 						NavDebug(ctx, ob.Position, "wp-touch")
 						o := marchOpts(ctx, a.Name(), 1200*time.Millisecond)
@@ -960,6 +979,8 @@ func (a *Advance) Step(ctx *Ctx) Verdict {
 					// deaf verdict must never eat a proven activation)
 					ctx.Mem.PutJSON(LitKey(ctx.GR.GetData().PlayerUnit.Name, s.Me.Area), memory.ScopeForever,
 						memory.Provenance{Source: "measured", Evidence: "panel stood at this pad"}, true)
+					ctx.Led.Append(verbs.Outcome{Verb: "waypoint", Holder: a.Name(), Result: verbs.ResDone,
+						Evidence: fmt.Sprintf("lit: area %d pad activated (panel stood) — in the ledger forever", int(s.Me.Area))})
 				}
 				return Running
 			}
@@ -2224,4 +2245,15 @@ func (a *Advance) walkToPad(ctx *Ctx, padPos data.Position) bool {
 		moveTo(ctx, padPos, o)
 	}
 	return true
+}
+
+// areaHasWaypoint: the mod's levels.txt gives the area a waypoint (towns excluded:
+// their pads are lit by walking in). Without the tables: unknown, no objective.
+func areaHasWaypoint(ar area.ID) bool {
+	db := gamedata.Get()
+	if db == nil {
+		return false
+	}
+	lv := db.Level(int(ar))
+	return lv != nil && lv.Waypoint >= 0 && !lv.IsTown
 }

@@ -1,6 +1,7 @@
 package activity
 
 import (
+	"sync"
 	"time"
 
 	"github.com/hectorgimenez/koolo/internal/azbot/arbiter"
@@ -42,6 +43,9 @@ func (u *Unload) Demand(s *percept.Snapshot) *arbiter.Demand {
 	if !s.Valid || s.Me.InTown || s.Me.HPPct <= 0 || !(bagFull(s) || gearFailing(s)) {
 		return nil
 	}
+	if treasurePending(time.Now()) {
+		return nil // Loot has a keeper in reach: pick it up first (bounded)
+	}
 	if !townPortalBound && !liveDoor(s) {
 		return nil // no portal road
 	}
@@ -55,3 +59,60 @@ func (u *Unload) Demand(s *percept.Snapshot) *arbiter.Demand {
 }
 
 func (u *Unload) Step(ctx *Ctx) Verdict { return u.w.ride(ctx, u.Name()) }
+
+// ---------------------------------------------------------------- treasure in reach
+//
+// R44 (01:41, Lost City): Loot planned TAKE on an Orb of Infusion three times
+// while Fight held the pocket; the moment Fight let go, Unload (a broken piece)
+// cast the portal and the orb stayed on the floor. A tier A+ TAKE in reach now
+// holds the trip home — bounded, so a drop Loot can never reach does not keep
+// broken gear in the field.
+
+const (
+	treasureReach   = 25               // tiles: Loot's own approach range is 30
+	treasureMinWant = 0.6              // tier A (≈0.65) and S (≈0.9)
+	treasureWaitMax = 60 * time.Second // per sighting streak
+	treasureGap     = 10 * time.Second // unseen this long: the streak is over
+)
+
+var treasure struct {
+	mu          sync.Mutex
+	first, last time.Time
+}
+
+// noteTreasure records one Loot tick's sighting (found) at now.
+func noteTreasure(now time.Time, found bool) {
+	treasure.mu.Lock()
+	defer treasure.mu.Unlock()
+	if !found {
+		return
+	}
+	if treasure.last.IsZero() || now.Sub(treasure.last) > treasureGap {
+		treasure.first = now
+	}
+	treasure.last = now
+}
+
+// treasurePending: a sighting in the last few seconds, inside the streak's budget.
+func treasurePending(now time.Time) bool {
+	treasure.mu.Lock()
+	defer treasure.mu.Unlock()
+	return !treasure.last.IsZero() && now.Sub(treasure.last) < 3*time.Second &&
+		now.Sub(treasure.first) < treasureWaitMax
+}
+
+// treasureInReach: a ground item Loot would TAKE at tier A+ within reach and not banned.
+func (l *Loot) treasureInReach(s *percept.Snapshot, now time.Time) bool {
+	if !s.Valid || s.Me.InTown {
+		return false
+	}
+	for _, it := range s.Items {
+		if until, banned := l.ban[it.ID]; banned && now.Before(until) {
+			continue
+		}
+		if chebyshev(s.Me.Pos, it.Pos) <= treasureReach && l.wanted(s, it) >= treasureMinWant {
+			return true
+		}
+	}
+	return false
+}

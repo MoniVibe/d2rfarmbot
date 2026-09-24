@@ -2221,6 +2221,7 @@ func (l *Loot) Demand(s *percept.Snapshot) *arbiter.Demand {
 	// Once per tick, before any gate: plan, log, census and catalog every item
 	// in reach, and pick the pending room-making plan (Discard, Haul).
 	theLoot.observe(s)
+	noteTreasure(time.Now(), l.treasureInReach(s, time.Now()))
 	if !s.Valid || s.Me.HPPct < 40 {
 		return nil
 	}

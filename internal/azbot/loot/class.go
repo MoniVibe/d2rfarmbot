@@ -5,7 +5,10 @@
 package loot
 
 import (
+	"sync"
+
 	"github.com/hectorgimenez/d2go/pkg/data/item"
+	"github.com/hectorgimenez/koolo/internal/azbot/gamedata"
 )
 
 // THE MOD'S SHIFTED TABLE (measured from the relay flights, 2026-09-24). The
@@ -93,8 +96,80 @@ type Class struct {
 	W, H      int // inventory footprint (1x1 when unknown)
 }
 
-// Classify resolves a mod row number.
+// Classify resolves a mod row number. With the mod's own tables loaded
+// (gamedata), the row's code, type and footprint come from THEM — the owner,
+// 2026-09-25: the bot must know "different item sizes footprints, modded or
+// otherwise" (the mod's 1x3 grand charms and quivers past the vanilla table
+// read 1x1 here, and the gear rows past the insertion point wore the wrong
+// vanilla base). The vanilla shift below is the fallback when no table is.
 func Classify(id int) Class {
+	if c, ok := classifyMod(gamedata.Get(), id); ok {
+		return c
+	}
+	return classifyVanilla(id)
+}
+
+// classifyMod reads the mod's row. A vanilla code keeps the vanilla kind
+// rules (so the tested anchors cannot drift); a mod-only code is sorted by
+// its type closure, and whatever the bot has no rule for stays the mod's own
+// item (orbs, grabbers, the mod's potions: tier unknown_mod_item).
+func classifyMod(db *gamedata.DB, id int) (Class, bool) {
+	it := db.Item(id)
+	if it == nil || it.Code == "" {
+		return Class{}, false
+	}
+	c := Class{ID: id, VanillaID: -1, Code: it.Code, Type: it.Type, W: 1, H: 1}
+	if it.InvW > 0 && it.InvH > 0 {
+		c.W, c.H = it.InvW, it.InvH
+	}
+	if vid, ok := vanillaByCode()[it.Code]; ok {
+		c.VanillaID = vid
+	}
+	switch {
+	case questGear[it.Code]:
+		c.Kind = KindQuest
+	case it.Source != "misc":
+		c.Kind = KindGear
+	case c.VanillaID >= 0:
+		c.Kind = kindOfMisc(item.Desc[c.VanillaID])
+	case it.Is("gem"), it.Is("gemx"):
+		c.Kind = KindGem
+	case it.Is("rune"), it.Is("runx"):
+		c.Kind = KindRune
+	case it.Is("char"):
+		c.Kind = KindCharm
+	case it.Is("jewl"):
+		c.Kind = KindJewel
+	case it.Is("misl"):
+		c.Kind = KindAmmo
+	case it.IsQuest():
+		c.Kind = KindQuest
+	default:
+		c.Kind = KindModUnknown
+	}
+	return c, true
+}
+
+var (
+	vanillaCodesOnce sync.Once
+	vanillaCodes     map[string]int
+)
+
+// vanillaByCode: d2go's vanilla row per item code (lowest row wins).
+func vanillaByCode() map[string]int {
+	vanillaCodesOnce.Do(func() {
+		vanillaCodes = make(map[string]int, len(item.Desc))
+		for id, d := range item.Desc {
+			if prev, dup := vanillaCodes[d.Code]; !dup || id < prev {
+				vanillaCodes[d.Code] = id
+			}
+		}
+	})
+	return vanillaCodes
+}
+
+// classifyVanilla undoes the measured +15 misc shift on d2go's vanilla table.
+func classifyVanilla(id int) Class {
 	c := Class{ID: id, VanillaID: -1, W: 1, H: 1}
 	switch {
 	case id < 0:

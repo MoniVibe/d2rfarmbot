@@ -234,7 +234,7 @@ func parkRegion(occ *[bagCols][bagRows]bool, w, h int) (gx, gy int, ok bool) {
 // 15 — the TP tome (533) read as a 1x1 "Jawbone", so the park saw the tome's
 // lower cell as free and clicked the potion onto it: a swap, forever.
 func footprint(it data.Item) (w, h int) {
-	if c := loot.Classify(int(it.ID)); c.W > 0 && c.H > 0 && c.VanillaID >= 0 {
+	if c := loot.Classify(int(it.ID)); c.W > 0 && c.H > 0 && c.Code != "" {
 		return c.W, c.H
 	}
 	w, h = it.Desc().InventoryWidth, it.Desc().InventoryHeight
