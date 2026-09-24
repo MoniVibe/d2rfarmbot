@@ -1211,6 +1211,7 @@ type sellTx struct {
 	before map[data.UnitID]bool
 	at     time.Time
 	back   int // put-back clicks: the Ctrl+click lifted the item (putBack)
+	drop   bool // the lifted item was set down on the vendor's window (the sell-by-drop)
 }
 
 // gone: units of before no longer in the bag.
@@ -1375,6 +1376,31 @@ func (fc *Fence) judge(ctx *Ctx) Status {
 func (fc *Fence) putBack(ctx *Ctx) Status {
 	e, t := &fc.e, &fc.sell
 	cur := ctx.GR.GetData().Inventory.ByLocation(item.LocationCursor)
+	// SELL BY DROP (R20: the bag sat full of junk, "picked=0", fencing cooled on
+	// every trip). A lifted item set down on the vendor's own window IS a sale in
+	// D2R. Judged by the cursor emptying, the unit leaving the bag and the gold.
+	if t.drop && len(cur) == 0 {
+		t.active = false
+		gold1 := ctx.GR.GetData().PlayerUnit.TotalPlayerGold()
+		if !inBag(ctx, t.target) {
+			fc.sold++
+			ctx.Led.Append(verbs.Outcome{Verb: "fence", Holder: fc.Name(), Result: verbs.ResDone,
+				Evidence: fmt.Sprintf("sold cell (%d,%d) by drop on the vendor window, gold %d→%d", t.gx, t.gy, t.gold0, gold1)})
+			return e.wait(400 * time.Millisecond)
+		}
+		ctx.Led.Append(verbs.Outcome{Verb: "fence", Holder: fc.Name(), Result: verbs.ResWhiff,
+			Evidence: fmt.Sprintf("drop on the vendor window did not sell cell (%d,%d): the item is back in the bag", t.gx, t.gy)})
+		return e.wait(400 * time.Millisecond)
+	}
+	if !t.drop && t.back == 0 && len(cur) > 0 && cur[0].UnitID == t.target && shopOpen(ctx) {
+		cx, cy := shopCellPx(ctx, data.Position{X: 4, Y: 4})
+		ctx.M.RealMenuClick(cx, cy)
+		t.drop, t.at = true, time.Now()
+		return e.wait(450 * time.Millisecond)
+	}
+	if t.drop && len(cur) > 0 && time.Since(t.at) < 450*time.Millisecond {
+		return e.wait(100 * time.Millisecond) // the drop is being judged
+	}
 	if len(cur) == 0 {
 		if t.back == 0 {
 			return e.wait(100 * time.Millisecond) // the snapshot ran ahead of the live read
