@@ -67,6 +67,64 @@ type errand struct {
 	j          *journey.Journey // the PLANNER for far movement — town walls live in the
 	// static grid, and local slides can never round a real wall (run 38: fence paced
 	// the north wall at y=4897 while every ring waypoint sat past y=4930)
+	// adopt: the errand (name) whose trade window at THIS errand's NPC stood
+	// open when this episode began — Clean claims it and the first Step
+	// adopts it (vendorHandoff). "" = none.
+	adopt string
+	// parks: cursor items this trip parked at our own open bag (pre); parkAt
+	// the last one's click.
+	parks  int
+	parkAt time.Time
+}
+
+// vendorHandoff: the trade window a vendor errand left OPEN on a clean finish
+// (janitor ON: End drops the claims without closing). The next errand at the
+// SAME NPC adopts it — its Clean claims the vendor panels so the gate does not
+// tear the window down, and its first Step goes straight to Act — instead of
+// the janitor closing it and the walk, talk and menu starting over. Any other
+// next holder claims nothing in its Clean and the janitor closes the window
+// (one click: the explicit, cheap Clean).
+var vendorHandoff struct {
+	npc npc.ID
+	who string
+	at  time.Time
+}
+
+// handoffFresh: an open window is adoptable this long after its errand ended.
+const handoffFresh = 3 * time.Second
+
+// needs: the lifecycle's claims — plus, in Clean, the vendor panels of a
+// trade window this episode is adopting (the gate must not close it first).
+func (e *errand) needs() Needs {
+	if e.adopt != "" && e.clean() {
+		return needsService(claimsVendor)
+	}
+	return e.svcLife.needs()
+}
+
+// handOff (End, before the lifecycle resets): a Done at an open trade window
+// leaves it for the next errand at the same NPC.
+func (e *errand) handOff(v phase.Verdict, who string) {
+	if JanitorOn && e.trade && v == phase.Done && e.ph.Phase() == erAct && e.tradeSelected {
+		vendorHandoff.npc, vendorHandoff.who, vendorHandoff.at = e.npcID, who, time.Now()
+	}
+}
+
+// adoptHandoff (Begin of a fresh episode): the previous errand at this
+// errand's NPC left its trade window open moments ago. One adopter per
+// handoff; a mismatch forgets it.
+func (e *errand) adoptHandoff(ctx *Ctx) {
+	e.adopt = ""
+	h := vendorHandoff
+	vendorHandoff.who = ""
+	if !JanitorOn || !e.trade || h.who == "" || time.Since(h.at) > handoffFresh ||
+		ctx == nil || ctx.Snap == nil || !ctx.Snap.Valid {
+		return
+	}
+	e.useNPCForArea(ctx.Snap.Me.Area)
+	if e.npcID == h.npc {
+		e.adopt = h.who
+	}
 }
 
 // initLife wires the errand's lifecycle for its owner service.
@@ -86,7 +144,7 @@ func (e *errand) reset() {
 
 // resetTrip forgets the trip's counters (not the phase).
 func (e *errand) resetTrip() {
-	e.ringIdx, e.tries, e.menuTry, e.blocked, e.hoverFails = 0, 0, 0, 0, 0
+	e.ringIdx, e.tries, e.menuTry, e.blocked, e.hoverFails, e.parks = 0, 0, 0, 0, 0, 0
 	e.tradeSelected = false
 	e.j = nil
 }
@@ -160,6 +218,14 @@ func (e *errand) step(ctx *Ctx, who string) errandStep {
 	// previous errand's menu rode into the next one's talk). Clean claims
 	// nothing: the janitor closes leftovers (ON), or the errand does, by sight.
 	if e.ph.Phase() == erClean {
+		if who := e.adopt; who != "" {
+			e.adopt = "" // one look: open now, or the claims drop and the janitor closes it
+			if shopOpen(ctx) {
+				e.tradeSelected = true
+				e.to(erAct, "adopted "+who+"'s open trade window (same NPC): no close, no walk, no talk")
+				return errandStep{open: true}
+			}
+		}
 		ok, st := e.cleanScreen(ctx, 0)
 		if !ok {
 			if st.V == phase.Abandoned {
@@ -552,6 +618,18 @@ func (e *errand) pre(ctx *Ctx) (st Status, stop bool) {
 		return e.wait(100 * time.Millisecond), true
 	}
 	if s.Me.CursorItem {
+		// At our own open trade window the bag is up beside it: the item is
+		// parked into a free cell (ParkCursor — the bag SEEN, the measured
+		// grid) rather than waited on until the panel lock's budget runs out.
+		// A few tries per trip; then the wait, and the budget, stand.
+		if e.ph.Phase() == erAct && e.parks < 3 && time.Since(e.parkAt) > 450*time.Millisecond && ctx.GR != nil {
+			if act, ok := ParkCursor(ctx, nil); ok {
+				e.parks++
+				e.parkAt = time.Now()
+				ctx.Led.Append(verbs.Outcome{Verb: "errand", Holder: e.ph.Act, Result: verbs.ResDone, Evidence: "cursor item at our shop: " + act})
+				return e.wait(450 * time.Millisecond), true
+			}
+		}
 		return e.wait(150 * time.Millisecond), true // WARNING 9: a shop or NPC click with a held item misfires
 	}
 	return Status{}, false
@@ -756,11 +834,13 @@ func (r *Restock) Begin(ctx *Ctx, resumed bool) {
 	}
 	r.e.resetTrip()
 	r.resetCounters()
+	r.e.adoptHandoff(ctx)
 }
 
 func (r *Restock) Suspend(ctx *Ctx, _ phase.Reason) { r.e.suspend(ctx) }
 
 func (r *Restock) End(ctx *Ctx, v phase.Verdict, why phase.Reason) {
+	r.e.handOff(v, r.Name())
 	r.e.end(ctx, v, why)
 	r.e.resetTrip()
 	r.resetCounters()
@@ -1014,6 +1094,7 @@ type Fence struct {
 	ghost    int
 	coolAt   time.Time
 	sell     sellTx // the quick-sell in flight
+	pickups  int    // sells this trip whose Ctrl+click LIFTED the item instead (putBack)
 }
 
 var (
@@ -1068,15 +1149,17 @@ func (fc *Fence) Begin(ctx *Ctx, resumed bool) {
 		return
 	}
 	fc.e.resetTrip()
-	fc.sold, fc.tomes0, fc.ghost, fc.lastJunk = 0, -1, 0, 0
+	fc.sold, fc.tomes0, fc.ghost, fc.lastJunk, fc.pickups = 0, -1, 0, 0, 0
+	fc.e.adoptHandoff(ctx)
 }
 
 func (fc *Fence) Suspend(ctx *Ctx, _ phase.Reason) { fc.e.suspend(ctx) }
 
 func (fc *Fence) End(ctx *Ctx, v phase.Verdict, why phase.Reason) {
+	fc.e.handOff(v, fc.Name())
 	fc.e.end(ctx, v, why)
 	fc.e.resetTrip()
-	fc.sold, fc.tomes0, fc.ghost, fc.lastJunk = 0, -1, 0, 0
+	fc.sold, fc.tomes0, fc.ghost, fc.lastJunk, fc.pickups = 0, -1, 0, 0, 0
 	fc.sell = sellTx{}
 	coolOnEnd(v, why, &fc.coolAt)
 }
@@ -1127,6 +1210,7 @@ type sellTx struct {
 	gold0  int
 	before map[data.UnitID]bool
 	at     time.Time
+	back   int // put-back clicks: the Ctrl+click lifted the item (putBack)
 }
 
 // gone: units of before no longer in the bag.
@@ -1146,6 +1230,13 @@ func (t *sellTx) gone(ctx *Ctx) []data.UnitID {
 
 func (fc *Fence) Step(ctx *Ctx) Status {
 	e := &fc.e
+	if fc.sell.active && ctx.Snap.Valid && (ctx.Snap.Me.CursorItem || fc.sell.back > 0) {
+		// Before pre()'s cursor wait: the item on the cursor is OURS.
+		if st, over := e.overrun(ctx); over {
+			return st
+		}
+		return fc.putBack(ctx)
+	}
 	if st, stop := e.pre(ctx); stop {
 		return st
 	}
@@ -1244,6 +1335,9 @@ func (fc *Fence) Step(ctx *Ctx) Status {
 // judge polls the sell in flight (≤1s) and applies its verdict.
 func (fc *Fence) judge(ctx *Ctx) Status {
 	e, t := &fc.e, &fc.sell
+	if cur := ctx.GR.GetData().Inventory.ByLocation(item.LocationCursor); len(cur) > 0 && cur[0].UnitID == t.target {
+		return fc.putBack(ctx) // it left the bag onto the CURSOR: lifted, not sold
+	}
 	gone := t.gone(ctx)
 	if len(gone) == 0 && time.Since(t.at) < time.Second {
 		return e.wait(100 * time.Millisecond)
@@ -1268,6 +1362,56 @@ func (fc *Fence) judge(ctx *Ctx) Status {
 		return e.finish(ctx, phase.Abandoned, phase.Refused, "runaway guard: 40 sells")
 	}
 	return e.wait(400 * time.Millisecond)
+}
+
+// putBack: the quick-sell's Ctrl+click LIFTED the item instead of selling it
+// (relay R10: every fence Act put the junk on the cursor — "cursor item" a
+// tick after "shop open", not one "sold cell" line all run — and pre() waited
+// on it until Equip outbid the errand and the gate shut the shop under it).
+// The item is the fence's: it goes back where it came from (the one region
+// certain to fit it, else any free one) through ParkCursor — the bag SEEN
+// open, the measured grid, a real click — and the cursor-empty read judges it.
+// Two lifts in one trip retire the gesture: fencing cools for 10 minutes.
+func (fc *Fence) putBack(ctx *Ctx) Status {
+	e, t := &fc.e, &fc.sell
+	cur := ctx.GR.GetData().Inventory.ByLocation(item.LocationCursor)
+	if len(cur) == 0 {
+		if t.back == 0 {
+			return e.wait(100 * time.Millisecond) // the snapshot ran ahead of the live read
+		}
+		t.active = false
+		fc.pickups++
+		ctx.Led.Append(verbs.Outcome{Verb: "fence", Holder: fc.Name(), Result: verbs.ResWhiff,
+			Evidence: fmt.Sprintf("SELL BECAME A PICKUP: the Ctrl+click at px(%d,%d) lifted cell (%d,%d) — put back in %d click(s)", t.cx, t.cy, t.gx, t.gy, t.back)})
+		if fc.pickups >= 2 {
+			fc.coolAt = time.Now().Add(10 * time.Minute)
+			return e.finish(ctx, phase.Abandoned, phase.Deaf, "the Ctrl+click lifts instead of selling (2 pickups, both put back) — fencing cooled 10m")
+		}
+		return e.wait(400 * time.Millisecond)
+	}
+	if t.back > 0 && time.Since(t.at) < 450*time.Millisecond {
+		return e.wait(100 * time.Millisecond) // the place-click is being judged
+	}
+	switch {
+	case cur[0].UnitID != t.target:
+		t.active = false
+		return e.finish(ctx, phase.Abandoned, phase.Deaf,
+			fmt.Sprintf("a different item rides the cursor mid-sell (unit %d, sold %d) — the gate's parker takes it", cur[0].UnitID, t.target))
+	case t.back >= 3:
+		t.active = false
+		return e.finish(ctx, phase.Abandoned, phase.Deaf, "the lifted item would not go back (3 place-clicks) — the gate's parker takes it")
+	case !bagSeen(ctx) && time.Since(t.at) > 2*time.Second:
+		t.active = false
+		return e.finish(ctx, phase.Abandoned, phase.Deaf, "the lifted item: the bag not seen open for 2s — no blind place-click; the gate holds it")
+	}
+	act, ok := ParkCursor(ctx, &data.Position{X: t.gx, Y: t.gy})
+	if !ok {
+		return e.wait(150 * time.Millisecond)
+	}
+	ctx.Led.Append(verbs.Outcome{Verb: "fence", Holder: fc.Name(), Result: verbs.ResDone, Evidence: "put back: " + act})
+	t.back++
+	t.at = time.Now()
+	return e.wait(450 * time.Millisecond)
 }
 
 // ---------------------------------------------------------------- Heal (ClassService)
@@ -1436,11 +1580,13 @@ func (rp *Repair) Begin(ctx *Ctx, resumed bool) {
 	}
 	rp.e.resetTrip()
 	rp.lastDur, rp.stale = -1, 0
+	rp.e.adoptHandoff(ctx)
 }
 
 func (rp *Repair) Suspend(ctx *Ctx, _ phase.Reason) { rp.e.suspend(ctx) }
 
 func (rp *Repair) End(ctx *Ctx, v phase.Verdict, why phase.Reason) {
+	rp.e.handOff(v, rp.Name())
 	rp.e.end(ctx, v, why)
 	rp.e.resetTrip()
 	rp.lastDur, rp.stale = -1, 0

@@ -164,18 +164,43 @@ func (l *svcLife[P]) overrun(ctx *Ctx) (Status, bool) {
 // (2026-09-24: Fence went solvent mid-sale, its Demand went nil, the release
 // left Drognan's trade window open and Spend clicked into it). The Step then
 // sees its goal met and ends honestly — closing first when the janitor is off.
+//
+// THE PANEL LOCK (relay R10): while the episode is in a claiming phase its
+// bid rides at PanelLockUrgency, above every service's own scale, so no
+// same-class rival outbids it at its panel. R10 did exactly that seven times:
+// Fence's Ctrl+click lifted the junk instead of selling it, Equip bid 0.85
+// for "a cursor item" (Fence's own), "outbid: service 0.85 >= 0.70+0.00
+// after 5s" seated Equip — and the gate, judging Equip's Clean claims (the
+// bag only), clicked Drognan's shop shut under the errand ("foreign: shop"
+// act="click 657,120"). Only a higher CLASS preempts a service at its panel
+// now (the janitor then closes what the suspended errand held, and it
+// resumes from Clean); budgets still end a stuck phase.
 func (l *svcLife[P]) keepBid(d *arbiter.Demand, s *percept.Snapshot) *arbiter.Demand {
-	if d != nil {
+	var out *arbiter.Demand
+	switch {
+	case d != nil:
 		c := *d
 		l.bid = &c
-		return d
-	}
-	if l.live && l.bid != nil && l.claim() != 0 && !l.clean() && s.Valid && s.Me.InTown {
+		out = d
+	case l.live && l.bid != nil && l.claim() != 0 && !l.clean() && s.Valid && s.Me.InTown:
 		c := *l.bid
-		return &c
+		out = &c
 	}
-	return nil
+	if out != nil && l.locked() {
+		c := *out
+		c.Urgency = PanelLockUrgency
+		out = &c
+	}
+	return out
 }
+
+// PanelLockUrgency: a service's bid while it holds a panel of its own. Service
+// urgencies live in 0..~1; this sits above all of them (it ranks within the
+// class only — every higher class still preempts).
+const PanelLockUrgency = 2.0
+
+// locked: the episode is live in a phase that claims a panel.
+func (l *svcLife[P]) locked() bool { return l.live && !l.clean() && l.claim() != 0 }
 
 func (l *svcLife[P]) begin(resumed bool) {
 	l.live = true

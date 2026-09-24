@@ -257,8 +257,11 @@ func TestLifecycleClaimsAndKeptBid(t *testing.T) {
 		t.Fatal("Act claims the vendor set")
 	}
 	kept := r.e.keepBid(nil, ctx.Snap)
-	if kept == nil || kept.Who != "restock" || kept.Urgency != 0.5 {
-		t.Fatalf("the shop is ours: the bid is kept (%v)", kept)
+	if kept == nil || kept.Who != "restock" || kept.Urgency != PanelLockUrgency {
+		t.Fatalf("the shop is ours: the bid is kept, at the panel lock (%v)", kept)
+	}
+	if live := r.e.keepBid(bid, ctx.Snap); live.Urgency != PanelLockUrgency || bid.Urgency != 0.5 {
+		t.Fatalf("a live bid at our panel rides the lock (%v), the caller's demand untouched (%v)", live, bid)
 	}
 	ctx.Snap.Me.InTown = false
 	if r.e.keepBid(nil, ctx.Snap) != nil {
