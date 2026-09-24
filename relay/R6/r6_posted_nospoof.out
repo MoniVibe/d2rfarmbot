@@ -1,0 +1,116 @@
+PRECONDITION attached: ok  pid=34076 client=1536x840 aimcal=loaded logs/aimcal.json
+PRECONDITION in-game: true  (position=true stats=true uibytes=true mode=true)
+PRECONDITION position: ok (5055,5095) area=40 town=true hp=126%
+PRECONDITION no monsters within 30: ok
+PRECONDITION town: in_town=true allowed=true
+live grid: origin (5000,5000) 280x280 — directions with a wall in the first 4 tiles are skipped
+csv: logs\stridecal_1790212153.csv
+running 8 dirs x 8 holds x 2 reps (budget 4m30s, mode=posted, spoof=false, dist=10)
+  rep1 +x    hold=  80ms held= 122ms posted  gain= 8 head=0° firstmove=167ms modes=5>3
+  rep1 +x    hold= 120ms held= 123ms posted  gain= 9 head=6° firstmove=42ms modes=3
+  rep1 +x    hold= 200ms held= 244ms posted  gain=12 head=5° firstmove=42ms modes=3
+  rep1 +x    hold= 300ms held= 365ms posted  gain=13 head=4° firstmove=83ms modes=3
+  rep1 +x    hold= 500ms held= 366ms posted  gain=13 head=4° firstmove=48ms modes=3
+  rep1 +x    hold= 800ms held= 373ms posted  gain=14 head=4° firstmove=42ms modes=3
+  rep1 +x    hold=1200ms held= 365ms posted  gain=14 head=0° firstmove=42ms modes=3
+  rep1 +x    hold=2000ms held= 366ms posted  gain=14 head=0° firstmove=1ms modes=3
+  rep1 +x+y  hold=  80ms held= 123ms posted  gain= 7 head=4° firstmove=83ms modes=3
+  rep1 +x+y  hold= 120ms held= 122ms posted  gain= 5 head=0° firstmove=1ms modes=3
+  rep1 +x+y  hold= 200ms held= 244ms posted  gain= 8 head=0° firstmove=41ms modes=3
+  rep1 +x+y  hold= 300ms held= 366ms posted  gain= 9 head=0° firstmove=82ms modes=3
+  rep1 +x+y  hold= 500ms held= 608ms posted  gain= 9 head=0° firstmove=49ms modes=3
+  rep1 +x+y  hold= 800ms held= 608ms posted  gain=11 head=6° firstmove=1ms modes=3
+  rep1 +x+y  hold=1200ms held= 365ms posted  gain=10 head=6° firstmove=84ms modes=3
+  rep1 +x+y  hold=2000ms held= 618ms posted  gain=10 head=3° firstmove=43ms modes=3
+  rep1 +y    hold=  80ms held= 123ms posted  gain= 5 head=0° firstmove=94ms modes=3
+  rep1 +y    hold= 120ms held= 122ms posted  gain= 5 head=45° firstmove=87ms modes=3
+  rep1 +y    hold= 200ms held= 244ms posted  gain= 8 head=32° firstmove=85ms modes=3
+  rep1 +y    hold= 300ms held= 365ms posted  gain=12 head=18° firstmove=85ms modes=3
+  rep1 +y    hold= 500ms held= 608ms posted  gain=14 head=23° firstmove=83ms modes=3
+  rep1 +y    hold= 800ms held= 851ms posted  gain=10 head=17° firstmove=42ms modes=3>5
+  rep1 +y    hold=1200ms held=1214ms posted  gain= 3 head=45° firstmove=84ms modes=3>5
+  rep1 +y    hold=2000ms held= 486ms posted  gain=10 head=27° firstmove=166ms modes=5>3
+  rep1 -x+y  hold=  80ms held= 123ms posted  gain= 5 head=6° firstmove=83ms modes=3
+  rep1 -x+y  hold= 120ms held= 123ms posted  gain= 5 head=0° firstmove=83ms modes=3
+  rep1 -x+y  hold= 200ms held= 244ms posted  gain= 7 head=0° firstmove=42ms modes=3
+  rep1 -x+y  hold= 300ms held= 367ms posted  gain= 9 head=3° firstmove=52ms modes=3
+  rep1 -x+y  hold= 500ms held= 618ms posted  gain=12 head=8° firstmove=82ms modes=3
+  rep1 -x+y  hold= 800ms held= 487ms posted  gain=10 head=3° firstmove=90ms modes=3
+  rep1 -x+y  hold=1200ms held= 367ms posted  gain= 9 head=7° firstmove=42ms modes=3
+  rep1 -x+y  hold=2000ms held= 485ms posted  gain=10 head=6° firstmove=83ms modes=3
+  rep1 -x    hold=  80ms held= 122ms posted  gain= 8 head=0° firstmove=83ms modes=3
+  rep1 -x    hold= 120ms held= 122ms posted  gain= 8 head=7° firstmove=42ms modes=3
+  rep1 -x    hold= 200ms held= 243ms posted  gain= 8 head=14° firstmove=87ms modes=3
+  rep1 -x    hold= 300ms held= 365ms posted  gain=12 head=5° firstmove=130ms modes=3
+  rep1 -x    hold= 500ms held= 486ms posted  gain=14 head=8° firstmove=42ms modes=3
+  rep1 -x    hold= 800ms held= 615ms posted  gain=14 head=8° firstmove=44ms modes=3
+  rep1 -x    hold=1200ms held= 608ms posted  gain=13 head=9° firstmove=91ms modes=3
+  rep1 -x    hold=2000ms held= 609ms posted  gain=13 head=9° firstmove=90ms modes=3
+  rep1 -x-y  hold=  80ms held= 122ms posted  gain= 7 head=0° firstmove=42ms modes=3
+  rep1 -x-y  hold= 120ms held= 123ms posted  gain= 7 head=9° firstmove=42ms modes=3
+  rep1 -x-y  hold= 200ms held= 244ms posted  gain= 8 head=8° firstmove=42ms modes=3
+  rep1 -x-y  hold= 300ms held= 365ms posted  gain= 8 head=8° firstmove=42ms modes=3
+  rep1 -x-y  hold= 500ms held= 490ms posted  gain=11 head=6° firstmove=44ms modes=3
+  rep1 -x-y  hold= 800ms held= 488ms posted  gain=11 head=6° firstmove=43ms modes=3
+  rep1 -x-y  hold=1200ms held= 486ms posted  gain=11 head=6° firstmove=83ms modes=3
+  rep1 -x-y  hold=2000ms held= 486ms posted  gain=12 head=8° firstmove=42ms modes=3
+  rep1 -y    hold=  80ms held= 122ms posted  gain= 5 head=112° firstmove=42ms modes=3
+  skip dir -y: wall within 4 tiles of (5058,5095)
+  skip dir +x-y: wall within 4 tiles of (5057,5095)
+  rep2 +x    hold=  80ms held= 128ms posted  gain= 9 head=0° firstmove=83ms modes=3
+  rep2 +x    hold= 120ms held= 122ms posted  gain= 9 head=0° firstmove=42ms modes=3
+  rep2 +x    hold= 200ms held= 244ms posted  gain=11 head=5° firstmove=83ms modes=3
+  rep2 +x    hold= 300ms held= 365ms posted  gain=13 head=4° firstmove=42ms modes=3
+  rep2 +x    hold= 500ms held= 486ms posted  gain=15 head=4° firstmove=83ms modes=3
+  rep2 +x    hold= 800ms held= 487ms posted  gain=15 head=4° firstmove=83ms modes=3
+  rep2 +x    hold=1200ms held= 486ms posted  gain=15 head=4° firstmove=82ms modes=3
+  rep2 +x    hold=2000ms held= 486ms posted  gain=15 head=4° firstmove=83ms modes=3
+  rep2 +x+y  hold=  80ms held= 122ms posted  gain= 7 head=9° firstmove=83ms modes=3
+  rep2 +x+y  hold= 120ms held= 122ms posted  gain= 7 head=4° firstmove=42ms modes=3
+  rep2 +x+y  hold= 200ms held= 243ms posted  gain= 6 head=0° firstmove=84ms modes=3
+  rep2 +x+y  hold= 300ms held= 365ms posted  gain=10 head=2° firstmove=131ms modes=3
+  rep2 +x+y  hold= 500ms held= 606ms posted  gain=12 head=4° firstmove=43ms modes=3
+  rep2 +x+y  hold= 800ms held= 486ms posted  gain= 9 head=0° firstmove=83ms modes=3
+  rep2 +x+y  hold=1200ms held= 609ms posted  gain=11 head=2° firstmove=42ms modes=3
+  rep2 +x+y  hold=2000ms held= 366ms posted  gain=10 head=3° firstmove=48ms modes=3
+  rep2 +y    hold=  80ms held= 122ms posted  gain= 5 head=68° firstmove=1ms modes=3
+  rep2 +y    hold= 120ms held= 123ms posted  gain= 5 head=39° firstmove=42ms modes=3
+  skip dir +y: wall within 4 tiles of (5051,5094)
+  rep2 +y    hold= 800ms held= 852ms posted  gain=17 head=16° firstmove=83ms modes=3
+  rep2 +y    hold=1200ms held=1220ms posted  gain=20 head=24° firstmove=43ms modes=3
+  rep2 +y    hold=2000ms held=2078ms posted  gain=31 head=24° firstmove=43ms modes=3
+  rep2 -x+y  hold=  80ms held= 123ms posted  gain= 5 head=6° firstmove=42ms modes=3
+  skip dir -x+y: wall within 4 tiles of (5051,5094)
+  rep2 -x+y  hold= 800ms held= 487ms posted  gain=10 head=3° firstmove=84ms modes=3
+  rep2 -x+y  hold=1200ms held= 487ms posted  gain=10 head=0° firstmove=42ms modes=3
+  rep2 -x+y  hold=2000ms held= 608ms posted  gain=13 head=10° firstmove=83ms modes=3
+  rep2 -x    hold=  80ms held= 122ms posted  gain= 7 head=8° firstmove=90ms modes=3
+  rep2 -x    hold= 120ms held= 122ms posted  gain= 5 head=11° firstmove=43ms modes=3
+  rep2 -x    hold= 200ms held= 243ms posted  gain=12 head=5° firstmove=50ms modes=3
+  rep2 -x    hold= 300ms held= 365ms posted  gain=13 head=9° firstmove=41ms modes=3
+  rep2 -x    hold= 500ms held= 486ms posted  gain=14 head=8° firstmove=133ms modes=3
+  rep2 -x    hold= 800ms held= 609ms posted  gain=14 head=8° firstmove=85ms modes=3
+  rep2 -x    hold=1200ms held= 609ms posted  gain=13 head=9° firstmove=43ms modes=3
+  rep2 -x    hold=2000ms held= 609ms posted  gain=14 head=8° firstmove=84ms modes=3
+  rep2 -x-y  hold=  80ms held= 123ms posted  gain= 6 head=18° firstmove=43ms modes=3
+  rep2 -x-y  hold= 120ms held= 123ms posted  gain= 7 head=9° firstmove=44ms modes=3
+  rep2 -x-y  hold= 200ms held= 243ms posted  gain= 8 head=8° firstmove=43ms modes=3
+  rep2 -x-y  hold= 300ms held= 366ms posted  gain=10 head=6° firstmove=42ms modes=3
+  rep2 -x-y  hold= 500ms held= 616ms posted  gain=12 head=8° firstmove=44ms modes=3
+  rep2 -x-y  hold= 800ms held= 609ms posted  gain=13 head=10° firstmove=42ms modes=3
+  skip dir -x-y: wall within 4 tiles of (5052,5092)
+  rep2 -x-y  hold=2000ms held= 609ms posted  gain=11 head=9° firstmove=83ms modes=3
+
+89 trials in 234s  (csv logs\stridecal_1790212153.csv)
+mode       hold   n med_gain   zero%  med_head med_held  med_move1
+posted     80ms  13        7      0%        6°    122ms       83ms
+posted    120ms  11        7      0%        7°    122ms       42ms
+posted    200ms  10        8      0%        5°    244ms       46ms
+posted    300ms  10       11      0%        5°    365ms       67ms
+posted    500ms  10       12      0%        7°    548ms       48ms
+posted    800ms  12       12      0%        6°    548ms       64ms
+posted   1200ms  11       11      0%        6°    487ms       43ms
+posted   2000ms  12       12      0%        8°    547ms       83ms
+med_held = the verb's real hold (120ms poll quantum); med_move1 = ms from Stride.Do to first position change (key-down lands ~90ms in)
+[interception] create_context failed — driver not installed? (using SendInput fallback)
+input released and healed

@@ -1,0 +1,119 @@
+PRECONDITION attached: ok  pid=34076 client=1536x840 aimcal=loaded logs/aimcal.json
+PRECONDITION in-game: true  (position=true stats=true uibytes=true mode=true)
+PRECONDITION position: ok (5068,5083) area=40 town=true hp=126%
+PRECONDITION no monsters within 30: ok
+PRECONDITION town: in_town=true allowed=true
+live grid: origin (5000,5000) 280x280 — directions with a wall in the first 4 tiles are skipped
+csv: logs\stridecal_1790211425.csv
+running 8 dirs x 8 holds x 2 reps (budget 4m30s, mode=focused, spoof=true, dist=10)
+  rep1 +x    hold=  80ms held= 122ms focused gain= 8 head=0° firstmove=174ms modes=5>3
+  rep1 +x    hold= 120ms held= 123ms focused gain= 9 head=0° firstmove=42ms modes=3
+  rep1 +x    hold= 200ms held= 243ms focused gain=11 head=0° firstmove=41ms modes=3
+  rep1 +x    hold= 300ms held= 366ms focused gain=10 head=6° firstmove=42ms modes=3
+  rep1 +x    hold= 500ms held= 368ms focused gain=13 head=0° firstmove=44ms modes=3
+  rep1 +x    hold= 800ms held= 489ms focused gain=15 head=0° firstmove=42ms modes=3
+  rep1 +x    hold=1200ms held= 366ms focused gain=13 head=0° firstmove=84ms modes=3
+  rep1 +x    hold=2000ms held= 366ms focused gain=13 head=0° firstmove=43ms modes=3
+  rep1 +x+y  hold=  80ms held= 123ms focused gain= 7 head=4° firstmove=42ms modes=3
+  rep1 +x+y  hold= 120ms held= 123ms focused gain= 4 head=0° firstmove=42ms modes=3
+  rep1 +x+y  hold= 200ms held= 244ms focused gain= 8 head=0° firstmove=83ms modes=3
+  rep1 +x+y  hold= 300ms held= 365ms focused gain= 7 head=0° firstmove=83ms modes=3
+  rep1 +x+y  hold= 500ms held= 486ms focused gain= 9 head=0° firstmove=83ms modes=3
+  rep1 +x+y  hold= 800ms held= 489ms focused gain= 9 head=0° firstmove=84ms modes=3
+  rep1 +x+y  hold=1200ms held= 485ms focused gain= 9 head=0° firstmove=42ms modes=3
+  rep1 +x+y  hold=2000ms held= 489ms focused gain=10 head=2° firstmove=1ms modes=3
+  rep1 +y    hold=  80ms held= 122ms focused gain= 7 head=8° firstmove=95ms modes=3
+  rep1 +y    hold= 120ms held= 123ms focused gain= 7 head=15° firstmove=168ms modes=5>3
+  rep1 +y    hold= 200ms held= 243ms focused gain=11 head=0° firstmove=44ms modes=3
+  rep1 +y    hold= 300ms held= 122ms mixed   gain= 7 head=8° firstmove=171ms modes=3>5>3
+  rep1 +y    hold= 500ms held= 375ms focused gain=13 head=4° firstmove=42ms modes=3
+  rep1 +y    hold= 800ms held= 367ms focused gain=13 head=0° firstmove=45ms modes=3
+  rep1 +y    hold=1200ms held= 371ms focused gain=13 head=0° firstmove=44ms modes=3
+  rep1 +y    hold=2000ms held= 489ms focused gain=13 head=9° firstmove=44ms modes=3
+  rep1 -x+y  hold=  80ms held= 123ms focused gain= 7 head=4° firstmove=45ms modes=3
+  rep1 -x+y  hold= 120ms held= 124ms focused gain= 7 head=4° firstmove=42ms modes=3
+  rep1 -x+y  hold= 200ms held= 244ms focused gain= 8 head=4° firstmove=86ms modes=3
+  rep1 -x+y  hold= 300ms held= 367ms focused gain=10 head=3° firstmove=42ms modes=3
+  rep1 -x+y  hold= 500ms held= 364ms focused gain=10 head=3° firstmove=45ms modes=3
+  rep1 -x+y  hold= 800ms held= 611ms focused gain=12 head=8° firstmove=42ms modes=3
+  rep1 -x+y  hold=1200ms held= 366ms focused gain= 9 head=3° firstmove=43ms modes=3
+  rep1 -x+y  hold=2000ms held= 365ms focused gain=10 head=3° firstmove=50ms modes=3
+  rep1 -x    hold=  80ms held= 123ms focused gain= 6 head=45° firstmove=43ms modes=3
+  rep1 -x    hold= 120ms held= 123ms focused gain= 7 head=41° firstmove=43ms modes=3
+  rep1 -x    hold= 200ms held= 246ms focused gain= 8 head=37° firstmove=48ms modes=3
+  rep1 -x    hold= 300ms held= 376ms focused gain=10 head=39° firstmove=83ms modes=3
+  rep1 -x    hold= 500ms held= 610ms focused gain=10 head=51° firstmove=84ms modes=3
+  rep1 -x    hold= 800ms held= 854ms focused gain=12 head=37° firstmove=42ms modes=3
+  rep1 -x    hold=1200ms held=1218ms focused gain=13 head=40° firstmove=67ms modes=3
+  rep1 -x    hold=2000ms held=2083ms focused gain=30 head=17° firstmove=43ms modes=3
+  skip dir -x-y: wall within 4 tiles of (5068,5079)
+  rep1 -x-y  hold=1200ms held= 371ms focused gain=10 head=6° firstmove=85ms modes=3
+  rep1 -y    hold=  80ms held= 122ms focused gain= 9 head=0° firstmove=43ms modes=3
+  rep1 -y    hold= 120ms held= 123ms focused gain= 9 head=0° firstmove=43ms modes=3
+  rep1 -y    hold= 200ms held= 243ms focused gain=11 head=0° firstmove=43ms modes=3
+  rep1 -y    hold= 300ms held= 366ms focused gain=14 head=4° firstmove=51ms modes=3
+  rep1 -y    hold= 500ms held= 485ms focused gain=14 head=4° firstmove=84ms modes=3
+  rep1 -y    hold= 800ms held= 487ms focused gain=15 head=4° firstmove=94ms modes=3
+  rep1 -y    hold=1200ms held= 367ms focused gain=13 head=4° firstmove=43ms modes=3
+  rep1 -y    hold=2000ms held= 368ms focused gain=13 head=4° firstmove=44ms modes=3
+  rep1 +x-y  hold=  80ms held= 122ms focused gain= 8 head=13° firstmove=43ms modes=3
+  rep1 +x-y  hold= 120ms held= 122ms focused gain= 8 head=24° firstmove=42ms modes=3
+  rep1 +x-y  hold= 200ms held= 244ms focused gain=11 head=25° firstmove=45ms modes=3
+  rep1 +x-y  hold= 300ms held= 368ms focused gain=12 head=22° firstmove=44ms modes=3
+  rep1 +x-y  hold= 500ms held= 615ms focused gain=15 head=14° firstmove=44ms modes=3
+  rep1 +x-y  hold= 800ms held= 852ms focused gain=17 head=35° firstmove=44ms modes=3
+  rep1 +x-y  hold=1200ms held= 486ms focused gain=11 head=16° firstmove=48ms modes=3
+  rep1 +x-y  hold=2000ms held= 609ms focused gain=13 head=13° firstmove=43ms modes=3
+  rep2 +x    hold=  80ms held= 123ms focused gain= 5 head=31° firstmove=42ms modes=3
+  rep2 +x    hold= 120ms held= 122ms focused gain= 7 head=17° firstmove=92ms modes=3
+  rep2 +x    hold= 200ms held= 244ms focused gain=11 head=0° firstmove=45ms modes=3
+  rep2 +x    hold= 300ms held= 368ms focused gain=14 head=0° firstmove=42ms modes=3
+  rep2 +x    hold= 500ms held= 366ms focused gain=13 head=0° firstmove=43ms modes=3
+  rep2 +x    hold= 800ms held= 365ms focused gain=13 head=0° firstmove=42ms modes=3
+  rep2 +x    hold=1200ms held= 368ms focused gain=14 head=0° firstmove=43ms modes=3
+  rep2 +x    hold=2000ms held= 488ms focused gain=15 head=0° firstmove=84ms modes=3
+  rep2 +x+y  hold=  80ms held= 122ms focused gain= 7 head=4° firstmove=42ms modes=3
+  rep2 +x+y  hold= 120ms held= 123ms focused gain= 4 head=0° firstmove=49ms modes=3
+  rep2 +x+y  hold= 200ms held= 251ms focused gain= 6 head=5° firstmove=44ms modes=3
+  rep2 +x+y  hold= 300ms held= 373ms focused gain= 9 head=0° firstmove=88ms modes=3
+  rep2 +x+y  hold= 500ms held= 368ms focused gain=10 head=3° firstmove=44ms modes=3
+  rep2 +x+y  hold= 800ms held= 494ms focused gain= 9 head=0° firstmove=42ms modes=3
+  rep2 +x+y  hold=1200ms held= 486ms focused gain= 9 head=3° firstmove=43ms modes=3
+  rep2 +x+y  hold=2000ms held= 378ms focused gain=10 head=0° firstmove=44ms modes=3
+  rep2 +y    hold=  80ms held= 122ms focused gain= 7 head=16° firstmove=46ms modes=3
+  rep2 +y    hold= 120ms held= 123ms focused gain= 9 head=6° firstmove=45ms modes=3
+  rep2 +y    hold= 200ms held= 244ms focused gain=11 head=0° firstmove=85ms modes=3
+  rep2 +y    hold= 300ms held= 365ms focused gain=14 head=0° firstmove=43ms modes=3
+  rep2 +y    hold= 500ms held= 369ms focused gain=13 head=4° firstmove=44ms modes=3
+  rep2 +y    hold= 800ms held= 365ms focused gain=14 head=0° firstmove=44ms modes=3
+  rep2 +y    hold=1200ms held= 366ms focused gain=13 head=4° firstmove=43ms modes=3
+  rep2 +y    hold=2000ms held= 489ms focused gain=14 head=4° firstmove=43ms modes=3
+  rep2 -x+y  hold=  80ms held= 122ms focused gain= 7 head=9° firstmove=42ms modes=3
+  rep2 -x+y  hold= 120ms held= 123ms focused gain= 7 head=4° firstmove=42ms modes=3
+  rep2 -x+y  hold= 200ms held= 243ms focused gain= 8 head=4° firstmove=43ms modes=3
+  rep2 -x+y  hold= 300ms held= 370ms mixed   gain= 9 head=0° firstmove=43ms modes=3
+  rep2 -x+y  hold= 500ms held= 487ms focused gain=10 head=6° firstmove=82ms modes=3
+  rep2 -x+y  hold= 800ms held= 609ms focused gain=11 head=6° firstmove=95ms modes=3
+  rep2 -x+y  hold=1200ms held= 365ms focused gain=10 head=3° firstmove=45ms modes=3
+  rep2 -x+y  hold=2000ms held= 366ms focused gain= 9 head=3° firstmove=91ms modes=3
+  rep2 -x    hold=  80ms held= 123ms focused gain= 7 head=45° firstmove=43ms modes=3
+  rep2 -x    hold= 120ms held= 123ms focused gain= 6 head=45° firstmove=84ms modes=3
+  rep2 -x    hold= 200ms held= 244ms focused gain= 8 head=37° firstmove=48ms modes=3
+  rep2 -x    hold= 300ms held= 366ms focused gain= 9 head=45° firstmove=44ms modes=3
+  rep2 -x    hold= 500ms held= 609ms focused gain=10 head=42° firstmove=0ms modes=3
+STOPPED: budget exhausted (summary covers the trials run)
+
+94 trials in 275s  (csv logs\stridecal_1790211425.csv)
+mode       hold   n med_gain   zero%  med_head med_held  med_move1
+focused    80ms  12        7      0%        9°    122ms       43ms
+focused   120ms  12        7      0%        5°    123ms       43ms
+focused   200ms  12       10      0%        2°    244ms       45ms
+focused   300ms  10       10      0%        4°    366ms       44ms
+focused   500ms  12       12      0%        4°    430ms       44ms
+focused   800ms  11       13      0%        0°    489ms       44ms
+focused  1200ms  12       12      0%        3°    370ms       44ms
+focused  2000ms  11       13      0%        3°    488ms       44ms
+mixed     300ms   2        8      0%        4°    246ms      107ms
+med_held = the verb's real hold (120ms poll quantum); med_move1 = ms from Stride.Do to first position change (key-down lands ~90ms in)
+[interception] create_context failed — driver not installed? (using SendInput fallback)
+input released and healed
