@@ -10,7 +10,7 @@ func TestCloseStepCaptures(t *testing.T) {
 	for file, want := range map[string]Action{
 		"town_clear":       {Kind: ActNone},
 		"town_after_trade": {Kind: ActNone},
-		"npc_menu":         {Kind: ActNone}, // sight can't see the list: no key
+		"npc_menu":         {Kind: ActKey, Panel: NPCMenu}, // seen by its gold frame: ESC
 		"pause_menu":       {Kind: ActClick, X: 960, Y: 685, Panel: PauseMenu},
 		"chronicle":        {Kind: ActClick, X: 1413, Y: 81, Panel: SubPanel},
 		"loot_filter":      {Kind: ActClick, X: 1413, Y: 81, Panel: SubPanel},
@@ -22,11 +22,48 @@ func TestCloseStepCaptures(t *testing.T) {
 			t.Errorf("%s: %s, want %s at (%d,%d) for %s", file, a, want.Kind, want.X, want.Y, want.Panel)
 		}
 	}
-	// 0xF4 is the proven NPC-menu channel: ESC is lawful there.
+	// 0xF4 is the proven NPC-menu channel: ESC is lawful there even unseen.
 	h := world
 	h.MenuByte = true
-	if a := CloseStep(Observe(load(t, "npc_menu"), h)); a.Kind != ActKey || a.VK != VKEscape || a.Panel != NPCMenu {
-		t.Errorf("npc_menu+0xF4: %s", a)
+	if a := CloseStep(Observe(load(t, "town_clear"), h)); a.Kind != ActKey || a.VK != VKEscape || a.Panel != NPCMenu {
+		t.Errorf("town_clear+0xF4: %s", a)
+	}
+}
+
+// Relay R2: every photographed panel is closable by sight — its X when the
+// capture shows one, else one ESC (never for the pause menu); the automap is
+// left alone.
+func TestCloseStepR2(t *testing.T) {
+	for file, want := range map[string]Action{
+		"r2/world_town": {}, "r2/world_town_2": {}, "r2/world_town_act1": {}, "r2/world_field_night": {},
+		"r2/automap_overlay":             {}, // eats nothing
+		"r2/inventory":                   {Kind: ActClick, X: 1788, Y: 18, Panel: Inventory},
+		"r2/inventory_act1":              {Kind: ActClick, X: 1788, Y: 18, Panel: Inventory},
+		"r2/charsheet":                   {Kind: ActClick, X: 657, Y: 120, Panel: CharSheet},
+		"r2/inv_and_sheet":               {Kind: ActClick, X: 657, Y: 120, Panel: CharSheet},
+		"r2/questlog":                    {Kind: ActClick, X: 657, Y: 120, Panel: QuestLog},
+		"r2/waypoint":                    {Kind: ActClick, X: 657, Y: 120, Panel: Waypoint},
+		"r2/waypoint_act1_and_inventory": {Kind: ActClick, X: 657, Y: 120, Panel: Waypoint},
+		"r2/hireling":                    {Kind: ActClick, X: 657, Y: 120, Panel: Mercenary},
+		"r2/stash":                       {Kind: ActClick, X: 946, Y: 18, Panel: Stash},
+		"r2/skilltree":                   {Kind: ActClick, X: 1785, Y: 120, Panel: SkillTree},
+		"r2/pause_menu":                  {Kind: ActClick, X: 960, Y: 685, Panel: PauseMenu},
+		"r2/npc_talk":                    {Kind: ActKey, Panel: NPCMenu},
+		"r2/npc_menu_2":                  {Kind: ActKey, Panel: NPCMenu},
+		"r2/npc_menu_3":                  {Kind: ActKey, Panel: NPCMenu},
+		"r2/npc_menu_4":                  {Kind: ActKey, Panel: NPCMenu},
+		"r2/npc_dialog_text":             {Kind: ActKey, Panel: NPCDialog},
+		"r2/chat":                        {Kind: ActKey, Panel: Chat},
+		"r2/skill_picker":                {Kind: ActKey, Panel: SkillPicker},
+		"r2/skill_picker_2":              {Kind: ActKey, Panel: SkillPicker},
+	} {
+		a := CloseStep(Observe(loadAny(t, file, false), world))
+		if a.Kind != want.Kind || a.X != want.X || a.Y != want.Y || a.Panel != want.Panel {
+			t.Errorf("%s: %s, want %s at (%d,%d) for %s", file, a, want.Kind, want.X, want.Y, want.Panel)
+		}
+		if a.Kind == ActKey && a.VK != VKEscape {
+			t.Errorf("%s: key 0x%02X", file, a.VK)
+		}
 	}
 }
 

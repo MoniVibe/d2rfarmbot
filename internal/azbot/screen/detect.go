@@ -51,10 +51,7 @@ func fromRight(img image.Image, x, y int) (int, int) {
 	return b.Dx() - int(float64(RefW-x)*k), int(float64(y) * k)
 }
 
-func rgb(img image.Image, x, y int) (int, int, int) {
-	r, g, b, _ := img.At(x, y).RGBA()
-	return int(r >> 8), int(g >> 8), int(b >> 8)
-}
+func rgb(img image.Image, x, y int) (int, int, int) { return pix(img, x, y) }
 
 // PauseMenuVisible reports whether the ESC/pause menu is on screen.
 func PauseMenuVisible(img image.Image) bool {
@@ -88,12 +85,25 @@ func ReturnToGameAt(img image.Image) (int, int) {
 // A sub-panel covers the same cells with its own dark interior over a dimmed
 // town (Chronicle and Loot Filter both read 12+/16 dark), so the grid yields
 // to the sub-panel's X — a covered vendor takes no clicks anyway.
+// DARK WORLDS READ AS AN EMPTY GRID (relay R2, 2026-09-24): the Act 1 camp, the
+// night field, the dimmed chat/NPC scenes and the stash's empty cells read
+// 12+/16 dark with no vendor anywhere — 15 false shops over 26 captures. The
+// grid now counts only inside the left frame: its red X up (xLeft) and none of
+// the other panels that share that frame named by its title.
 func TradePanelVisible(img image.Image) bool {
 	if !usable(img) {
 		return false
 	}
 	if _, _, ok := SubPanelX(img); ok {
 		return false
+	}
+	if _, _, ok := xLeft.find(img); !ok {
+		return false
+	}
+	for _, sig := range []glyphSig{titleCharSheet, titleQuestLog, titleWaypoint, titleMercenary} {
+		if sig.match(sig.score(img)) {
+			return false
+		}
 	}
 	k := float64(img.Bounds().Dy()) / RefH
 	dark := 0
@@ -110,22 +120,11 @@ func TradePanelVisible(img image.Image) bool {
 	return dark >= 12
 }
 
-// redX: a panel close button's red glyph at an img-space point.
-func redX(img image.Image, x, y int) bool {
-	R, G, B := rgb(img, x, y)
-	return R >= 140 && G <= 90 && B <= 60 && R-G >= 70
-}
-
 // SubPanelX reports the centered sub-panel's red close X. Chronicle / Loot
 // Filter / Options share one frame whose X sits at (1413,81) — identical color
-// on both, never red elsewhere (measured 2026-09-23).
-func SubPanelX(img image.Image) (int, int, bool) {
-	if !usable(img) {
-		return 0, 0, false
-	}
-	x, y := ScaleShot(img, 1413, 81)
-	return x, y, redX(img, x, y)
-}
+// on both, never red elsewhere (measured 2026-09-23; red tile 0.78 vs 0.00 over
+// all 34 captures, 2026-09-24).
+func SubPanelX(img image.Image) (int, int, bool) { return xSub.find(img) }
 
 // UIBlocker identifies a screen that swallows world input and where to click to
 // dismiss it — ALWAYS a click, never ESC (ESC toggles the pause menu). Measured
@@ -151,12 +150,13 @@ func UIBlocker(img image.Image) (kind string, x, y int, ok bool) {
 }
 
 // ShopOpenX reports the vendor panel's red close X (left-anchored at (657,120)).
+// The char sheet, quest log, waypoint and mercenary panels carry the SAME X at
+// the same spot (relay R2), so the X alone no longer names the vendor: it
+// counts only with the vendor's own chrome (chromeVendor, 16/16 vs 0/16 on
+// those four).
 func ShopOpenX(img image.Image) (int, int, bool) {
-	if !usable(img) {
-		return 0, 0, false
-	}
-	x, y := fromLeft(img, 657, 120)
-	return x, y, redX(img, x, y)
+	x, y, ok := xLeft.find(img)
+	return x, y, ok && chromeVendor.score(img) >= chromeVendor.min
 }
 
 // ShopVisible: the vendor panel is on screen — its red close X (stock-independent)
@@ -187,11 +187,14 @@ func ShopVisible(img image.Image) bool {
 //     but 0.87 just outside it and 0.16 on the far edge — rejected twice.
 // Act 2 (Lut Gholein) only: a snowy or grey-stone town is exactly why the
 // outside column must be open — grey ground is grey on both sides of a band.
-// Only the vendor + bag pair has been photographed. That other panels share
-// these frames (the classic layout: char sheet, quests, waypoint, stash and
-// hireling on the left; bag and skill tree on the right) is an ASSUMPTION until
-// their captures land — so a half panel says "something is open here", never
-// which one.
+// Relay R2 (2026-09-24) confirmed the layout: the char sheet, quest log,
+// waypoint and hireling read the left frame (in 0.82-0.87), the bag and the
+// skill tree the right one (0.80-0.90), and no capture with nothing on a side
+// reads a frame there. It also showed the limit: in the grey Act 1 camp the
+// outside column is grey too (out 0.55) and the bag's frame reads ABSENT, and
+// the stash's wide frame fails the left inner edge. So the named detectors
+// (panels.go) carry every photographed panel; a half panel is the fallback
+// that says "something is open here" for a panel never photographed.
 
 // neutral: grey stone — low chroma, neither black nor bright.
 func neutral(img image.Image, x, y int) bool {
@@ -284,13 +287,6 @@ func LeftPanelVisible(img image.Image) bool { return LeftPanelScore(img).Present
 // RightPanelVisible: some framed panel occupies the right half.
 func RightPanelVisible(img image.Image) bool { return RightPanelScore(img).Present() }
 
-// RightPanelX reports the right panel's red close X — (1788,18), right-anchored,
-// the same glyph color as the vendor X (163,59,30 on both shop captures). Only
-// the bag's X has been photographed there.
-func RightPanelX(img image.Image) (int, int, bool) {
-	if !usable(img) {
-		return 0, 0, false
-	}
-	x, y := fromRight(img, 1788, 18)
-	return x, y, redX(img, x, y)
-}
+// RightPanelX reports the bag's red close X — (1788,18), right-anchored, its
+// 19x19 red tile (closeSpot). The skill tree's X sits lower, at (1785,120).
+func RightPanelX(img image.Image) (int, int, bool) { return xBag.find(img) }

@@ -96,9 +96,9 @@ func (l *Legacy) PhaseName() string {
 // Claims per service (docs/AZBOT_V2.md: "Claims live only while it holds the
 // grant"). While the holder owns them the janitor leaves these panels alone;
 // the moment it loses the grant they are foreign and the janitor closes them by
-// sight. Inventory and the generic right half-panel go together because the
-// bag alone reads as RightPanel (its own detector exists only beside a vendor);
-// likewise the char sheet reads as LeftPanel.
+// sight. The bag, char sheet and skill tree are named by sight (relay R2); the
+// generic half panels stay claimed beside them because a frame no detector
+// names (an unphotographed panel, another client size) reads as Left/RightPanel.
 const (
 	// Identify / Equip: the bag the ID-tome cast opens.
 	claimsBag = screen.Inventory | screen.RightPanel

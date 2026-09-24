@@ -123,25 +123,29 @@ func (r *Reading) unsure(p Panel, why string) {
 	}
 }
 
-// stubbed: panels with no photographed detector, and the capture each awaits.
-var stubbed = []struct {
-	p       Panel
-	fn      func(image.Image) (bool, bool)
-	capture string
+// sighted: panels named by a photographed detector (relay R2), display order.
+var sighted = []struct {
+	p  Panel
+	fn func(image.Image) Sighting
 }{
-	{NPCMenu, NPCMenuVisible, "npc_menu_*.png"},
-	{NPCDialog, NPCDialogVisible, "npc_dialog_text.png"},
-	{Inventory, InventoryVisible, "inventory.png"},
-	{CharSheet, CharSheetVisible, "charsheet.png"},
-	{SkillTree, SkillTreeVisible, "skilltree.png"},
-	{QuestLog, QuestLogVisible, "questlog.png"},
-	{Stash, StashVisible, "stash.png"},
-	{Waypoint, WaypointVisible, "waypoint.png"},
-	{Chat, ChatVisible, "chat.png"},
-	{SkillPicker, SkillPickerVisible, "skill_picker.png"},
-	{Mercenary, MercenaryVisible, "hireling.png"},
-	{Automap, AutomapVisible, "automap_overlay.png"},
+	{CharSheet, CharSheetSight},
+	{QuestLog, QuestLogSight},
+	{Waypoint, WaypointSight},
+	{Mercenary, MercenarySight},
+	{Stash, StashSight},
+	{Inventory, InventorySight},
+	{SkillTree, SkillTreeSight},
+	{Chat, ChatSight},
+	{SkillPicker, SkillPickerSight},
+	{Automap, AutomapSight},
 }
+
+// Panels a sight detector names on each half; the generic half panel is only
+// reported when none of them explains the frame / X.
+const (
+	leftNamed  = Shop | CharSheet | QuestLog | Waypoint | Mercenary | Stash
+	rightNamed = Inventory | SkillTree
+)
 
 // Observe reads one capture plus this tick's memory hints.
 func Observe(img image.Image, h Hints) Reading {
@@ -160,25 +164,32 @@ func Observe(img image.Image, h Hints) Reading {
 	if r.Mode == Loading {
 		return r
 	}
-	sighted := usable(img)
-	if sighted {
+	haveShot := usable(img)
+	if haveShot {
 		observeSight(&r, img)
 	} else {
-		for _, q := range []Panel{PauseMenu, SubPanel, Shop, LeftPanel, RightPanel} {
+		for _, q := range All {
 			r.unsure(q, "no capture")
-		}
-		for _, s := range stubbed {
-			r.unsure(s.p, "no capture")
 		}
 	}
 
 	if h.MenuByte {
-		r.Panels |= NPCMenu
-		r.Unsure &^= NPCMenu
-		r.Evidence[NPCMenu] = "memory 0xF4 (NPC menu or dialog)"
+		// 0xF4 reads true for the NPC menu AND its speech: when sight already
+		// holds either, memory only agrees; otherwise it asserts the menu.
+		if q := r.Sight & (NPCMenu | NPCDialog); q != 0 {
+			for _, p := range []Panel{NPCMenu, NPCDialog} {
+				if q&p != 0 {
+					r.Evidence[p] += "; memory 0xF4 agrees"
+				}
+			}
+		} else {
+			r.Panels |= NPCMenu
+			r.Unsure &^= NPCMenu
+			r.Evidence[NPCMenu] = "memory 0xF4 (NPC menu or dialog)"
+		}
 	}
 	if h.NPCShop && r.Panels&Shop == 0 {
-		if sighted {
+		if haveShot {
 			r.unsure(Shop, "memory NPCShop, but no vendor X or grid on screen")
 		} else {
 			r.Panels |= Shop
@@ -206,9 +217,9 @@ func observeSight(r *Reading, img image.Image) {
 	grid := TradePanelVisible(img)
 	switch {
 	case xok && grid:
-		r.see(Shop, "vendor red X + empty grid")
+		r.see(Shop, "vendor red X + chrome + empty grid")
 	case xok:
-		r.see(Shop, "vendor red X")
+		r.see(Shop, "vendor red X + chrome")
 	case grid:
 		r.see(Shop, "vendor empty grid")
 	}
@@ -216,32 +227,58 @@ func observeSight(r *Reading, img image.Image) {
 		r.Close[Shop] = Point{xx, xy}
 	}
 
-	// Half panels: the vendor IS the left frame, and trade always shows the bag
-	// on the right — so beside a vendor the right frame is the bag.
-	if ls := LeftPanelScore(img); ls.Present() && r.Panels&Shop == 0 {
-		r.see(LeftPanel, fmt.Sprintf("left-half panel (frame %.2f/%.2f)", ls.In[0], ls.In[1]))
-	}
-	if rs := RightPanelScore(img); rs.Present() {
-		p, why := RightPanel, "right-half panel"
-		if r.Panels&Shop != 0 {
-			p, why = Inventory, "right-half panel beside the vendor"
+	for _, d := range sighted {
+		if s := d.fn(img); s.Seen {
+			r.see(d.p, s.Why)
+			if s.HasX {
+				r.Close[d.p] = s.Close
+			}
 		}
-		r.see(p, fmt.Sprintf("%s (frame %.2f/%.2f)", why, rs.In[0], rs.In[1]))
-		if x, y, ok := RightPanelX(img); ok {
-			r.Close[p] = Point{x, y}
+	}
+	// One scan finds both floating boxes: the Talk/Trade list and the speech.
+	for _, b := range NPCBoxes(img) {
+		q := NPCMenu
+		if b.Dialog(img) {
+			q = NPCDialog
+		}
+		if r.Panels&q == 0 {
+			r.see(q, b.String())
 		}
 	}
 
-	for _, s := range stubbed {
-		if r.Panels&s.p != 0 {
-			continue
-		}
-		seen, unsure := s.fn(img)
+	// Half panels: a framed panel no detector names (a panel never photographed)
+	// still reads as "something is open on this side", closable by its X.
+	if r.Panels&leftNamed == 0 {
+		ls := LeftPanelScore(img)
+		x, y, xok := xLeft.find(img)
 		switch {
-		case seen:
-			r.see(s.p, "sight")
-		case unsure:
-			r.unsure(s.p, "no detector (needs relay/R2/"+s.capture+")")
+		case ls.Present() && xok:
+			r.see(LeftPanel, fmt.Sprintf("left-half panel (frame %.2f/%.2f) + red X", ls.In[0], ls.In[1]))
+		case ls.Present():
+			r.see(LeftPanel, fmt.Sprintf("left-half panel (frame %.2f/%.2f)", ls.In[0], ls.In[1]))
+		case xok:
+			r.see(LeftPanel, "red X at the left panels' spot")
+		}
+		if xok && r.Panels&LeftPanel != 0 {
+			r.Close[LeftPanel] = Point{x, y}
+		}
+	}
+	if r.Panels&rightNamed == 0 {
+		rs := RightPanelScore(img)
+		x, y, xok := xBag.find(img)
+		if !xok {
+			x, y, xok = xTree.find(img)
+		}
+		switch {
+		case rs.Present() && xok:
+			r.see(RightPanel, fmt.Sprintf("right-half panel (frame %.2f/%.2f) + red X", rs.In[0], rs.In[1]))
+		case rs.Present():
+			r.see(RightPanel, fmt.Sprintf("right-half panel (frame %.2f/%.2f)", rs.In[0], rs.In[1]))
+		case xok:
+			r.see(RightPanel, "red X at a right panel's spot")
+		}
+		if xok && r.Panels&RightPanel != 0 {
+			r.Close[RightPanel] = Point{x, y}
 		}
 	}
 }

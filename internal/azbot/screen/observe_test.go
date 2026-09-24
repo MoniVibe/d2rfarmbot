@@ -12,12 +12,12 @@ func TestObserveCaptures(t *testing.T) {
 	for file, want := range map[string]Panel{
 		"town_clear":       0,
 		"town_after_trade": 0,
-		"npc_menu":         0, // the floating list has no sight detector yet
+		"npc_menu":         NPCMenu, // the floating list, found by its gold frame
 		"pause_menu":       PauseMenu,
 		"chronicle":        SubPanel,
 		"loot_filter":      SubPanel,
-		"shop_open":        Shop | Inventory,
-		"shop_armor":       Shop | Inventory,
+		"shop_open":        Shop | Inventory | Automap, // the automap was up (area name beside the bag)
+		"shop_armor":       Shop | Inventory | Automap,
 	} {
 		r := Observe(load(t, file), world)
 		if r.Mode != World {
@@ -29,7 +29,7 @@ func TestObserveCaptures(t *testing.T) {
 		if r.Panels&r.Unsure != 0 {
 			t.Errorf("%s: %s both seen and unsure", file, r.Panels&r.Unsure)
 		}
-		if (want == 0) != r.Clear() {
+		if !want.Blocking() != r.Clear() {
 			t.Errorf("%s: Clear=%v", file, r.Clear())
 		}
 		for _, q := range All {
@@ -59,35 +59,52 @@ func TestObserveCloseButtons(t *testing.T) {
 	}
 }
 
-// Unphotographed panels are reported Unsure, never absent-by-assumption.
-func TestObserveStubsAreUnsure(t *testing.T) {
+// Every panel has a photographed detector now: a capture leaves nothing
+// Unsure, and only a missing capture does (never absent-by-assumption).
+func TestObserveUnsureOnlyWithoutCapture(t *testing.T) {
 	r := Observe(load(t, "town_clear"), world)
-	for _, q := range []Panel{Inventory, CharSheet, SkillTree, QuestLog, Stash, Waypoint,
-		Chat, SkillPicker, Mercenary, NPCDialog, NPCMenu, Automap} {
-		if r.Unsure&q == 0 {
-			t.Errorf("%s not unsure", q)
+	if r.Unsure != 0 {
+		t.Errorf("unsure with a capture: %s", r.Unsure)
+	}
+	r = Observe(nil, world)
+	for _, q := range All {
+		if r.Unsure&q == 0 || r.Panels&q != 0 {
+			t.Errorf("%s: no capture must read unsure, got %s", q, r)
 		}
-		if !strings.Contains(r.Evidence[q], "relay/R2/") {
-			t.Errorf("%s evidence %q names no capture", q, r.Evidence[q])
+		if !strings.Contains(r.Evidence[q], "no capture") {
+			t.Errorf("%s evidence %q", q, r.Evidence[q])
 		}
 	}
-	for _, q := range []Panel{PauseMenu, SubPanel, Shop, LeftPanel, RightPanel} {
-		if r.Unsure&q != 0 {
-			t.Errorf("%s has a real detector but reads unsure", q)
-		}
+	if a := CloseStep(r); a.Kind != ActNone {
+		t.Errorf("blind: %s", a)
+	}
+	// The cursor item is the one thing sight still cannot see.
+	if seen, unsure := CursorItemVisible(load(t, "town_clear")); seen || !unsure {
+		t.Error("cursor item detector should be a stub")
 	}
 }
 
 func TestObserveMemoryHints(t *testing.T) {
-	// 0xF4 is proven for NPC menus: it adds the menu the capture can't place.
+	// 0xF4 is proven for NPC menus: it adds a menu sight does not show (a
+	// capture taken a frame early)...
 	h := world
 	h.MenuByte = true
-	r := Observe(load(t, "npc_menu"), h)
+	r := Observe(load(t, "town_clear"), h)
 	if !r.Panels.Has(NPCMenu) || r.Sight.Has(NPCMenu) || r.Unsure&NPCMenu != 0 {
-		t.Errorf("npc_menu+0xF4: %s sight=%s", r, r.Sight)
+		t.Errorf("town_clear+0xF4: %s sight=%s", r, r.Sight)
 	}
 	if !strings.Contains(r.Evidence[NPCMenu], "0xF4") {
 		t.Errorf("evidence %q", r.Evidence[NPCMenu])
+	}
+	// ...and only agrees where sight already holds the menu or the speech.
+	r = Observe(load(t, "npc_menu"), h)
+	if !r.Sight.Has(NPCMenu) || !strings.Contains(r.Evidence[NPCMenu], "gold-framed box") ||
+		!strings.Contains(r.Evidence[NPCMenu], "0xF4 agrees") {
+		t.Errorf("npc_menu+0xF4: %s %q", r, r.Evidence[NPCMenu])
+	}
+	r = Observe(loadAny(t, "r2/npc_dialog_text", false), h)
+	if r.Panels != NPCDialog || !strings.Contains(r.Evidence[NPCDialog], "0xF4 agrees") {
+		t.Errorf("dialog+0xF4: %s %q", r, r.Evidence[NPCDialog])
 	}
 
 	// NPCShop against a capture that shows no vendor: a ghost, not a shop.

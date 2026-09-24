@@ -46,6 +46,19 @@ func (a Action) String() string {
 	return a.Kind.String() + ": " + a.Reason
 }
 
+// clickOrder: panels closed by clicking their seen X (or Return to Game).
+var clickOrder = []Panel{SubPanel, PauseMenu, Shop, Stash, CharSheet, QuestLog, Waypoint, Mercenary,
+	SkillTree, Inventory, LeftPanel, RightPanel}
+
+// Close methods per panel (relay R2, 2026-09-24):
+//   - X click: sub-panel (1413,81); vendor / char sheet / quest log / waypoint /
+//     mercenary (657,120); stash (946,18); bag (1788,18); skill tree (1785,120);
+//   - Return to Game click: the pause menu (960,685);
+//   - ESC: the NPC menu and speech box (no X; ESC is the game's own dismiss),
+//     the chat line and the skill picker (no X; ESC dismisses both without
+//     sending or binding anything), and any X-panel whose X is not seen;
+//   - nothing: the automap (Tab toggles it; it eats no input).
+//
 // escCloses: panels one ESC closes. Not the pause menu (ESC toggles it — the
 // Return-to-Game click is the known-good path), not the sub-panel (its X is),
 // not the automap (Tab toggles it, and it eats nothing).
@@ -69,8 +82,9 @@ func CloseStep(r Reading) Action {
 		return Action{Kind: ActUnknown, Reason: "loading: no screen to act on"}
 	}
 	// Seen buttons, topmost first: the sub-panel sits on the pause menu, the
-	// vendor X also takes down the bag beside it.
-	for _, q := range []Panel{SubPanel, PauseMenu, Shop, Inventory, RightPanel} {
+	// vendor X also takes down the bag beside it; then the left panels, then the
+	// right ones (every X photographed in relay R2 — see closeSpot).
+	for _, q := range clickOrder {
 		if r.Sight&q == 0 {
 			continue
 		}
