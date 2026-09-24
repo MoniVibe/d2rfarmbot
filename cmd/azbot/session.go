@@ -23,6 +23,11 @@ import (
 // runs (engaged, in game) and the next ready tick requests a relog.
 const relogNowPath = "logs/relog.now"
 
+// stopNowPath: the owner's graceful stop — create this file while the bot runs
+// and the session winds down (exec.Session WindDown): to town or a quiet field,
+// then a normal exit. A stale one is removed at startup.
+const stopNowPath = "logs/stop.now"
+
 type sessionDriver struct {
 	logger *slog.Logger
 	m      *motor.Motor
@@ -38,6 +43,8 @@ type sessionDriver struct {
 
 	refusal   string // the last refused request's reason (one log line per change)
 	refusalAt time.Time
+
+	out exec.SessionOut // the last step's answer (the executive reads Wind)
 }
 
 func newSessionDriver(logger *slog.Logger, m *motor.Motor, gr *game.MemoryReader, sh *shadow, relog *activity.Relog) *sessionDriver {
@@ -48,7 +55,28 @@ func newSessionDriver(logger *slog.Logger, m *motor.Motor, gr *game.MemoryReader
 
 func (d *sessionDriver) in(s *percept.Snapshot) exec.SessionIn {
 	return exec.SessionIn{Now: time.Now(), Engaged: d.m.Engage.Engaged(), Focused: d.m.GameFocused(),
-		Valid: s.Valid, Seed: uint64(d.gr.MapSeed()), Seen: d.sh.Eye.Latest()}
+		Valid: s.Valid, Seed: uint64(d.gr.MapSeed()), Seen: d.sh.Eye.Latest(),
+		InTown: s.Valid && s.Me.InTown, Hot: s.Valid && hot(s)}
+}
+
+// hot: a living monster (percept drops the dying and the dead) within
+// exec.WindRadius tiles — the field is not safe to end the run in.
+func hot(s *percept.Snapshot) bool {
+	for _, e := range s.Enemies {
+		if chebyshev(s.Me.Pos, e.Pos) <= exec.WindRadius {
+			return true
+		}
+	}
+	return false
+}
+
+// stop asks the session for the safe end of the run; logged once.
+func (d *sessionDriver) stop(tick uint64, why string) {
+	d.ses.Tick = tick
+	if d.ses.Stop(time.Now(), why) {
+		d.logger.Warn("SESSION: wind-down requested — to town or a quiet field, then exit", "why", why,
+			"cap", exec.WindCap)
+	}
 }
 
 // request asks the session for a relog; true when it took it. A refusal (the
@@ -72,6 +100,10 @@ func (d *sessionDriver) step(tick uint64, s *percept.Snapshot) bool {
 	d.ses.Tick = tick
 	before := d.ses.String()
 	out := d.ses.Step(d.in(s))
+	d.out = out
+	if out.Say != "" {
+		d.logger.Warn(out.Say)
+	}
 	if out.Act != exec.SesNoAct {
 		ok := d.relog.Perform(d.m, out.Act, out.At.X, out.At.Y)
 		d.ses.Acted(time.Now(), ok)

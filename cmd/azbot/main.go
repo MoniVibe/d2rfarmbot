@@ -15,6 +15,7 @@ import (
 	"os/signal"
 	"sort"
 	"strings"
+	"sync/atomic"
 	"syscall"
 	"time"
 	"unsafe"
@@ -183,7 +184,8 @@ func vkOf(name string) int {
 }
 
 func main() {
-	seconds := flag.Int("seconds", 3600, "run duration in seconds")
+	seconds := flag.Int("seconds", 3600, "run budget in seconds — then the SAFE END: the session winds down (TP to town or a quiet field; never exits with a monster within 40) and, not safe after 120s, disengages and holds. logs/stop.now and a first Ctrl-C do the same")
+	disengagedF := flag.Bool("disengaged", false, "start DISENGAGED (teaching mode): full perception, screen shadow, trace/state lines and flight recorder, ZERO input — no injector stubs, no attach amnesty, no calibration or startup hygiene — until F10 engages")
 	dpiScale := flag.Float64("dpiscale", 1.25, "display scale (this laptop: 1.25)")
 	fakeFocus := flag.Bool("fakefocus", true, "background play: post WM_ACTIVATE-family messages so D2R keeps its hover oracle alive while another window has the foreground (never takes focus, never clips the cursor)")
 	worldScaleF := flag.Float64("worldscale", 0, "world-aim scale override (logical client px -> world cursor px). 0 = the display scale; the per-client projection correction comes from -aimcal instead")
@@ -283,26 +285,56 @@ func main() {
 		logger.Error("injector init failed", "err", err)
 		return
 	}
-	if err := gi.Load(); err != nil {
+	if *disengagedF {
+		// DISENGAGED START: no stubs are loaded (F10's Reengage loads them); the
+		// unload only heals whatever a prior run may have left patched — the
+		// kill-switch's own heal, no input.
+		_ = gi.Unload()
+	} else if err := gi.Load(); err != nil {
 		logger.Error("injector load failed", "err", err)
 		return
 	}
 	defer func() { gi.Unload(); gi.Close() }()
-	sigCh := make(chan os.Signal, 1)
+	// THE SAFE END (relay R4): the executive's graceful stop requests — the
+	// -seconds budget, logs/stop.now and a first Ctrl-C — all wind the session
+	// down (exec.Session WindDown). A second Ctrl-C, a SIGTERM (console close
+	// gives no time to wind down) or any signal before the executive runs
+	// heals and exits at once, as before.
+	var executiveLive atomic.Bool
+	stopReq := make(chan string, 1)
+	sigCh := make(chan os.Signal, 2)
 	signal.Notify(sigCh, os.Interrupt, syscall.SIGTERM)
 	go func() {
-		<-sigCh
-		logger.Info("signal — healing D2R input and exiting")
-		gi.Unload()
-		gi.Close()
-		os.Exit(0)
+		for sig := range sigCh {
+			if sig == os.Interrupt && executiveLive.Load() {
+				select {
+				case stopReq <- "signal (Ctrl-C)":
+					logger.Warn("signal — winding down safely (town or a quiet field, then exit); Ctrl-C again exits NOW")
+					continue
+				default:
+				}
+			}
+			logger.Info("signal — healing D2R input and exiting")
+			gi.Unload()
+			gi.Close()
+			os.Exit(0)
+		}
 	}()
 	hid := game.NewHID(gr, gi)
 	// Modifier amnesty at attach AND exit (LIFO: this defer runs before gi.Unload's
 	// heal): clear latched shift/ctrl/alt so nobody inherits a stuck modifier.
-	hid.ModifierAmnesty()
-	game.SendModifierUpReal()
-	defer func() { hid.ModifierAmnesty(); game.SendModifierUpReal() }()
+	// A -disengaged run sends neither until F10 first engages it.
+	neverEngaged := *disengagedF
+	if !neverEngaged {
+		hid.ModifierAmnesty()
+		game.SendModifierUpReal()
+	}
+	defer func() {
+		if !neverEngaged {
+			hid.ModifierAmnesty()
+			game.SendModifierUpReal()
+		}
+	}()
 
 	// ---- M0: epistemics gate ----
 	p := percept.New(gr)
@@ -327,7 +359,7 @@ func main() {
 		// A PAUSED GAME READS AS GARBAGE (2026-09-23: position/stats invalid behind
 		// the ESC menu — two attach failures that day were a stray pause). The
 		// screen identifies it; the cure is a click on Return to Game, never ESC.
-		if i == 4 || i == 10 {
+		if (i == 4 || i == 10) && !*disengagedF { // -disengaged: no input before F10
 			if _, x, y, ok := game.UIBlocker(gr.Screenshot()); ok {
 				hid.FocusGame()
 				time.Sleep(200 * time.Millisecond)
@@ -358,6 +390,9 @@ func main() {
 	// ---- motor + sentinel ----
 	m := motor.New(logger, hid, gi, hid.GetASCIICode(*moveKey))
 	m.SetPanelScale(*dpiScale)
+	if *disengagedF {
+		m.StartDisengaged() // before the sentinel starts: not one drink, not one key
+	}
 	var beltKeys []byte
 	for _, k := range strings.Split(*belt, ",") {
 		if k = strings.TrimSpace(k); k != "" {
@@ -1822,18 +1857,20 @@ func main() {
 	relog := activity.NewRelog()
 	sd := newSessionDriver(logger, m, gr, sh, relog)
 	gk := newGatekeeper(logger, m, gr, sh, sd.ses)
-	if janitorOn {
-		if n := gk.settle(p); n > 0 {
-			logger.Info("startup: janitor cleared foreign screens by sight", "actions", n)
-		}
-	} else {
-		if x, y, ok := game.ShopOpenX(gr.Screenshot()); ok {
-			logger.Info("startup: inherited trade panel — closing by its X")
-			m.RealMenuClick(x, y)
-			time.Sleep(400 * time.Millisecond)
-		}
-		if n := activity.EnsureWorld(gr, m); n > 0 {
-			logger.Info("startup: cleared blocking screens by sight", "layers", n)
+	hygiene := func() {
+		if janitorOn {
+			if n := gk.settle(p); n > 0 {
+				logger.Info("startup: janitor cleared foreign screens by sight", "actions", n)
+			}
+		} else {
+			if x, y, ok := game.ShopOpenX(gr.Screenshot()); ok {
+				logger.Info("startup: inherited trade panel — closing by its X")
+				m.RealMenuClick(x, y)
+				time.Sleep(400 * time.Millisecond)
+			}
+			if n := activity.EnsureWorld(gr, m); n > 0 {
+				logger.Info("startup: cleared blocking screens by sight", "layers", n)
+			}
 		}
 	}
 	// calibrate wraps probing + the owner's declared build: the owner KNOWS the char
@@ -1875,8 +1912,23 @@ func main() {
 		}
 		return c
 	}
-	cap := calibrate()
-	activity.SetBrawler(cap.Reach == nil && cap.Throw == nil) // P-2.-2: no ranged game = the Brawler's Creed
+	// The engaged start: hygiene, then calibration (Calibrate presses F1..F8
+	// through the HID — input). A -disengaged start defers both to the first
+	// engaged tick; until then the capability is empty and nothing acts.
+	var cap combat.Capability
+	started := false
+	start := func() {
+		started = true
+		hygiene()
+		cap = calibrate()
+		activity.SetBrawler(cap.Reach == nil && cap.Throw == nil) // P-2.-2: no ranged game = the Brawler's Creed
+	}
+	if *disengagedF {
+		sd.ses.Disengage(time.Now(), "-disengaged start: the owner drives until F10")
+		logger.Warn("DISENGAGED start: press F10 to engage — perceiving only (screen shadow, trace, flight recorder), no input until then")
+	} else {
+		start()
+	}
 	arb := &arbiter.Arbiter{}
 	road := []data.Position{{X: 6020, Y: 4952}, {X: 5992, Y: 4941}, {X: 5963, Y: 5001}, {X: 5962, Y: 4956}, {X: 5952, Y: 4944}}
 	// The hand-piloted road belongs to ONE world — its own provenance says
@@ -2079,6 +2131,25 @@ func main() {
 	}
 	var flightAt time.Time
 	lastBids := 0 // demands in the last Decide, for the decision frame
+	// record writes the 1 Hz sample — engaged or not: a disengaged run (the
+	// owner driving, -disengaged, a wind-down hold) is evidence too.
+	record := func(tick uint64, s *percept.Snapshot) {
+		if flightW == nil || time.Since(flightAt) < time.Second {
+			return
+		}
+		if b, err := json.Marshal(s); err == nil {
+			flightW.Write(b)
+			flightW.WriteByte('\n')
+			flightW.Flush()
+		}
+		// The decision frame follows its snapshot (replay skips it by "k").
+		if b, err := json.Marshal(sh.frame(tick, s, arb, core, roster, lastBids)); err == nil {
+			flightW.Write(b)
+			flightW.WriteByte('\n')
+			flightW.Flush()
+		}
+		flightAt = time.Now()
+	}
 	var ring []*percept.Snapshot
 	wasArmed := false
 	wasDead := false
@@ -2086,6 +2157,11 @@ func main() {
 	// deadman box, the pacer); the executive benches, and Unstick performs.
 	wd := watchdog.New()
 	deadline := time.Now().Add(time.Duration(*seconds) * time.Second)
+	// A stale stop file must not end the new run on its first tick.
+	if err := os.Remove(stopNowPath); err == nil {
+		logger.Warn("startup: removed a stale stop request", "path", stopNowPath)
+	}
+	var stopLookAt time.Time // last look for the owner's stop.now
 	statusAt := time.Time{}
 	stallWarnAt := time.Time{}
 	prevEngaged := true
@@ -2130,7 +2206,8 @@ func main() {
 	idleSince := time.Time{}
 	idleSaidAt := time.Time{}
 	lastTick := time.Time{}
-	for time.Now().Before(deadline) {
+	executiveLive.Store(true)
+	for {
 		// THE TICK HAS A FLOOR (night-2 audit finding 10): the granted path had
 		// no sleep at all — the executive busy-spun Capture+Observe+Step at
 		// maximum rate, spraying sub-350ms no-op cycles and periodically
@@ -2193,8 +2270,47 @@ func main() {
 				}
 			}
 		}
+		// THE SAFE END (relay R4): the budget, the owner's stop file and a first
+		// Ctrl-C ask the session to wind down; the session decides when the run
+		// may end (in town, or no living monster within 40 for 3s).
+		if !sd.ses.Winding() {
+			switch {
+			case !time.Now().Before(deadline):
+				sd.stop(tick, "time budget spent")
+			case time.Since(stopLookAt) >= time.Second:
+				stopLookAt = time.Now()
+				if _, err := os.Stat(stopNowPath); err == nil {
+					_ = os.Remove(stopNowPath)
+					sd.stop(tick, "owner stop ("+stopNowPath+")")
+				}
+			}
+			select {
+			case why := <-stopReq:
+				sd.stop(tick, why)
+			default:
+			}
+		}
 		sesOwns := sd.step(tick, s)
 		sh.stateLine(tick, s, sd.ses.String(), arb, roster)
+		// WindTown: the town road (Recall, Withdraw's TP ride) bids this tick.
+		roster.Recall.Want(sd.out.Wind == exec.WindTown)
+		if w := sd.out.Wind; w == exec.WindExit || w == exec.WindHold {
+			// Either way nothing more is driven: stop the feet and end the
+			// holder's episode (its lease and keys go with it).
+			m.MoveStop()
+			if who := holderWho(arb); who != "" {
+				core.End(&activity.Ctx{M: m, GR: gr, P: p, Led: led, Grid: grid, Cap: &cap, Snap: s, Mem: mem,
+					Seen: sh.Eye.Latest(), Held: arb.Held}, who, phase.Abandoned, phase.Preempted, "session: "+sd.ses.String())
+			}
+			if w == exec.WindExit {
+				logger.Warn("SESSION: safe to stop — exiting", "town", s.Valid && s.Me.InTown,
+					"pos", fmt.Sprintf("(%d,%d)", s.Me.Pos.X, s.Me.Pos.Y), "area", int(s.Me.Area))
+				break
+			}
+			// The cap: hand the controls back (the kill-switch's own path) and
+			// hold — perceiving, reminding every 30s, never exiting while hot.
+			m.Disengage()
+		}
 		if wasRelogging && !sd.ses.Relogging() {
 			// A relog moves her to a new world's spawn (or leaves the world
 			// intact after a pause): the position monitors start fresh, the
@@ -2204,6 +2320,15 @@ func main() {
 		wasRelogging = sd.ses.Relogging()
 		if sesOwns {
 			sawInvalid = sawInvalid || !s.Valid
+			continue
+		}
+		if !started && s.Valid && m.Engage.Engaged() {
+			// -disengaged: F10 engaged for the first time — the deferred start.
+			neverEngaged = false
+			logger.Warn("ENGAGED: first engagement of a -disengaged run — startup hygiene and calibration now")
+			start()
+			wasArmed = s.Me.Armed // calibrated just now: not an armed-flip event
+			wd.Reset()
 			continue
 		}
 		if !s.Valid || !m.Engage.Engaged() {
@@ -2216,6 +2341,7 @@ func main() {
 			if s.Valid {
 				recordCrossing(s)
 				padWitness(s) // the owner's pad stands teach the ledger too
+				record(tick, s)
 			}
 			sawInvalid = sawInvalid || !s.Valid
 			time.Sleep(200 * time.Millisecond)
@@ -2283,20 +2409,7 @@ func main() {
 		if len(ring) > 300 {
 			ring = ring[1:]
 		}
-		if flightW != nil && time.Since(flightAt) >= time.Second {
-			if b, err := json.Marshal(s); err == nil {
-				flightW.Write(b)
-				flightW.WriteByte('\n')
-				flightW.Flush()
-			}
-			// The decision frame follows its snapshot (replay skips it by "k").
-			if b, err := json.Marshal(sh.frame(tick, s, arb, core, roster, lastBids)); err == nil {
-				flightW.Write(b)
-				flightW.WriteByte('\n')
-				flightW.Flush()
-			}
-			flightAt = time.Now()
-		}
+		record(tick, s)
 		// Self-model events: armed flip OR back-from-death → recalibrate capability.
 		deadNow := s.Me.HPPct <= 0
 		if deadNow && !wasDead {
@@ -2628,6 +2741,9 @@ func main() {
 			statusAt = time.Now()
 		}
 	}
+	// THE NORMAL EXIT, reached only when the session judged it safe (Stopped):
+	// the feet were stopped above; the defers release modifiers and heal the
+	// input patches exactly as every clean exit does.
 	close(stop)
-	logger.Info("azbot done")
+	logger.Info("azbot done", "ses", sd.ses.String())
 }

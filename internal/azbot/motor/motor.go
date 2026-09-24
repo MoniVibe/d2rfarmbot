@@ -105,6 +105,13 @@ func (m *Motor) Disengage() {
 	m.log.Warn("MOTOR DISENGAGED — Diablo is yours; input patches healed")
 }
 
+// StartDisengaged is the -disengaged start: actuation is dead before the first
+// tick, with nothing to release (the caller never loaded the injector's
+// stubs). The kill-switch's Reengage (F10) arms it exactly as after a toggle.
+func (m *Motor) StartDisengaged() {
+	m.Engage.engaged.Store(false)
+}
+
 // Reengage: re-arms actuation. The injector reloads its stubs; override pokes are
 // idempotent and re-applied per action, so nothing else is needed.
 func (m *Motor) Reengage() {
