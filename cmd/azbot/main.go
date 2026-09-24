@@ -184,8 +184,8 @@ func vkOf(name string) int {
 }
 
 func main() {
-	seconds := flag.Int("seconds", 3600, "run budget in seconds — then the SAFE END: the session winds down (TP to town or a quiet field; never exits with a monster within 40), then -pausefailsafe, then disengage and hold (see -winddown). logs/stop.now and a first Ctrl-C do the same")
-	windDownF := flag.Duration("winddown", exec.WindCap, "the SAFE END's Recall budget: this long to TP to town (or find a field quiet 3s) before the next rung — the pause (-pausefailsafe) or disengage-and-hold")
+	seconds := flag.Int("seconds", 3600, "run budget in seconds — then the SAFE END: the session winds down (TP to town; outside town never an exit but the confirmed pause menu), then -pausefailsafe, then disengage and hold (see -winddown). logs/stop.now and a first Ctrl-C do the same")
+	windDownF := flag.Duration("winddown", exec.WindCap, "the SAFE END's Recall budget: this long to TP to town before the next rung — the pause (-pausefailsafe) or disengage-and-hold")
 	pauseFailsafeF := flag.Bool("pausefailsafe", true, "the SAFE END's pause rung: when the Recall budget is spent, Recall gives up (no tome / an empty one) or HP falls under the flee floor (33%), open the pause menu (one ESC on a clear screen, seen within 2s, one retry) and exit with it LEFT UP; not confirmed → disengage and hold. Live test R8 verifies the pause freezes the offline world — if it does not, this default flips to false and the ladder goes straight from Recall to disengage-and-hold (tome and HP then do not end the Recall rung)")
 	disengagedF := flag.Bool("disengaged", false, "start DISENGAGED (teaching mode): full perception, screen shadow, trace/state lines and flight recorder, ZERO input — no injector stubs, no attach amnesty, no calibration or startup hygiene — until F10 engages")
 	dpiScale := flag.Float64("dpiscale", 1.25, "display scale (this laptop: 1.25)")
@@ -322,7 +322,7 @@ func main() {
 			if sig == os.Interrupt && executiveLive.Load() {
 				select {
 				case stopReq <- "signal (Ctrl-C)":
-					logger.Warn("signal — winding down safely (town or a quiet field, then exit); Ctrl-C again exits NOW")
+					logger.Warn("signal — winding down safely (town, else pause, else hold); Ctrl-C again exits NOW")
 					continue
 				default:
 				}

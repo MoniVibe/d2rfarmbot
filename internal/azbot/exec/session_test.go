@@ -24,7 +24,7 @@ type world struct {
 	panels  screen.Panel // anything else on screen
 	refuse  bool         // the motor finds no foreground
 	town    bool         // WindDown: the character stands in town
-	hot     bool         // WindDown: a living monster within WindRadius
+	hot     bool         // WindDown: monsters near (no input to the session any more: a quiet field is never an exit)
 	hp      int          // WindDown: the character's HP%
 	spent   bool         // WindDown: Recall gave up the town road (no tome / an empty one)
 
@@ -98,7 +98,7 @@ func (w *world) tick() SessionOut {
 	w.later = keep
 	w.ses.Tick++
 	out := w.ses.Step(SessionIn{Now: w.now, Engaged: w.engaged, Focused: w.focused, Valid: w.valid, Seed: w.seed, Seen: w.seen(),
-		InTown: w.valid && w.town, Hot: w.valid && w.hot, HPPct: w.hp, RecallSpent: w.spent})
+		InTown: w.valid && w.town, HPPct: w.hp, RecallSpent: w.spent})
 	if out.Owns {
 		w.owned++
 	}

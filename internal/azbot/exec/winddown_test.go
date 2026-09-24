@@ -12,9 +12,11 @@ import (
 
 // THE SAFE END (relay R4: -seconds 240 expired mid-fight in the Dry Hills and
 // the process exited, leaving the character undriven). Pure table tests of the
-// Session's WindDown: the run ends only in town or in a field quiet for 3s;
-// otherwise the town road bids, and after the budget the motor is disengaged
-// and the process holds — never exiting while a monster is near. TestWindDown
+// Session's WindDown: the run ends only in town (or, by the pause rung, under
+// a confirmed pause menu); otherwise the town road bids, and after the budget
+// the motor is disengaged and the process holds — a quiet field is never an
+// exit (relay R10: "safe: no monster within 40 for 3s" left her standing in
+// the Maggot Lair). TestWindDown
 // runs the -pausefailsafe=false ladder (2 → Hold) with the old 120s budget;
 // TestWindDownPause runs the owner's full ladder at the defaults.
 
@@ -61,18 +63,18 @@ func TestWindDown(t *testing.T) {
 		winds:  []string{"exit@0.1"},
 		path:   []string{"Attaching>InGame", "InGame>WindDown", "WindDown>Stopped"},
 	}, {
-		name: "field quiet 3s: exit at 3s, not before",
+		name: "R10: a quiet field is never an exit — the town road rides to the cap, then Hold",
 		script: func(w *world) {
-			w.run(2900 * time.Millisecond)
-			if w.stopped() {
-				w.t.Fatalf("stopped before 3s of quiet")
+			w.run(119900 * time.Millisecond)
+			if w.stopped() || len(w.winds) != 0 {
+				w.t.Fatalf("a quiet field ended the run: %s %v", w.ses, w.winds)
 			}
-			w.tick()
-			w.tick()
+			w.tick() // 120.0: the cap
 		},
-		winds: []string{"exit@3.1"},
-		path:  []string{"Attaching>InGame", "InGame>WindDown", "WindDown>Stopped"},
-		towns: true, // the road home bids while the quiet proves itself
+		winds: []string{"hold@120.0"},
+		path:  []string{"Attaching>InGame", "InGame>WindDown", "WindDown>WindDown/Hold"},
+		towns: true,
+		says:  []string{HoldCapSay},
 	}, {
 		name: "field hot: the town road, then town: exit",
 		hot:  true,
@@ -85,25 +87,6 @@ func TestWindDown(t *testing.T) {
 			w.tick()
 		},
 		winds: []string{"exit@20.1"},
-		path:  []string{"Attaching>InGame", "InGame>WindDown", "WindDown>Stopped"},
-		towns: true,
-	}, {
-		name: "a monster returning restarts the quiet clock",
-		hot:  true,
-		script: func(w *world) {
-			w.run(time.Second)
-			w.hot = false
-			w.run(2 * time.Second)
-			w.hot = true // back inside 40 before the 3s were up
-			w.tick()
-			w.hot = false
-			w.run(2900 * time.Millisecond)
-			if w.stopped() {
-				w.t.Fatalf("stopped on an interrupted quiet")
-			}
-			w.run(200 * time.Millisecond)
-		},
-		winds: []string{"exit@6.2"},
 		path:  []string{"Attaching>InGame", "InGame>WindDown", "WindDown>Stopped"},
 		towns: true,
 	}, {
@@ -138,19 +121,24 @@ func TestWindDown(t *testing.T) {
 		towns: true,
 		says:  []string{HoldCapSay, HoldCapSay, HoldCapSay, HoldCapSay},
 	}, {
-		name: "held after the cap: the field goes quiet — exit",
+		name: "held after the cap: the field goes quiet — still held; town exits",
 		hot:  true,
 		script: func(w *world) {
 			w.run(120 * time.Second)
 			w.engaged = false
 			w.run(10 * time.Second)
 			w.hot = false
-			w.run(3100 * time.Millisecond)
+			w.run(20 * time.Second)
+			if w.stopped() {
+				w.t.Fatalf("a quiet field ended the hold")
+			}
+			w.town = true // the owner walked him home
+			w.tick()
 		},
-		winds: []string{"hold@120.0", "exit@133.1"},
+		winds: []string{"hold@120.0", "exit@150.1"},
 		path:  []string{"Attaching>InGame", "InGame>WindDown", "WindDown>WindDown/Hold", "WindDown/Hold>Stopped"},
 		towns: true,
-		says:  []string{HoldCapSay},
+		says:  []string{HoldCapSay, HoldCapSay},
 	}, {
 		name: "F10 during wind-down: hold, no town road; F10 again resumes with a fresh cap",
 		hot:  true,
@@ -391,6 +379,22 @@ func TestWindDownPause(t *testing.T) {
 		winds:  []string{"exit@0.1"},
 		path:   []string{"Attaching>InGame", "InGame>WindDown", "WindDown>Stopped"},
 		rungs:  []string{"exit"},
+	}, {
+		name:  "R10: a quiet field (Maggot Lair L1) is no exit — recall for the budget, then pause",
+		setup: func(w *world) { w.hot, w.onEsc = false, late },
+		script: func(w *world) {
+			w.run(29900 * time.Millisecond)
+			if w.stopped() || w.towns < 290 {
+				w.t.Fatalf("29.9s in a quiet field: %s, %d town ticks", w.ses, w.towns)
+			}
+			w.untilStopped(5 * time.Second)
+		},
+		winds:  []string{"pause@30.0", "exit@30.4"},
+		path:   []string{"Attaching>InGame", "InGame>WindDown", "WindDown>WindDown/Pause", "WindDown/Pause>Stopped"},
+		acts:   []string{"esc"},
+		rungs:  []string{"recall", "pause", "exit"},
+		says:   []string{PausedSay},
+		paused: true,
 	}, {
 		name:   "rung 2: the portal takes him home inside the budget",
 		script: func(w *world) { w.run(20 * time.Second); w.hot, w.town = false, true; w.tick() },

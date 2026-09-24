@@ -29,7 +29,9 @@ import (
 // tick outside a relog enters WindDown, where the normal loop keeps running.
 // THE OWNER'S LADDER, one rung at a time (each logged `WINDDOWN rung=<name>`):
 //
-//	1 exit    in town (or the field quiet 3s) ──▶ Stopped (exit)
+//	1 exit    in town ──▶ Stopped (exit). Outside town there is NO exit on
+//	          quiet (relay R10 exited in an empty Maggot Lair, town=false; the
+//	          owner: "town if easy, otherwise pause; death beyond that is fine")
 //	2 recall  WindDown: the town road bids (Recall, class Recover — over
 //	          Fight, under Survive; the sentinel keeps drinking) for the
 //	          Recall budget (-winddown, 30s)
@@ -46,8 +48,8 @@ import (
 //	                       │ every 30s: the hold reminder
 //	                       └──F10 re-engaged──▶ WindDown (a fresh budget)
 //
-// Never Stopped while a living monster stands within WindRadius tiles —
-// except by rung 3, where the world is frozen under the pause menu.
+// Outside town the run is never Stopped but by rung 3, where the world is
+// frozen under the pause menu (confirmed by sight) — however quiet the field.
 //
 // Every phase is judged BY SIGHT or by memory validity with a bounded wait:
 // no sleeps, no ESC loops. The one ESC is sent only on a stable Reading that
@@ -162,9 +164,7 @@ const (
 	SesWorldWait     = 45 * time.Second       // a valid world must return within (from the first Play)
 	SesWorldStable   = time.Second            // valid this long counts as back
 
-	WindRadius = 40               // tiles (Chebyshev): a living monster this close keeps the field hot
-	WindQuiet  = 3 * time.Second  // a field quiet this long is safe to stop in
-	WindCap    = 30 * time.Second // the Recall budget (-winddown): not safe this long after the request → Pause (or Hold)
+	WindCap    = 30 * time.Second // the Recall budget (-winddown): not in town this long after the request → Pause (or Hold)
 	WindClear  = 3 * time.Second  // WindDown/Pause: the screen not clear this long before the first ESC → Hold
 	WindSay    = 30 * time.Second // the hold reminder's period
 )
@@ -197,7 +197,7 @@ func (a WindAct) String() string {
 // Hold reminders, verbatim in the owner's log every WindSay.
 const (
 	HoldCapSay   = "WINDDOWN: could not reach safety — disengaged and holding; press F10 to resume or kill the process"
-	HoldOwnerSay = "WINDDOWN: disengaged, the owner drives — holding; exits once in town or the field is quiet 3s; F10 resumes the wind-down"
+	HoldOwnerSay = "WINDDOWN: disengaged, the owner drives — holding; exits once in town; F10 resumes the wind-down"
 	HoldPauseSay = "WINDDOWN: could not reach safety and the pause menu was not confirmed — disengaged and holding; press F10 to resume or kill the process"
 	PausedSay    = "WINDDOWN: paused and exiting (menu left up)"
 )
@@ -220,8 +220,7 @@ type SessionIn struct {
 	Valid   bool   // percept Snapshot.Valid
 	Seed    uint64 // the map seed as the executive last fetched it
 	Seen    *Seen  // the latest published screen observation (nil before the first)
-	InTown  bool   // WindDown: percept Me.InTown (the safe harbour)
-	Hot     bool   // WindDown: a living monster within WindRadius tiles
+	InTown  bool   // WindDown: percept Me.InTown (the one safe harbour)
 	HPPct   int    // WindDown: percept Me.HPPct (under FleeFloor: the pause rung)
 	// WindDown: the Recall activity gave up the town road (no tome, or three
 	// dud casts — Withdraw.ride's empty-tome detector) and cools.
@@ -261,7 +260,7 @@ type Session struct {
 	// Timings (NewSession sets the defaults).
 	Settle, Fresh, PauseWait, SaveExitRetry, SaveExitWait, UnloadGrace time.Duration
 	MenuSettle, PlayRefused, PlayRetry, WorldWait, WorldStable         time.Duration
-	WindQuiet, WindCap, WindClear, WindSay                             time.Duration
+	WindCap, WindClear, WindSay                                        time.Duration
 	// PauseFailsafe (-pausefailsafe): rung 3 is on. Off, a spent Recall
 	// budget goes straight to Hold and the tome/HP triggers do nothing.
 	PauseFailsafe bool
@@ -296,7 +295,6 @@ type Session struct {
 	paused  bool      // Stopped by the pause rung: the menu stays up, claimed
 	offSeen bool      // Hold: a disengaged tick was seen (only then does engaged mean F10)
 	holdSay string    // the reminder the hold repeats
-	quietAt time.Time // WindDown: the field has been quiet since (zero: hot or unknown)
 	saidAt  time.Time // the last hold reminder
 }
 
@@ -306,7 +304,7 @@ func NewSession() *Session {
 		Settle: SesSettle, Fresh: SesFresh, PauseWait: SesPauseWait, SaveExitRetry: SesSaveExitRetry,
 		SaveExitWait: SesSaveExitWait, UnloadGrace: SesUnloadGrace, MenuSettle: SesMenuSettle,
 		PlayRefused: SesPlayRefused, PlayRetry: SesPlayRetry, WorldWait: SesWorldWait, WorldStable: SesWorldStable,
-		WindQuiet: WindQuiet, WindCap: WindCap, WindClear: WindClear, WindSay: WindSay,
+		WindCap: WindCap, WindClear: WindClear, WindSay: WindSay,
 		PauseFailsafe: true, SaveExit: SaveExitShot, Play: PlayShot,
 	}
 }
@@ -436,25 +434,13 @@ func (s *Session) rung(name, why string) {
 	}
 }
 
-// safe: the one condition the run may end on — in town, or a valid field with
-// no living monster within WindRadius for WindQuiet. An invalid snapshot is
-// never safe (nothing can be judged) and restarts the quiet clock.
+// safe: the one condition the run may end on without the pause rung — a
+// valid snapshot in town. A quiet field is NOT safe (relay R10: "safe: no
+// monster within 40 for 3s" ended the run in the Maggot Lair and left her
+// standing there); outside town the ladder is recall → pause → hold.
 func (s *Session) safe(in SessionIn) (bool, string) {
-	switch {
-	case !in.Valid:
-		s.quietAt = time.Time{}
-		return false, ""
-	case in.InTown:
+	if in.Valid && in.InTown {
 		return true, "safe: in town"
-	case in.Hot:
-		s.quietAt = time.Time{}
-		return false, ""
-	}
-	if s.quietAt.IsZero() {
-		s.quietAt = in.Now
-	}
-	if in.Now.Sub(s.quietAt) >= s.WindQuiet {
-		return true, fmt.Sprintf("safe: no monster within %d for %s", WindRadius, s.WindQuiet)
 	}
 	return false, ""
 }

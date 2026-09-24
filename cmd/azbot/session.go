@@ -24,8 +24,8 @@ import (
 const relogNowPath = "logs/relog.now"
 
 // stopNowPath: the owner's graceful stop — create this file while the bot runs
-// and the session winds down (exec.Session WindDown): to town or a quiet field,
-// then a normal exit. A stale one is removed at startup.
+// and the session winds down (exec.Session WindDown): to town (recall), else
+// the pause menu, else disengage and hold. A stale one is removed at startup.
 const stopNowPath = "logs/stop.now"
 
 type sessionDriver struct {
@@ -59,26 +59,15 @@ func newSessionDriver(logger *slog.Logger, m *motor.Motor, gr *game.MemoryReader
 func (d *sessionDriver) in(s *percept.Snapshot) exec.SessionIn {
 	return exec.SessionIn{Now: time.Now(), Engaged: d.m.Engage.Engaged(), Focused: d.m.GameFocused(),
 		Valid: s.Valid, Seed: uint64(d.gr.MapSeed()), Seen: d.sh.Eye.Latest(),
-		InTown: s.Valid && s.Me.InTown, Hot: s.Valid && hot(s), HPPct: s.Me.HPPct,
+		InTown: s.Valid && s.Me.InTown, HPPct: s.Me.HPPct,
 		RecallSpent: d.recall != nil && d.recall.Spent()}
-}
-
-// hot: a living monster (percept drops the dying and the dead) within
-// exec.WindRadius tiles — the field is not safe to end the run in.
-func hot(s *percept.Snapshot) bool {
-	for _, e := range s.Enemies {
-		if chebyshev(s.Me.Pos, e.Pos) <= exec.WindRadius {
-			return true
-		}
-	}
-	return false
 }
 
 // stop asks the session for the safe end of the run; logged once.
 func (d *sessionDriver) stop(tick uint64, why string) {
 	d.ses.Tick = tick
 	if d.ses.Stop(time.Now(), why) {
-		d.logger.Warn("SESSION: wind-down requested — to town or a quiet field, then exit", "why", why,
+		d.logger.Warn("SESSION: wind-down requested — to town (recall), else pause, else hold", "why", why,
 			"budget", d.ses.WindCap, "pausefailsafe", d.ses.PauseFailsafe, "fleefloor", d.ses.FleeFloor)
 	}
 }
