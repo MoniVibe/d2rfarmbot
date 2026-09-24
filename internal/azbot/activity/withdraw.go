@@ -111,8 +111,9 @@ func (w *Withdraw) ride(ctx *Ctx, who string) Verdict {
 // more kill), under Survive (Breakout, Stand, Flee and Dodge keep him alive,
 // and the sentinel keeps drinking). Urgency sits over Reclaim and under
 // Unstick, whose prescriptions may themselves be a portal home. No tome or an
-// empty one: Recall abandons and cools like Withdraw — the session's quiet
-// field or its cap ends the run instead.
+// empty one: Recall abandons and cools like Withdraw — Spent tells the
+// session, whose ladder then pauses the game (or its quiet field or budget
+// ends the run).
 type Recall struct {
 	want bool
 	w    Withdraw
@@ -125,6 +126,11 @@ func (r *Recall) Name() string { return "recall" }
 // Want is set by the executive every tick: true while the session asks for
 // the town road (exec.WindTown).
 func (r *Recall) Want(on bool) { r.want = on }
+
+// Spent: the town road was abandoned — no tome bound, or three casts with no
+// portal (ride's empty-tome detector) — and Recall cools. The session reads it
+// as exec.SessionIn.RecallSpent: rung 2 is over, pause the game.
+func (r *Recall) Spent() bool { return time.Now().Before(r.w.coolAt) }
 
 func (r *Recall) Demand(s *percept.Snapshot) *arbiter.Demand {
 	if !r.want || !s.Valid || s.Me.InTown || s.Me.HPPct <= 0 || time.Now().Before(r.w.coolAt) {

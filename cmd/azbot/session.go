@@ -35,6 +35,7 @@ type sessionDriver struct {
 	sh     *shadow
 	ses    *exec.Session
 	relog  *activity.Relog
+	recall *activity.Recall // the wind-down's town road: Spent is the empty-tome rung trigger (nil: never spent)
 	// onChange runs after every layer-0 transition with the new ses= value
 	// (the -relogtest drill photographs each phase). nil live.
 	onChange func(ses string)
@@ -50,13 +51,16 @@ type sessionDriver struct {
 func newSessionDriver(logger *slog.Logger, m *motor.Motor, gr *game.MemoryReader, sh *shadow, relog *activity.Relog) *sessionDriver {
 	ses := exec.NewSession()
 	ses.Trace = emit
+	ses.FleeFloor = activity.FleeFloor // the wind-down pauses under Flee's own floor
+	ses.Rung = func(line string) { logger.Warn(line) }
 	return &sessionDriver{logger: logger, m: m, gr: gr, sh: sh, ses: ses, relog: relog}
 }
 
 func (d *sessionDriver) in(s *percept.Snapshot) exec.SessionIn {
 	return exec.SessionIn{Now: time.Now(), Engaged: d.m.Engage.Engaged(), Focused: d.m.GameFocused(),
 		Valid: s.Valid, Seed: uint64(d.gr.MapSeed()), Seen: d.sh.Eye.Latest(),
-		InTown: s.Valid && s.Me.InTown, Hot: s.Valid && hot(s)}
+		InTown: s.Valid && s.Me.InTown, Hot: s.Valid && hot(s), HPPct: s.Me.HPPct,
+		RecallSpent: d.recall != nil && d.recall.Spent()}
 }
 
 // hot: a living monster (percept drops the dying and the dead) within
@@ -75,7 +79,7 @@ func (d *sessionDriver) stop(tick uint64, why string) {
 	d.ses.Tick = tick
 	if d.ses.Stop(time.Now(), why) {
 		d.logger.Warn("SESSION: wind-down requested — to town or a quiet field, then exit", "why", why,
-			"cap", exec.WindCap)
+			"budget", d.ses.WindCap, "pausefailsafe", d.ses.PauseFailsafe, "fleefloor", d.ses.FleeFloor)
 	}
 }
 

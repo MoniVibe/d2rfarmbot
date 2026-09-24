@@ -26,19 +26,28 @@ import (
 // THE SAFE SESSION END (relay R4: a -seconds timer exited mid-fight in the Dry
 // Hills and left the character undriven). The run never just stops: Stop
 // (time budget spent, logs/stop.now, Ctrl-C) records the request and the next
-// tick outside a relog enters WindDown, where the normal loop keeps running:
+// tick outside a relog enters WindDown, where the normal loop keeps running.
+// THE OWNER'S LADDER, one rung at a time (each logged `WINDDOWN rung=<name>`):
 //
-//	InGame/Attaching ──Stop──▶ WindDown ──in town, or field quiet 3s──▶ Stopped (exit)
-//	                             │ still hot: WindTown (the town road bids,
-//	                             │ class Recover — over Fight, under Survive)
-//	                             │ 120s and not safe: WindHold (disengage)
-//	                             ▼
-//	Disengaged ──Stop──▶ WindDown/Hold ◀──F10── (owner drives, or the cap)
+//	1 exit    in town (or the field quiet 3s) ──▶ Stopped (exit)
+//	2 recall  WindDown: the town road bids (Recall, class Recover — over
+//	          Fight, under Survive; the sentinel keeps drinking) for the
+//	          Recall budget (-winddown, 30s)
+//	3 pause   WindDown/Pause, when the budget is spent, Recall abandoned (no
+//	          tome / an empty one), or HP under the flee floor: Relogging's
+//	          OpenPause (one ESC on a clear World, the menu seen within 2s,
+//	          one retry; a panel up gets 3s for the janitor first) ──seen──▶
+//	          Stopped with the pause menu LEFT UP (claimed: nobody closes it)
+//	4 hold    WindDown/Hold: the pause not confirmed (or -pausefailsafe=false
+//	          and the budget spent) — disengage and hold
+//
+//	Disengaged ──Stop──▶ WindDown/Hold ◀──F10── (owner drives, from any face)
 //	                       │ safe (whoever brought him there): Stopped
 //	                       │ every 30s: the hold reminder
-//	                       └──F10 re-engaged──▶ WindDown (a fresh cap)
+//	                       └──F10 re-engaged──▶ WindDown (a fresh budget)
 //
-// Never Stopped while a living monster stands within WindRadius tiles.
+// Never Stopped while a living monster stands within WindRadius tiles —
+// except by rung 3, where the world is frozen under the pause menu.
 //
 // Every phase is judged BY SIGHT or by memory validity with a bounded wait:
 // no sleeps, no ESC loops. The one ESC is sent only on a stable Reading that
@@ -153,20 +162,22 @@ const (
 	SesWorldWait     = 45 * time.Second       // a valid world must return within (from the first Play)
 	SesWorldStable   = time.Second            // valid this long counts as back
 
-	WindRadius = 40                // tiles (Chebyshev): a living monster this close keeps the field hot
-	WindQuiet  = 3 * time.Second   // a field quiet this long is safe to stop in
-	WindCap    = 120 * time.Second // not safe this long after the request: disengage and hold
-	WindSay    = 30 * time.Second  // the hold reminder's period
+	WindRadius = 40               // tiles (Chebyshev): a living monster this close keeps the field hot
+	WindQuiet  = 3 * time.Second  // a field quiet this long is safe to stop in
+	WindCap    = 30 * time.Second // the Recall budget (-winddown): not safe this long after the request → Pause (or Hold)
+	WindClear  = 3 * time.Second  // WindDown/Pause: the screen not clear this long before the first ESC → Hold
+	WindSay    = 30 * time.Second // the hold reminder's period
 )
 
 // WindAct is what a winding-down session asks of the executive this tick.
 type WindAct uint8
 
 const (
-	WindNone WindAct = iota
-	WindTown         // bid the town road (the Recall activity) this tick
-	WindHold         // the cap: stop the motor, end the holder, DISENGAGE — then hold
-	WindExit         // safe: stop the motor and exit normally
+	WindNone  WindAct = iota
+	WindTown          // bid the town road (the Recall activity) this tick
+	WindHold          // the cap: stop the motor, end the holder, DISENGAGE — then hold
+	WindExit          // safe: stop the motor and exit normally
+	WindPause         // the pause rung: stop the feet and end the holder (the session's ESC follows)
 )
 
 func (a WindAct) String() string {
@@ -177,6 +188,8 @@ func (a WindAct) String() string {
 		return "hold"
 	case WindExit:
 		return "exit"
+	case WindPause:
+		return "pause"
 	}
 	return "-"
 }
@@ -185,6 +198,18 @@ func (a WindAct) String() string {
 const (
 	HoldCapSay   = "WINDDOWN: could not reach safety — disengaged and holding; press F10 to resume or kill the process"
 	HoldOwnerSay = "WINDDOWN: disengaged, the owner drives — holding; exits once in town or the field is quiet 3s; F10 resumes the wind-down"
+	HoldPauseSay = "WINDDOWN: could not reach safety and the pause menu was not confirmed — disengaged and holding; press F10 to resume or kill the process"
+	PausedSay    = "WINDDOWN: paused and exiting (menu left up)"
+)
+
+// windFace is WindDown's face: seeking safety (rung 2), pausing (rung 3) or
+// holding (the motor disengaged).
+type windFace uint8
+
+const (
+	windSeek windFace = iota
+	windPause
+	windHold
 )
 
 // SessionIn is one tick's evidence.
@@ -197,6 +222,10 @@ type SessionIn struct {
 	Seen    *Seen  // the latest published screen observation (nil before the first)
 	InTown  bool   // WindDown: percept Me.InTown (the safe harbour)
 	Hot     bool   // WindDown: a living monster within WindRadius tiles
+	HPPct   int    // WindDown: percept Me.HPPct (under FleeFloor: the pause rung)
+	// WindDown: the Recall activity gave up the town road (no tome, or three
+	// dud casts — Withdraw.ride's empty-tome detector) and cools.
+	RecallSpent bool
 }
 
 // SessionOut is the session's answer for one tick.
@@ -232,7 +261,15 @@ type Session struct {
 	// Timings (NewSession sets the defaults).
 	Settle, Fresh, PauseWait, SaveExitRetry, SaveExitWait, UnloadGrace time.Duration
 	MenuSettle, PlayRefused, PlayRetry, WorldWait, WorldStable         time.Duration
-	WindQuiet, WindCap, WindSay                                        time.Duration
+	WindQuiet, WindCap, WindClear, WindSay                             time.Duration
+	// PauseFailsafe (-pausefailsafe): rung 3 is on. Off, a spent Recall
+	// budget goes straight to Hold and the tome/HP triggers do nothing.
+	PauseFailsafe bool
+	// FleeFloor: HP% under which the wind-down stops riding and pauses (the
+	// executive sets activity.FleeFloor; 0 = off).
+	FleeFloor int
+	// Rung hears each `WINDDOWN rung=<name> why=".."` line (nil = silent).
+	Rung func(line string)
 	// Buttons (screenshot pixels): -exitxy / -playxy override them.
 	SaveExit, Play screen.Point
 
@@ -252,8 +289,11 @@ type Session struct {
 
 	// The safe end (WindDown).
 	windWhy string    // the stop request's reason ("" = none; the first one stands)
-	windAt  time.Time // the cap's clock: the request, or the F10 that resumed it
-	hold    bool      // WindDown/Hold: the motor is disengaged, nothing is driven
+	windAt  time.Time // the budget's clock: the request, or the F10 that resumed it
+	face    windFace  // WindDown's face (Hold: the motor is disengaged, nothing is driven)
+	sought  bool      // the recall rung was announced for this face
+	stilled bool      // WindDown/Pause: the feet were stopped and the holder ended
+	paused  bool      // Stopped by the pause rung: the menu stays up, claimed
 	offSeen bool      // Hold: a disengaged tick was seen (only then does engaged mean F10)
 	holdSay string    // the reminder the hold repeats
 	quietAt time.Time // WindDown: the field has been quiet since (zero: hot or unknown)
@@ -266,8 +306,8 @@ func NewSession() *Session {
 		Settle: SesSettle, Fresh: SesFresh, PauseWait: SesPauseWait, SaveExitRetry: SesSaveExitRetry,
 		SaveExitWait: SesSaveExitWait, UnloadGrace: SesUnloadGrace, MenuSettle: SesMenuSettle,
 		PlayRefused: SesPlayRefused, PlayRetry: SesPlayRetry, WorldWait: SesWorldWait, WorldStable: SesWorldStable,
-		WindQuiet: WindQuiet, WindCap: WindCap, WindSay: WindSay,
-		SaveExit: SaveExitShot, Play: PlayShot,
+		WindQuiet: WindQuiet, WindCap: WindCap, WindClear: WindClear, WindSay: WindSay,
+		PauseFailsafe: true, SaveExit: SaveExitShot, Play: PlayShot,
 	}
 }
 
@@ -284,22 +324,32 @@ func (s *Session) Relogging() bool { return s.st == Relogging }
 func (s *Session) Winding() bool { return s.windWhy != "" }
 
 // String is the state line's ses= value: "InGame", "Relogging/AwaitMenu",
-// "WindDown/Hold".
+// "WindDown/Pause", "WindDown/Hold".
 func (s *Session) String() string {
 	if s.st == Relogging {
 		return s.st.String() + "/" + s.ph.String()
 	}
-	if s.st == WindDown && s.hold {
-		return "WindDown/Hold"
+	if s.st == WindDown {
+		switch s.face {
+		case windPause:
+			return "WindDown/Pause"
+		case windHold:
+			return "WindDown/Hold"
+		}
 	}
 	return s.st.String()
 }
 
+// Paused reports a run Stopped by the pause rung (the menu left up).
+func (s *Session) Paused() bool { return s.st == Stopped && s.paused }
+
 // Claims: the panels the session holds while it acts. The pause menu is the
 // relog's road, so the janitor leaves it up while Relogging; the moment the
-// relog ends it is foreign again and the janitor clicks Return to Game.
+// relog ends it is foreign again and the janitor clicks Return to Game. The
+// pause rung claims it too — while it rises and after, until the exit: the
+// run ends with the menu up and nobody clicks Return to Game on it.
 func (s *Session) Claims() screen.Panel {
-	if s.st == Relogging {
+	if s.st == Relogging || (s.st == WindDown && s.face == windPause) || s.Paused() {
 		return screen.PauseMenu
 	}
 	return 0
@@ -307,7 +357,7 @@ func (s *Session) Claims() screen.Panel {
 
 func (s *Session) to(now time.Time, st SessionState, ph RelogPhase, why string) {
 	from := s.String()
-	s.st, s.ph, s.phAt, s.hold = st, ph, now, false
+	s.st, s.ph, s.phAt, s.face, s.stilled = st, ph, now, windSeek, false
 	s.actAt, s.acts, s.refused, s.pending = time.Time{}, 0, false, SesNoAct
 	s.invalidAt, s.validAt = time.Time{}, time.Time{}
 	if s.Trace != nil {
@@ -368,13 +418,21 @@ func (s *Session) Stop(now time.Time, why string) bool {
 	return true
 }
 
-// windTo is to() for the wind-down's two faces (Hold is a flag, not a phase).
-func (s *Session) windTo(now time.Time, hold bool, why string) {
+// windTo is to() for the wind-down's faces (Pause and Hold are faces, not
+// relog phases).
+func (s *Session) windTo(now time.Time, face windFace, why string) {
 	from := s.String()
-	s.st, s.ph, s.phAt, s.hold = WindDown, RelogNone, now, hold
+	s.st, s.ph, s.phAt, s.face, s.sought, s.stilled = WindDown, RelogNone, now, face, false, false
 	s.actAt, s.acts, s.refused, s.pending = time.Time{}, 0, false, SesNoAct
 	if s.Trace != nil {
 		s.Trace(trace.Session(from, s.String(), why, s.Tick))
+	}
+}
+
+// rung logs one step of the owner's ladder: `WINDDOWN rung=<name> why=".."`.
+func (s *Session) rung(name, why string) {
+	if s.Rung != nil {
+		s.Rung(fmt.Sprintf("WINDDOWN rung=%s why=%q", name, why))
 	}
 }
 
@@ -410,48 +468,121 @@ func (s *Session) holdOut(now time.Time) SessionOut {
 	return SessionOut{Say: s.holdSay}
 }
 
-// windDown is one WindDown tick. The session never owns it: the arbiter keeps
-// fighting and the sentinel keeps drinking while the town road bids.
+// holdOwner: F10 — the owner drives (from any face); the town road stops.
+func (s *Session) holdOwner(now time.Time, why string) SessionOut {
+	s.holdSay, s.saidAt, s.offSeen = HoldOwnerSay, time.Time{}, true
+	s.windTo(now, windHold, why)
+	s.rung("hold", why)
+	return s.holdOut(now)
+}
+
+// holdCap: the last rung — the executive disengages on this answer; F10
+// counts only after a disengaged tick has been seen (this tick is still
+// engaged).
+func (s *Session) holdCap(now time.Time, say, why string) SessionOut {
+	s.holdSay, s.saidAt, s.offSeen = say, time.Time{}, false
+	s.windTo(now, windHold, why)
+	s.rung("hold", why)
+	out := s.holdOut(now)
+	out.Wind = WindHold
+	return out
+}
+
+// windDown is one WindDown tick. Seeking, the session never owns it: the
+// arbiter keeps fighting and the sentinel keeps drinking while the town road
+// bids. Pausing, it owns the ticks of the ESC and its confirmation.
 func (s *Session) windDown(in SessionIn) SessionOut {
 	now := in.Now
 	if ok, why := s.safe(in); ok {
 		s.to(now, Stopped, RelogNone, why)
+		s.rung("exit", why)
 		return SessionOut{Owns: true, Wind: WindExit}
 	}
-	if s.hold {
+	if s.face == windHold {
 		if !in.Engaged {
 			s.offSeen = true
 		} else if s.offSeen {
 			s.windAt, s.saidAt = now, time.Time{}
-			s.windTo(now, false, "F10: re-engaged — the wind-down resumes (a fresh "+s.WindCap.String()+")")
+			s.windTo(now, windSeek, "F10: re-engaged — the wind-down resumes (a fresh "+s.WindCap.String()+")")
 			return s.seek(in)
 		}
 		return s.holdOut(now)
 	}
 	if !in.Engaged {
-		s.holdSay, s.saidAt, s.offSeen = HoldOwnerSay, time.Time{}, true
-		s.windTo(now, true, "F10: the owner took control")
-		return s.holdOut(now)
+		return s.holdOwner(now, "F10: the owner took control")
+	}
+	if s.face == windPause {
+		return s.windPause(in)
 	}
 	return s.seek(in)
 }
 
-// seek: engaged and not yet safe — the town road, or the cap.
+// seek: engaged and not yet safe — rung 2, the town road, until the budget is
+// spent, Recall gives up, or the blood runs under the flee floor.
 func (s *Session) seek(in SessionIn) SessionOut {
 	now := in.Now
-	if now.Sub(s.windAt) >= s.WindCap {
-		// The executive disengages on this answer; F10 counts only after a
-		// disengaged tick has been seen (the cap's own tick is still engaged).
-		s.holdSay, s.saidAt, s.offSeen = HoldCapSay, time.Time{}, false
-		s.windTo(now, true, "could not reach safety within "+s.WindCap.String()+": disengage and hold")
-		out := s.holdOut(now)
-		out.Wind = WindHold
-		return out
+	field := in.Valid && !in.InTown
+	why := ""
+	switch {
+	case now.Sub(s.windAt) >= s.WindCap:
+		why = "recall budget " + s.WindCap.String() + " spent"
+	case !s.PauseFailsafe:
+		// Only the budget ends rung 2 without the pause rung: holding (the
+		// motor disengaged — no drinks) on low blood would be worse than riding.
+	case field && in.RecallSpent:
+		why = "recall abandoned: no town portal (tome missing or empty)"
+	case field && s.FleeFloor > 0 && in.HPPct > 0 && in.HPPct < s.FleeFloor:
+		why = fmt.Sprintf("hp %d%% under the flee floor %d%%", in.HPPct, s.FleeFloor)
 	}
-	if in.Valid && !in.InTown {
+	if why != "" {
+		if !s.PauseFailsafe {
+			return s.holdCap(now, HoldCapSay, why+" (-pausefailsafe=false): disengage and hold")
+		}
+		s.windTo(now, windPause, why+": pause the game")
+		s.rung("pause", why)
+		return s.windPause(in)
+	}
+	if !s.sought {
+		s.sought = true
+		s.rung("recall", fmt.Sprintf("%s: town portal, budget %s", s.windWhy, (s.WindCap-now.Sub(s.windAt)).Round(100*time.Millisecond)))
+	}
+	if field {
 		return SessionOut{Wind: WindTown}
 	}
 	return SessionOut{}
+}
+
+// windPause is rung 3: Relogging's OpenPause ritual (pauseStep), then the exit
+// with the menu left up — or, not confirmed, Hold.
+func (s *Session) windPause(in SessionIn) SessionOut {
+	now := in.Now
+	if s.refused {
+		return s.holdCap(now, HoldPauseSay, "pause refused: no foreground — disengage and hold")
+	}
+	p := s.pauseStep(in)
+	switch {
+	case p.up:
+		s.paused = true
+		s.to(now, Stopped, RelogNone, "paused: "+p.detail+" — menu left up")
+		s.rung("exit", "paused: "+p.detail)
+		return SessionOut{Owns: true, Wind: WindExit, Say: PausedSay}
+	case p.wait && (s.acts > 0 || s.stilled):
+		return SessionOut{Owns: true} // the menu may still rise
+	case p.esc && !s.stilled:
+		// First own the tick without input: the feet stop and the holder's
+		// episode ends; the ESC goes on the next tick's reading.
+		s.stilled = true
+		return SessionOut{Owns: true, Wind: WindPause}
+	case p.esc:
+		return s.act(SesEsc, screen.Point{})
+	}
+	// Not ready (or failed). Before the first ESC the janitor gets WindClear to
+	// clear a panel (and the owner to hand back the foreground): the loop runs.
+	if s.acts == 0 && now.Sub(s.phAt) < s.WindClear {
+		s.stilled = false
+		return SessionOut{}
+	}
+	return s.holdCap(now, HoldPauseSay, "pause not confirmed: "+p.detail+" — disengage and hold")
 }
 
 // Acted reports the executive's performance of the last Step's act: ok false
@@ -527,10 +658,12 @@ func (s *Session) Step(in SessionIn) SessionOut {
 		// A stop waits out a relog (the world is in flux); anywhere else the
 		// wind-down begins now — held if the owner drives.
 		if !in.Engaged {
+			why := s.windWhy + " (disengaged: the owner drives)"
 			s.holdSay, s.saidAt, s.offSeen = HoldOwnerSay, time.Time{}, true
-			s.windTo(now, true, s.windWhy+" (disengaged: the owner drives)")
+			s.windTo(now, windHold, why)
+			s.rung("hold", why)
 		} else {
-			s.windTo(now, false, s.windWhy)
+			s.windTo(now, windSeek, s.windWhy)
 		}
 		return s.windDown(in)
 	}
@@ -592,37 +725,46 @@ func (s *Session) Step(in SessionIn) SessionOut {
 // clearForEsc: the one condition an ESC is ever sent on.
 func clearForEsc(r screen.Reading) bool { return r.Mode == screen.World && !r.Panels.Blocking() }
 
-func (s *Session) openPause(in SessionIn) SessionOut {
+// pauseVerdict is one tick of the OpenPause ritual, shared by Relogging's
+// OpenPause and the wind-down's pause rung: exactly one ESC, only on a fresh
+// stable Reading that is World with nothing blocking; the pause menu judged
+// by sight within PauseWait; one retry on the same check; never a third.
+type pauseVerdict struct {
+	up     bool         // the pause menu is seen (detail says how)
+	sub    bool         // ... with a sub-panel over it
+	esc    bool         // send the ESC now
+	wait   bool         // hold on: the menu may still rise, or no reading yet
+	why    phase.Reason // otherwise: not ready / failed, typed
+	detail string
+}
+
+func (s *Session) pauseStep(in SessionIn) pauseVerdict {
 	now := in.Now
 	seen := s.freshSince(in, s.actAt)
 	if seen != nil {
 		r := Stable(*seen)
 		if r.Sight.Has(screen.PauseMenu) {
-			if r.Sight.Has(screen.SubPanel) {
-				return s.fail(now, phase.Precondition, "a sub-panel covers the pause menu")
-			}
 			why := "pause menu seen"
 			if s.acts == 0 {
 				why = "pause menu already up (no ESC)"
 			}
-			s.to(now, Relogging, ClickSaveExit, why)
-			return s.clickSaveExit(in)
+			return pauseVerdict{up: true, sub: r.Sight.Has(screen.SubPanel), detail: why}
 		}
 	}
 	if s.acts > 0 && now.Sub(s.actAt) < s.PauseWait {
-		return SessionOut{Owns: true} // waiting for the menu to rise
+		return pauseVerdict{wait: true} // waiting for the menu to rise
 	}
 	if s.acts >= 2 {
-		return s.fail(now, phase.Deaf, "two ESCs and the pause menu never seen")
+		return pauseVerdict{why: phase.Deaf, detail: "two ESCs and the pause menu never seen"}
 	}
 	if !in.Focused {
-		return s.fail(now, phase.Refused, "game unfocused — no ESC, no focus steal")
+		return pauseVerdict{why: phase.Refused, detail: "game unfocused — no ESC, no focus steal"}
 	}
 	if seen == nil {
 		if s.acts == 0 && now.Sub(s.phAt) < s.PauseWait {
-			return SessionOut{Owns: true} // no fresh reading yet
+			return pauseVerdict{wait: true} // no fresh reading yet
 		}
-		return s.fail(now, phase.Precondition, "no fresh screen reading to judge the ESC on")
+		return pauseVerdict{why: phase.Precondition, detail: "no fresh screen reading to judge the ESC on"}
 	}
 	r := Stable(*seen)
 	if !clearForEsc(r) {
@@ -630,9 +772,26 @@ func (s *Session) openPause(in SessionIn) SessionOut {
 		if s.acts > 0 {
 			detail = "pause menu not seen after the ESC; " + detail
 		}
-		return s.fail(now, phase.Precondition, detail)
+		return pauseVerdict{why: phase.Precondition, detail: detail}
 	}
-	return s.act(SesEsc, screen.Point{})
+	return pauseVerdict{esc: true}
+}
+
+func (s *Session) openPause(in SessionIn) SessionOut {
+	now := in.Now
+	p := s.pauseStep(in)
+	switch {
+	case p.up && p.sub:
+		return s.fail(now, phase.Precondition, "a sub-panel covers the pause menu")
+	case p.up:
+		s.to(now, Relogging, ClickSaveExit, p.detail)
+		return s.clickSaveExit(in)
+	case p.wait:
+		return SessionOut{Owns: true}
+	case p.esc:
+		return s.act(SesEsc, screen.Point{})
+	}
+	return s.fail(now, p.why, p.detail)
 }
 
 func (s *Session) clickSaveExit(in SessionIn) SessionOut {

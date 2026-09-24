@@ -112,8 +112,9 @@ func (rl *Relog) Outcome(e exec.RelogEnd, now time.Time) {
 func (rl *Relog) Perform(m *motor.Motor, act exec.SessionAct, x, y int) bool {
 	switch act {
 	case exec.SesEsc:
-		// The session's single OpenPause ESC — sent only on a stable Reading
-		// that is World with nothing blocking (exec.Session.openPause).
+		// The session's single OpenPause ESC — Relogging's and the WindDown
+		// pause rung's, both judged by exec.Session.pauseStep: sent only on a
+		// stable Reading that is World with nothing blocking.
 		return m.RealEsc()
 	case exec.SesClick:
 		return m.RealMenuClick(x, y)

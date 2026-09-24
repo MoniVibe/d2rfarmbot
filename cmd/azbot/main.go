@@ -184,7 +184,9 @@ func vkOf(name string) int {
 }
 
 func main() {
-	seconds := flag.Int("seconds", 3600, "run budget in seconds — then the SAFE END: the session winds down (TP to town or a quiet field; never exits with a monster within 40) and, not safe after 120s, disengages and holds. logs/stop.now and a first Ctrl-C do the same")
+	seconds := flag.Int("seconds", 3600, "run budget in seconds — then the SAFE END: the session winds down (TP to town or a quiet field; never exits with a monster within 40), then -pausefailsafe, then disengage and hold (see -winddown). logs/stop.now and a first Ctrl-C do the same")
+	windDownF := flag.Duration("winddown", exec.WindCap, "the SAFE END's Recall budget: this long to TP to town (or find a field quiet 3s) before the next rung — the pause (-pausefailsafe) or disengage-and-hold")
+	pauseFailsafeF := flag.Bool("pausefailsafe", true, "the SAFE END's pause rung: when the Recall budget is spent, Recall gives up (no tome / an empty one) or HP falls under the flee floor (33%), open the pause menu (one ESC on a clear screen, seen within 2s, one retry) and exit with it LEFT UP; not confirmed → disengage and hold. Live test R8 verifies the pause freezes the offline world — if it does not, this default flips to false and the ladder goes straight from Recall to disengage-and-hold (tome and HP then do not end the Recall rung)")
 	disengagedF := flag.Bool("disengaged", false, "start DISENGAGED (teaching mode): full perception, screen shadow, trace/state lines and flight recorder, ZERO input — no injector stubs, no attach amnesty, no calibration or startup hygiene — until F10 engages")
 	dpiScale := flag.Float64("dpiscale", 1.25, "display scale (this laptop: 1.25)")
 	fakeFocus := flag.Bool("fakefocus", true, "background play: post WM_ACTIVATE-family messages so D2R keeps its hover oracle alive while another window has the foreground (never takes focus, never clips the cursor)")
@@ -1857,6 +1859,7 @@ func main() {
 	// arbiter activity; Relog is its trigger and its motor half.
 	relog := activity.NewRelog()
 	sd := newSessionDriver(logger, m, gr, sh, relog)
+	sd.ses.WindCap, sd.ses.PauseFailsafe = *windDownF, *pauseFailsafeF
 	gk := newGatekeeper(logger, m, gr, sh, sd.ses)
 	hygiene := func() {
 		if janitorOn {
@@ -1959,6 +1962,7 @@ func main() {
 	}
 	// One registry for live and -replay; its order breaks exact bid ties.
 	roster := activity.Registry(legs, road)
+	sd.recall = roster.Recall // Spent: the wind-down's empty-tome rung trigger
 	fight := roster.Fight
 	// The lifecycle rides the arbiter's Changes: Suspend on preempt/outbid,
 	// Begin on every seat, End on every verdict or monitor release.
@@ -2295,22 +2299,30 @@ func main() {
 		sh.stateLine(tick, s, sd.ses.String(), arb, roster)
 		// WindTown: the town road (Recall, Withdraw's TP ride) bids this tick.
 		roster.Recall.Want(sd.out.Wind == exec.WindTown)
-		if w := sd.out.Wind; w == exec.WindExit || w == exec.WindHold {
-			// Either way nothing more is driven: stop the feet and end the
-			// holder's episode (its lease and keys go with it).
+		if w := sd.out.Wind; w == exec.WindExit || w == exec.WindHold || w == exec.WindPause {
+			// Every way nothing more is driven: stop the feet and end the
+			// holder's episode (its lease and keys go with it). WindPause: the
+			// session's ESC follows on a later tick it owns.
 			m.MoveStop()
 			if who := holderWho(arb); who != "" {
 				core.End(&activity.Ctx{M: m, GR: gr, P: p, Led: led, Grid: grid, Cap: &cap, Snap: s, Mem: mem,
 					Seen: sh.Eye.Latest(), Held: arb.Held}, who, phase.Abandoned, phase.Preempted, "session: "+sd.ses.String())
 			}
 			if w == exec.WindExit {
+				// A paused exit leaves the pause menu up: the session claims it,
+				// and nothing on the way out sends an ESC or clicks Return to Game.
 				logger.Warn("SESSION: safe to stop — exiting", "town", s.Valid && s.Me.InTown,
+					"paused", sd.ses.Paused(),
 					"pos", fmt.Sprintf("(%d,%d)", s.Me.Pos.X, s.Me.Pos.Y), "area", int(s.Me.Area))
 				break
 			}
-			// The cap: hand the controls back (the kill-switch's own path) and
-			// hold — perceiving, reminding every 30s, never exiting while hot.
-			m.Disengage()
+			if w == exec.WindHold {
+				// The last rung: hand the controls back (the kill-switch's own
+				// path) and hold — perceiving, reminding every 30s, never
+				// exiting while hot. WindPause stays engaged: the sentinel
+				// drinks on until the ESC's menu is seen.
+				m.Disengage()
+			}
 		}
 		if wasRelogging && !sd.ses.Relogging() {
 			// A relog moves her to a new world's spawn (or leaves the world

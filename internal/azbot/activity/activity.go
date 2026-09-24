@@ -431,6 +431,12 @@ type Flee struct {
 // suspended — she blasts instead of orbiting. Reset per world (NewWorld).
 var fleeFatigueUntil time.Time
 
+// FleeFloor — P-2.-1 THE FLEE FLOOR (the owner, 23:20): at this HP% or above
+// Flee does not exist (and Fight's wounded stand-down with it). Under it the
+// session's wind-down stops riding for town and pauses the game (exec.Session
+// FleeFloor, rung 3).
+const FleeFloor = 33
+
 // ---------------------------------------------------------------- Stand (ClassSurvive)
 
 type posAt struct {
@@ -648,7 +654,7 @@ func (f *Flee) Demand(s *percept.Snapshot) *arbiter.Demand {
 	// P-2.-1 THE FLEE FLOOR (the owner, 23:20): flee does not exist at 33
 	// blood or above — no crowd bar, no density backstop, no runway math.
 	// The bow answers crowds; Breakout alone keeps the eject seat.
-	if s.Me.HPPct >= 33 {
+	if s.Me.HPPct >= FleeFloor {
 		f.denseN = 0
 		return nil
 	}
@@ -1372,7 +1378,7 @@ func (f *Fight) Demand(s *percept.Snapshot) *arbiter.Demand {
 	// P-2.-1: the stand-down honors the FLEE FLOOR — above 33 blood Flee
 	// cannot bid, so Fight never hands it the moment (a dead band otherwise).
 	// P-2.-2: it NEVER binds a brawler — a brawler who stops swinging is dead.
-	if !brawlerMode && TimeToDie(s) < 8 && s.Me.HPPct < 33 && !time.Now().Before(fleeFatigueUntil) {
+	if !brawlerMode && TimeToDie(s) < 8 && s.Me.HPPct < FleeFloor && !time.Now().Before(fleeFatigueUntil) {
 		near25 := 0
 		for _, e := range s.Enemies {
 			if e.Walled { // WARNING 10

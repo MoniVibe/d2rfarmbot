@@ -25,6 +25,8 @@ type world struct {
 	refuse  bool         // the motor finds no foreground
 	town    bool         // WindDown: the character stands in town
 	hot     bool         // WindDown: a living monster within WindRadius
+	hp      int          // WindDown: the character's HP%
+	spent   bool         // WindDown: Recall gave up the town road (no tome / an empty one)
 
 	onEsc   func(w *world)
 	onClick func(w *world, p screen.Point)
@@ -38,6 +40,7 @@ type world struct {
 	winds []string // WindDown: "<act>@<seconds since newWorld>" for every act but town
 	towns int      // WindDown: ticks that asked for the town road
 	says  []string // hold reminders
+	rungs []string // WINDDOWN rung=<name> lines
 	t0    time.Time
 }
 
@@ -48,9 +51,11 @@ type event struct {
 
 func newWorld(t *testing.T) *world {
 	w := &world{t: t, now: time.Date(2026, 9, 24, 12, 0, 0, 0, time.UTC),
-		engaged: true, focused: true, valid: true, seed: 111}
+		engaged: true, focused: true, valid: true, seed: 111, hp: 80}
 	w.ses = NewSession()
+	w.ses.FleeFloor = 33 // activity.FleeFloor (the executive sets it; an import cycle keeps it out of here)
 	w.ses.Trace = func(l string) { w.lines = append(w.lines, l) }
+	w.ses.Rung = func(l string) { w.rungs = append(w.rungs, l) }
 	w.run(time.Second) // Attaching → InGame
 	w.t0 = w.now
 	return w
@@ -93,7 +98,7 @@ func (w *world) tick() SessionOut {
 	w.later = keep
 	w.ses.Tick++
 	out := w.ses.Step(SessionIn{Now: w.now, Engaged: w.engaged, Focused: w.focused, Valid: w.valid, Seed: w.seed, Seen: w.seen(),
-		InTown: w.valid && w.town, Hot: w.valid && w.hot})
+		InTown: w.valid && w.town, Hot: w.valid && w.hot, HPPct: w.hp, RecallSpent: w.spent})
 	if out.Owns {
 		w.owned++
 	}

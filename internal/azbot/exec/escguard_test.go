@@ -38,7 +38,7 @@ var escAllowed = map[string]struct {
 	// ESC between attempts) became the session's Relogging phases. What stays
 	// is the motor half of the ONE OpenPause ESC, which exec.Session asks for
 	// only on a stable Reading that is World with nothing blocking.
-	"internal/azbot/activity/relog.go": {1, "the session's OpenPause ESC (Relog.Perform)"},
+	"internal/azbot/activity/relog.go": {1, "the session's OpenPause ESC (Relog.Perform) — Relogging and the WindDown pause rung share it"},
 
 	// Step 7 retired safeEsc (pause.go) and Equip/Spend closePanel
 	// (services.go): the town services close their own panels by sight via

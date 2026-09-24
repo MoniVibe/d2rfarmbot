@@ -40,3 +40,21 @@ func TestRecallBidsOnlyWhenTheSessionAsks(t *testing.T) {
 		t.Fatal("recall not registered")
 	}
 }
+
+// No tome bound: the town road is abandoned at once and Spent tells the
+// session (its ladder pauses the game); Recall stops bidding while it cools.
+func TestRecallSpentWithoutATome(t *testing.T) {
+	r := NewRecall()
+	r.Want(true)
+	s := &percept.Snapshot{Valid: true}
+	s.Me.HPPct = 80
+	if r.Spent() {
+		t.Fatal("spent before any ride")
+	}
+	if v := r.Step(&Ctx{Snap: s}); v != Abandoned {
+		t.Fatalf("verdict %v, want Abandoned", v)
+	}
+	if !r.Spent() || r.Demand(s) != nil {
+		t.Fatalf("spent %v demand %+v", r.Spent(), r.Demand(s))
+	}
+}

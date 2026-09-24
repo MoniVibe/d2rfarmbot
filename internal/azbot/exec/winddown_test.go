@@ -2,16 +2,21 @@ package exec
 
 import (
 	"reflect"
+	"regexp"
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/hectorgimenez/koolo/internal/azbot/screen"
 )
 
 // THE SAFE END (relay R4: -seconds 240 expired mid-fight in the Dry Hills and
 // the process exited, leaving the character undriven). Pure table tests of the
 // Session's WindDown: the run ends only in town or in a field quiet for 3s;
-// otherwise the town road bids, and after 120s the motor is disengaged and
-// the process holds — never exiting while a monster is near.
+// otherwise the town road bids, and after the budget the motor is disengaged
+// and the process holds — never exiting while a monster is near. TestWindDown
+// runs the -pausefailsafe=false ladder (2 → Hold) with the old 120s budget;
+// TestWindDownPause runs the owner's full ladder at the defaults.
 
 // windWorld: an engaged session InGame, the stop requested at t0.
 func windWorld(t *testing.T, town, hot bool) *world {
@@ -28,6 +33,13 @@ func (w *world) wantPath(want ...string) {
 	if got := w.path(); !reflect.DeepEqual(got, want) {
 		w.t.Fatalf("path %v, want %v\nlines:\n%s", got, want, strings.Join(w.lines, "\n"))
 	}
+}
+
+// holdWorld: windWorld on the -pausefailsafe=false ladder, -winddown 120s.
+func holdWorld(t *testing.T, town, hot bool) *world {
+	w := windWorld(t, town, hot)
+	w.ses.PauseFailsafe, w.ses.WindCap = false, 120*time.Second
+	return w
 }
 
 func TestWindDown(t *testing.T) {
@@ -201,7 +213,7 @@ func TestWindDown(t *testing.T) {
 	}}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
-			w := windWorld(t, c.town, c.hot)
+			w := holdWorld(t, c.town, c.hot)
 			c.script(w)
 			if !reflect.DeepEqual(w.winds, c.winds) && !(len(w.winds) == 0 && len(c.winds) == 0) {
 				t.Fatalf("winds %v, want %v\nlines:\n%s", w.winds, c.winds, strings.Join(w.lines, "\n"))
@@ -312,5 +324,252 @@ func TestSessionDisengagedStart(t *testing.T) {
 	}
 	if len(lines) != 3 || !strings.Contains(lines[0], `to=Disengaged why="-disengaged start"`) {
 		t.Fatalf("lines %q", lines)
+	}
+}
+
+// THE OWNER'S LADDER (rungs 1–4) at the defaults: -winddown 30s,
+// -pausefailsafe on, the flee floor 33. The pause rung is Relogging's
+// OpenPause: one ESC on a clear World, the menu seen within 2s, one retry;
+// seen, the run exits with the menu LEFT UP — claimed, never closed.
+
+// untilStopped ticks until the session stops (bounded).
+func (w *world) untilStopped(max time.Duration) {
+	w.t.Helper()
+	for end := w.now.Add(max); w.now.Before(end); {
+		w.tick()
+		if w.stopped() {
+			return
+		}
+	}
+	w.t.Fatalf("still %s after %s; lines:\n%s", w.ses, max, strings.Join(w.lines, "\n"))
+}
+
+var rungName = regexp.MustCompile(`^WINDDOWN rung=(\w+) why=".+"$`)
+
+func (w *world) rungNames() []string {
+	var out []string
+	for _, l := range w.rungs {
+		m := rungName.FindStringSubmatch(l)
+		if m == nil {
+			w.t.Fatalf("rung line %q", l)
+		}
+		out = append(out, m[1])
+	}
+	return out
+}
+
+// janitorLeaves: with the session's claims, the janitor takes no action on
+// the scripted screen (and without them it would — the claim is load-bearing).
+func janitorLeaves(t *testing.T, w *world) {
+	t.Helper()
+	n := NoHolder
+	n.Claims |= w.ses.Claims()
+	if d := NewJanitor().Decide(w.now, w.seen(), n); d.Act {
+		t.Fatalf("the janitor acts on the paused screen: %+v", d)
+	}
+	if d := NewJanitor().Decide(w.now, w.seen(), NoHolder); !d.Act {
+		t.Fatalf("control: an unclaimed pause menu draws no janitor action: %+v", d)
+	}
+}
+
+func TestWindDownPause(t *testing.T) {
+	late := func(w *world) { w.after(300*time.Millisecond, func(w *world) { w.pause = true }) }
+	cases := []struct {
+		name   string
+		setup  func(w *world) // before the first tick
+		script func(w *world)
+		winds  []string
+		path   []string
+		acts   []string
+		rungs  []string
+		says   []string
+		paused bool // Stopped by the pause rung: menu up and claimed
+	}{{
+		name:   "rung 1: in town, exit at once",
+		setup:  func(w *world) { w.town, w.hot = true, false },
+		script: func(w *world) { w.tick() },
+		winds:  []string{"exit@0.1"},
+		path:   []string{"Attaching>InGame", "InGame>WindDown", "WindDown>Stopped"},
+		rungs:  []string{"exit"},
+	}, {
+		name:   "rung 2: the portal takes him home inside the budget",
+		script: func(w *world) { w.run(20 * time.Second); w.hot, w.town = false, true; w.tick() },
+		winds:  []string{"exit@20.1"},
+		path:   []string{"Attaching>InGame", "InGame>WindDown", "WindDown>Stopped"},
+		rungs:  []string{"recall", "exit"},
+	}, {
+		name:  "budget spent: stop the feet, one ESC, the menu seen — exit with it up",
+		setup: func(w *world) { w.onEsc = late },
+		script: func(w *world) {
+			w.run(29900 * time.Millisecond)
+			if w.ses.String() != "WindDown" || w.towns < 290 {
+				w.t.Fatalf("29.9s: %s, %d town ticks", w.ses, w.towns)
+			}
+			w.untilStopped(5 * time.Second)
+		},
+		winds:  []string{"pause@30.0", "exit@30.4"},
+		path:   []string{"Attaching>InGame", "InGame>WindDown", "WindDown>WindDown/Pause", "WindDown/Pause>Stopped"},
+		acts:   []string{"esc"},
+		rungs:  []string{"recall", "pause", "exit"},
+		says:   []string{PausedSay},
+		paused: true,
+	}, {
+		name:   "empty tome: Recall abandoned — pause at once",
+		setup:  func(w *world) { w.onEsc = late; w.after(5*time.Second, func(w *world) { w.spent = true }) },
+		script: func(w *world) { w.untilStopped(10 * time.Second) },
+		winds:  []string{"pause@5.0", "exit@5.4"},
+		path:   []string{"Attaching>InGame", "InGame>WindDown", "WindDown>WindDown/Pause", "WindDown/Pause>Stopped"},
+		acts:   []string{"esc"},
+		rungs:  []string{"recall", "pause", "exit"},
+		says:   []string{PausedSay},
+		paused: true,
+	}, {
+		name: "HP under the flee floor: pause (33 itself rides on)",
+		setup: func(w *world) {
+			w.onEsc, w.hp = late, 33
+			w.after(5*time.Second, func(w *world) { w.hp = 32 })
+		},
+		script: func(w *world) { w.untilStopped(10 * time.Second) },
+		winds:  []string{"pause@5.0", "exit@5.4"},
+		path:   []string{"Attaching>InGame", "InGame>WindDown", "WindDown>WindDown/Pause", "WindDown/Pause>Stopped"},
+		acts:   []string{"esc"},
+		rungs:  []string{"recall", "pause", "exit"},
+		says:   []string{PausedSay},
+		paused: true,
+	}, {
+		name:   "the menu already up at the rung: no ESC, exit",
+		setup:  func(w *world) { w.after(29*time.Second, func(w *world) { w.pause = true }) },
+		script: func(w *world) { w.run(29900 * time.Millisecond); w.untilStopped(2 * time.Second) },
+		winds:  []string{"exit@30.0"},
+		path:   []string{"Attaching>InGame", "InGame>WindDown", "WindDown>WindDown/Pause", "WindDown/Pause>Stopped"},
+		rungs:  []string{"recall", "pause", "exit"},
+		says:   []string{PausedSay},
+		paused: true,
+	}, {
+		name:  "a panel up: the janitor gets 3s, then the ESC",
+		setup: func(w *world) { w.onEsc = late; w.panels = screen.Inventory },
+		script: func(w *world) {
+			w.after(31500*time.Millisecond, func(w *world) { w.panels = 0 })
+			w.run(31400 * time.Millisecond)
+			if w.owned != 0 { // the pause waits unowned: the janitor and the loop run
+				w.t.Fatalf("the session held %d ticks before the screen cleared", w.owned)
+			}
+			w.untilStopped(3 * time.Second)
+		},
+		winds:  []string{"pause@31.5", "exit@31.9"},
+		path:   []string{"Attaching>InGame", "InGame>WindDown", "WindDown>WindDown/Pause", "WindDown/Pause>Stopped"},
+		acts:   []string{"esc"},
+		rungs:  []string{"recall", "pause", "exit"},
+		says:   []string{PausedSay},
+		paused: true,
+	}, {
+		name:   "a panel that never clears: Hold after 3s, no ESC",
+		setup:  func(w *world) { w.onEsc = late; w.panels = screen.Inventory },
+		script: func(w *world) { w.run(40 * time.Second) },
+		winds:  []string{"hold@33.0"},
+		path:   []string{"Attaching>InGame", "InGame>WindDown", "WindDown>WindDown/Pause", "WindDown/Pause>WindDown/Hold"},
+		rungs:  []string{"recall", "pause", "hold"},
+		says:   []string{HoldPauseSay},
+	}, {
+		name:   "pause never confirmed: ESC, retry once, Hold — never a third",
+		script: func(w *world) { w.run(60 * time.Second) },
+		winds:  []string{"pause@30.0", "hold@34.1"},
+		path:   []string{"Attaching>InGame", "InGame>WindDown", "WindDown>WindDown/Pause", "WindDown/Pause>WindDown/Hold"},
+		acts:   []string{"esc", "esc"},
+		rungs:  []string{"recall", "pause", "hold"},
+		says:   []string{HoldPauseSay},
+	}, {
+		name:   "the ESC refused (no foreground): Hold",
+		setup:  func(w *world) { w.onEsc, w.refuse = late, true },
+		script: func(w *world) { w.run(35 * time.Second) },
+		winds:  []string{"pause@30.0", "hold@30.2"},
+		path:   []string{"Attaching>InGame", "InGame>WindDown", "WindDown>WindDown/Pause", "WindDown/Pause>WindDown/Hold"},
+		acts:   []string{"esc"},
+		rungs:  []string{"recall", "pause", "hold"},
+		says:   []string{HoldPauseSay},
+	}, {
+		name: "-pausefailsafe=false: the budget goes straight to Hold; tome and HP ride on",
+		setup: func(w *world) {
+			w.ses.PauseFailsafe, w.onEsc = false, late
+			w.after(5*time.Second, func(w *world) { w.spent, w.hp = true, 20 })
+		},
+		script: func(w *world) { w.run(40 * time.Second) },
+		winds:  []string{"hold@30.0"},
+		path:   []string{"Attaching>InGame", "InGame>WindDown", "WindDown>WindDown/Hold"},
+		rungs:  []string{"recall", "hold"},
+		says:   []string{HoldCapSay},
+	}, {
+		name: "F10 during Pause: the owner drives — no second ESC, the claim released",
+		script: func(w *world) {
+			w.run(31 * time.Second) // the ESC at 30.1; the menu never rose
+			w.engaged = false
+			w.run(10 * time.Second)
+			if c := w.ses.Claims(); c != 0 {
+				w.t.Fatalf("claims %s while the owner drives", c)
+			}
+		},
+		winds: []string{"pause@30.0"},
+		path:  []string{"Attaching>InGame", "InGame>WindDown", "WindDown>WindDown/Pause", "WindDown/Pause>WindDown/Hold"},
+		acts:  []string{"esc"},
+		rungs: []string{"recall", "pause", "hold"},
+		says:  []string{HoldOwnerSay},
+	}}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			w := windWorld(t, false, true)
+			if c.setup != nil {
+				c.setup(w)
+			}
+			c.script(w)
+			lines := strings.Join(w.lines, "\n")
+			if !reflect.DeepEqual(w.winds, c.winds) && !(len(w.winds) == 0 && len(c.winds) == 0) {
+				t.Fatalf("winds %v, want %v\nlines:\n%s", w.winds, c.winds, lines)
+			}
+			w.wantPath(c.path...)
+			if !reflect.DeepEqual(w.acts, c.acts) && !(len(w.acts) == 0 && len(c.acts) == 0) {
+				t.Fatalf("acts %v, want %v\nlines:\n%s", w.acts, c.acts, lines)
+			}
+			if got := w.rungNames(); !reflect.DeepEqual(got, c.rungs) {
+				t.Fatalf("rungs %v, want %v\n%s", got, c.rungs, strings.Join(w.rungs, "\n"))
+			}
+			if !reflect.DeepEqual(w.says, c.says) && !(len(w.says) == 0 && len(c.says) == 0) {
+				t.Fatalf("says %q, want %q", w.says, c.says)
+			}
+			if w.ses.Paused() != c.paused {
+				t.Fatalf("paused %v, want %v (%s)", w.ses.Paused(), c.paused, w.ses)
+			}
+			if !c.paused {
+				return
+			}
+			// The exit: the menu stays up and claimed; nothing more is sent.
+			acts := len(w.acts)
+			w.run(5 * time.Second)
+			if len(w.acts) != acts || !w.stopped() {
+				t.Fatalf("after the pause exit: acts %v, %s", w.acts, w.ses)
+			}
+			if w.ses.Claims() != screen.PauseMenu || !w.pause {
+				t.Fatalf("claims %s, pause drawn %v", w.ses.Claims(), w.pause)
+			}
+			janitorLeaves(t, w)
+		})
+	}
+}
+
+// The pause rung's transition line names its trigger: the owner's grep target.
+func TestWindDownPauseTraceLine(t *testing.T) {
+	w := windWorld(t, false, true)
+	w.hp = 20
+	w.tick()
+	want := []string{
+		`T L=session from=InGame to=WindDown why="time budget spent"`,
+		`T L=session from=WindDown to=WindDown/Pause why="hp 20% under the flee floor 33%: pause the game"`,
+	}
+	for i, l := range w.lines[len(w.lines)-2:] {
+		if !strings.HasPrefix(l, want[i]) {
+			t.Fatalf("line %q, want prefix %q", l, want[i])
+		}
+	}
+	if w.rungs[len(w.rungs)-1] != `WINDDOWN rung=pause why="hp 20% under the flee floor 33%"` {
+		t.Fatalf("rungs %q", w.rungs)
 	}
 }
