@@ -26,6 +26,7 @@ list, so the files were **renamed by visual content** afterwards. `capkey_raw_or
 | inventory_act1.png, inventory_act1_2.png | Act 1 camp, inventory open (R2b item 3) |
 | waypoint_act1_and_inventory.png | Act 1 waypoint panel + inventory together (bonus: two panels) |
 | world_field_night.png | outdoor field, nothing open (dark negative; area not recorded) |
+| world_cave.png | Pit Level 1 (area 12), nothing open, dark cave negative (taken after the first push) |
 
 `ctl_state.txt`: the percept `MenuOpen(0xF4)` / `QuitMenu` flags read right after each keyboard panel opened.
 Both were **false for every panel**, including the standing pause menu.
