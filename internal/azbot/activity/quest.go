@@ -10,6 +10,7 @@ import (
 	"github.com/hectorgimenez/d2go/pkg/data/object"
 	"github.com/hectorgimenez/koolo/internal/azbot/coverage"
 	"github.com/hectorgimenez/koolo/internal/azbot/gamedata"
+	"github.com/hectorgimenez/koolo/internal/azbot/memory"
 	"github.com/hectorgimenez/koolo/internal/azbot/moveto"
 	"github.com/hectorgimenez/koolo/internal/azbot/percept"
 	"github.com/hectorgimenez/koolo/internal/azbot/verbs"
@@ -104,6 +105,7 @@ func (a *Advance) questHold(ctx *Ctx) bool {
 	if !pending {
 		if _, isQuest := questLegs[s.Me.Area]; isQuest && !a.questDone[key] {
 			a.questDone[key] = true // also stops Demand's quest bid for this area
+			a.markQuestForever(ctx, s.Me.Area, questItemHeld(d.Data, q.item), seen)
 			ctx.Led.Append(verbs.Outcome{Verb: "quest", Holder: a.Name(), Result: verbs.ResDone,
 				Evidence: fmt.Sprintf("%s leg complete in area %d (held=%v chestSeen=%v)", q.label, int(s.Me.Area), questItemHeld(d.Data, q.item), seen)})
 		}
@@ -152,7 +154,7 @@ func (a *Advance) questCapFor(ctx *Ctx) int {
 		if !ok || questItemHeld(d.Data, q.item) {
 			continue
 		}
-		if a.questDone[fmt.Sprintf("%d.%d", ctx.GR.MapSeed(), int(a.Itinerary[i].Area))] {
+		if a.questDone[fmt.Sprintf("%d.%d", ctx.GR.MapSeed(), int(a.Itinerary[i].Area))] || a.questForeverDone(ctx, a.Itinerary[i].Area) {
 			continue
 		}
 		return i
@@ -179,5 +181,42 @@ func (a *Advance) questWanted(ar area.ID) bool {
 	if _, ok := questLegs[ar]; !ok {
 		return false
 	}
-	return !a.questDone[fmt.Sprintf("%d.%d", a.questSeed, int(ar))]
+	return !a.questDone[fmt.Sprintf("%d.%d", a.questSeed, int(ar))] && !a.questForever[ar]
+}
+
+// A spent quest chest stays spent in this save: the chest does not re-arm on a
+// new game, so an artifact lost afterwards (the old fence SOLD the cube, row 564)
+// can never be re-taken there. R21: every new process re-marched to Halls of the
+// Dead 3 for nothing. The leg's end is remembered per character, for good.
+func questForeverKey(char string, ar area.ID) string {
+	return fmt.Sprintf("questdone.%s.%d", char, int(ar))
+}
+
+func (a *Advance) markQuestForever(ctx *Ctx, ar area.ID, held, chestSeen bool) {
+	if a.questForever == nil {
+		a.questForever = map[area.ID]bool{}
+	}
+	a.questForever[ar] = true
+	if ctx.Mem != nil {
+		ctx.Mem.PutJSON(questForeverKey(ctx.GR.GetData().PlayerUnit.Name, ar), memory.ScopeForever,
+			memory.Provenance{Source: "measured", Evidence: fmt.Sprintf("quest leg ended: held=%v chestSpent=%v", held, chestSeen)}, true)
+	}
+}
+
+func (a *Advance) questForeverDone(ctx *Ctx, ar area.ID) bool {
+	if a.questForever[ar] {
+		return true
+	}
+	if ctx.Mem == nil {
+		return false
+	}
+	done := false
+	if ctx.Mem.GetJSON(questForeverKey(ctx.GR.GetData().PlayerUnit.Name, ar), &done) && done {
+		if a.questForever == nil {
+			a.questForever = map[area.ID]bool{}
+		}
+		a.questForever[ar] = true
+		return true
+	}
+	return false
 }

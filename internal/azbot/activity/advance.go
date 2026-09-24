@@ -159,6 +159,7 @@ type Advance struct {
 	// quest legs (quest.go): per seed.area, when the hold began and whether it ended.
 	questSince map[string]time.Time
 	questDone  map[string]bool
+	questForever map[area.ID]bool // quest legs ended in this save (persisted: quest.go)
 	questSeed  uint // map seed the quest maps belong to (set in Step)
 	questCap   int // first unfinished quest leg index at or behind the frontier; -1 none (refreshed each Step)
 	Itinerary   []Leg
