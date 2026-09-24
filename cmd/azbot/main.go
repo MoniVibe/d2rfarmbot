@@ -1862,7 +1862,8 @@ func main() {
 		// (2026-09-24): every one speaks.
 		// verb=move is MoveTo's status line — written on status changes only.
 		if o.Result != verbs.ResDone || o.Verb == "intent" || o.Verb == "escalate" ||
-			o.Verb == "strike" || o.Verb == "fight" || o.Verb == "move" {
+			o.Verb == "strike" || o.Verb == "fight" || o.Verb == "move" ||
+			o.Verb == "quest" || o.Verb == "stash" || o.Verb == "identify" { // the new objectives and errands speak (R19: all silent)
 			logger.Info("outcome", "verb", o.Verb, "holder", o.Holder, "tgt", o.Target, "result", o.Result.String(), "ev", o.Evidence)
 		}
 		// Nav follower transitions are ResDone too — the trace names every one.
