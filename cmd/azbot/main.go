@@ -2631,11 +2631,21 @@ func main() {
 		// A volleying archer and a melee Stand hold ground by design: fight/stand
 		// with a target in range vouches for stillness (Stuck/Orbit suppressed,
 		// Thrash still watched; the deadman box answers whoever holds).
+		// A holder at its panel (an errand's Talk..Act, Equip's Dress, Spend's
+		// sheet) stands still by design, and an item on the cursor is never a
+		// reason to hand the grant away (relay R10: equip benched as stuck
+		// mid-Dress, the item then dropped on the town floor).
+		inService := false
+		if a := roster.Get(holderName); a != nil && holderName != "" {
+			inService = a.Needs(s).Claims != 0
+		}
 		if v := wd.Check(watchdog.Context{
 			Holder:       holderName,
 			StationaryOK: watchdog.StationaryOK(holderName, s.Me.Pos, enemyAt),
 			CrossingHot:  activity.CrossingHot(),
 			CanPortal:    !s.Me.InTown && s.Me.HPPct > 0 && cap.TownTP != nil,
+			InService:    inService,
+			CursorItem:   s.Me.CursorItem,
 		}); v.Pathology != watchdog.Healthy {
 			why := "judged: " + v.Summary()
 			emit(trace.Watchdog(v.Pathology.String(), v.Remedy.String(), v.Culprit, v.Evidence, tick))

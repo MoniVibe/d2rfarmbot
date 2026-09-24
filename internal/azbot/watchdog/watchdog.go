@@ -125,7 +125,20 @@ type Context struct {
 	CrossingHot bool
 	// CanPortal: field ground, alive, and a town-portal binding exists.
 	CanPortal bool
+	// InService: the holder claims a panel this tick (an NPC menu, a shop,
+	// the bag, the char sheet) — a town errand's Talk/Menu/Act, Equip's
+	// Dress, Spend's Stats: standing still IS the work.
+	InService bool
+	// CursorItem: an item rides the cursor. Whoever holds, a conviction now
+	// hands the grant to a holder that does not own the item — and R10's
+	// did: "equip pinned in 0x0 box for 19s" benched the parker mid-Dress
+	// and the next holder's gate dropped the item on the town floor.
+	CursorItem bool
 }
+
+// standsStill: the context vouches that stillness is not a pathology this
+// tick — no Stuck, Orbit, Pinned or Pacer conviction (Thrash is still watched).
+func (c Context) standsStill() bool { return c.InService || c.CursorItem }
 
 // Verdict is one conviction: what, who, where, the evidence, and the remedy.
 type Verdict struct {
@@ -311,6 +324,14 @@ func (w *Watchdog) Check(c Context) Verdict {
 		return Verdict{}
 	}
 	me := w.last.Pos
+	if c.standsStill() {
+		// Stillness vouched for (a service at its panel, an item on the
+		// cursor): the position clocks restart, so the vouched time never
+		// counts once it ends — the tenure, the deadman box, the pacer.
+		w.holderAt = now
+		w.boxPos, w.boxAt = me, now
+		w.emaRef, w.emaRefAt = data.Position{X: int(w.emaX), Y: int(w.emaY)}, now
+	}
 
 	if w.portalReady(c, now) {
 		if now.Sub(w.boxAt) > deadmanAfter {

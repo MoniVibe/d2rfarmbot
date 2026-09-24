@@ -319,3 +319,50 @@ func TestRemedyAndPathologyNames(t *testing.T) {
 		}
 	}
 }
+
+// Relay R10, 09:20:43: "holder=equip pinned in 0x0 box for 19s" benched the
+// cursor parker mid-Dress with an item on the cursor; the next holder's gate
+// dropped it on the town floor. A holder at its panel, or any holder with an
+// item on the cursor, is never convicted of stillness — and the vouched time
+// does not count once the vouching ends.
+func TestServiceAndCursorItemNeverConvictedOfStillness(t *testing.T) {
+	for _, c := range []struct {
+		name string
+		ctx  Context
+		town bool
+	}{
+		{"equip dressing in town (claims the bag)", Context{Holder: "equip", InService: true}, true},
+		{"spend at the char sheet (R10 08:45:40)", Context{Holder: "spend", InService: true}, true},
+		{"cursor item, town", Context{Holder: "equip", CursorItem: true}, true},
+		{"cursor item, field (no pinned portal either)", Context{Holder: "loot", CursorItem: true, CanPortal: true}, false},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			w, clk := newDog()
+			vs := run(w, clk, 100*time.Second, tick, func(int) (Sample, Context) {
+				return Sample{Pos: pos(5091, 5030), Holder: c.ctx.Holder, InTown: c.town}, c.ctx
+			})
+			for _, v := range vs {
+				if v.Pathology != Thrash {
+					t.Fatalf("convicted: %+v", v)
+				}
+			}
+			// The vouching ends: the same spot needs a full fresh window.
+			plain := c.ctx
+			plain.InService, plain.CursorItem = false, false
+			vs = run(w, clk, 7*time.Second, tick, func(int) (Sample, Context) {
+				return Sample{Pos: pos(5091, 5030), Holder: c.ctx.Holder, InTown: c.town}, plain
+			})
+			if len(vs) != 0 {
+				t.Fatalf("the vouched time counted: %+v", vs[0])
+			}
+		})
+	}
+	// Control: the same stillness unvouched is Stuck.
+	w, clk := newDog()
+	vs := run(w, clk, 25*time.Second, tick, func(int) (Sample, Context) {
+		return Sample{Pos: pos(5091, 5030), Holder: "equip", InTown: true}, Context{Holder: "equip"}
+	})
+	if len(vs) == 0 || vs[0].Pathology != Stuck {
+		t.Fatalf("control: want stuck, got %+v", vs)
+	}
+}
