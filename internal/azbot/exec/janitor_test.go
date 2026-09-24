@@ -115,8 +115,14 @@ func TestGateMode(t *testing.T) {
 	// No ESC off World, even for a seen panel.
 	r := seen(screen.LeftPanel, nil)
 	r.Mode = screen.Dead
-	if g := Gate(r, HolderNeeds{Mode: AnyMode}); g.Acts() {
-		t.Fatalf("ESC on the death screen: %+v", g)
+	if g := Gate(r, HolderNeeds{Mode: AnyMode}); g.Acts() || !g.Open {
+		t.Fatalf("death screen + unclosable panel: no ESC, and Respawn is not frozen: %+v", g)
+	}
+	// A seen close button off-world is still clicked.
+	r = seen(screen.PauseMenu, map[screen.Panel]screen.Point{screen.PauseMenu: {X: 960, Y: 685}})
+	r.Mode = screen.Dead
+	if g := Gate(r, HolderNeeds{Mode: AnyMode}); g.Open || g.Action.Kind != screen.ActClick {
+		t.Fatalf("death screen + pause menu: %+v", g)
 	}
 }
 
