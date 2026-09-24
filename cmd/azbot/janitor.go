@@ -30,13 +30,14 @@ type gatekeeper struct {
 	gr     *game.MemoryReader
 	sh     *shadow
 	j      *exec.Janitor
+	ses    *exec.Session // layer 0: the panels it claims (the pause menu while Relogging)
 
 	said      string    // last gate line's why (a line per change, not per tick)
 	blockedAt time.Time // when the current block began; zero while open
 }
 
-func newGatekeeper(logger *slog.Logger, m *motor.Motor, gr *game.MemoryReader, sh *shadow) *gatekeeper {
-	return &gatekeeper{logger: logger, m: m, gr: gr, sh: sh, j: exec.NewJanitor()}
+func newGatekeeper(logger *slog.Logger, m *motor.Motor, gr *game.MemoryReader, sh *shadow, ses *exec.Session) *gatekeeper {
+	return &gatekeeper{logger: logger, m: m, gr: gr, sh: sh, j: exec.NewJanitor(), ses: ses}
 }
 
 // Stable is the reading the gate judges (nil before the first capture).
@@ -51,15 +52,16 @@ func (g *gatekeeper) Stable() *screen.Reading {
 
 // needs is the holder's gate view: the claims of its CURRENT phase (a town
 // service claims nothing in its Clean phase, so every leftover is foreign),
-// plus the pause menu while Relog's sanction stands (MenuSanctionUntil — relog
-// walks the pause menu on purpose; nothing else may keep it up).
+// plus what the session claims: the pause menu while it is Relogging (the
+// relog walks the pause menu on purpose; nothing else may keep it up, and the
+// moment the relog ends it is foreign and clicked away by Return to Game).
 func (g *gatekeeper) needs(who string, s *percept.Snapshot, roster *activity.Roster) exec.HolderNeeds {
 	n := exec.NoHolder
 	if a := roster.Get(who); a != nil {
 		n = a.Needs(s).Holder()
 	}
-	if time.Now().Before(activity.MenuSanctionUntil) {
-		n.Claims |= screen.PauseMenu
+	if g.ses != nil {
+		n.Claims |= g.ses.Claims()
 	}
 	return n
 }

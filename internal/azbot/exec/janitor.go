@@ -115,8 +115,8 @@ func Gate(r screen.Reading, n HolderNeeds) GateResult {
 			g.Why += " (" + g.Action.Reason + ")"
 			if r.Mode != screen.World {
 				// Off the world (a death screen, a menu walk) with nothing
-				// safe to press: blocking the any-mode holder (Respawn,
-				// Relog) would only freeze the one activity that can leave.
+				// safe to press: blocking the any-mode holder (Respawn)
+				// would only freeze the one activity that can leave.
 				g.Open = true
 				g.Why += "; off-world holder proceeds"
 				return g

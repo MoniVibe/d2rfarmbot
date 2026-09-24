@@ -28,7 +28,8 @@ const (
 	// grant) is stale — the watchdog will judge the new place afresh.
 	rxShelfLife = 20 * time.Second
 	// unstickUrgency: over Reclaim (0.9) so a stuck corpse run is unstuck,
-	// under Relog (0.95) and Respawn (1.0).
+	// under Respawn (1.0). (Relog is session-owned since step 8: while it
+	// runs nothing below the session bids.)
 	unstickUrgency = 0.92
 )
 

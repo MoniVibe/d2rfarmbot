@@ -118,8 +118,9 @@ func needsService(claims screen.Panel) Needs {
 
 var (
 	needsWorld = Needs{Mode: exec.ModeOf(screen.World)}
-	// Respawn answers the death screen; Relog walks the pause and main menus. Both
-	// act where the world-bound activities must not, so neither is mode-gated.
+	// Respawn answers the death screen, where the world-bound activities must
+	// not act, so it is not mode-gated. (Relog walked the menus here until
+	// step 8; the session owns it now — exec.Session.)
 	needsAnyMode = Needs{Mode: exec.AnyMode, Cursor: exec.CursorAny}
 )
 
@@ -147,7 +148,7 @@ func Registry(legs []Leg, road []data.Position) *Roster {
 	unst := NewUnstick()
 	r := &Roster{Advance: adv, Fight: fight, Unstick: unst, Acts: []Life{
 		world(&Breakout{}), world(&Stand{}), world(&Flee{March: adv.MarchGoal}), world(NewDodge()),
-		free(&Respawn{}), free(NewRelog()), unst, world(NewReclaim()), world(fight),
+		free(&Respawn{}), unst, world(NewReclaim()), world(fight),
 		world(NewLoot()), world(NewImbibe()), NewFence(), NewRestock(),
 		NewRepair(), NewHeal(), NewIdentify(),
 		NewEquip(), NewSpend(), world(adv),

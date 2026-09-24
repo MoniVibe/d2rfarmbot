@@ -327,12 +327,6 @@ func CursedNear(p data.Position) bool {
 	return n >= 2
 }
 
-// MenuSanctionUntil: the MENU SENTRY's one exemption (the owner, 00:52: "an
-// aware state that de-escs unless there's a good reason like relogging").
-// Relog sanctions the quit menu while its ritual lives there; everyone else's
-// standing quit menu is a wedge and the sentry closes it.
-var MenuSanctionUntil time.Time
-
 // worldGhosts — P-4.8a: a wedged vendor outlives every retry. Ghost verdicts
 // accumulate per world; at three the world is POISONED and Relog cures it.
 var worldGhosts int

@@ -41,7 +41,7 @@ func (rc *Reclaim) Demand(s *percept.Snapshot) *arbiter.Demand {
 		return nil
 	}
 	// In town, bid only for a body that is HERE (the relog materializes it at the
-	// spawn); a far body from town is Relog's problem — Recover outranks Travel, so
+	// spawn); a far body from town is Relog's problem (a session relog) — Recover outranks Travel, so
 	// bidding on an unreachable corpse would deadlock her at the gate.
 	if s.Me.InTown && chebyshev(s.Me.Pos, s.Me.CorpsePos) > 150 {
 		return nil

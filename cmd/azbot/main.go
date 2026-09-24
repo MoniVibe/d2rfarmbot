@@ -34,6 +34,7 @@ import (
 	"github.com/hectorgimenez/koolo/internal/azbot/motor"
 	"github.com/hectorgimenez/koolo/internal/azbot/percept"
 	"github.com/hectorgimenez/koolo/internal/azbot/phase"
+	"github.com/hectorgimenez/koolo/internal/azbot/screen"
 	"github.com/hectorgimenez/koolo/internal/azbot/sentinel"
 	"github.com/hectorgimenez/koolo/internal/azbot/trace"
 	"github.com/hectorgimenez/koolo/internal/azbot/unstick"
@@ -214,11 +215,11 @@ func main() {
 	shopMap := flag.String("shopmap", "", "akaratest: hover-sweep the shop panel 'x0,y0,x1,y1,step' and log which stock item the GAME says is hovered at each point — builds the true pixel map empirically")
 	exitProbe := flag.Bool("exitprobe", false, "PURE READ: dump the current area's AdjacentLevels (raw + live-translated), live entrance units, and the BFS hop toward the next Act 1 leg — validates the crossing knowledge before the Advance activity trusts it")
 	missileProbe := flag.Int("missileprobe", 0, "PURE READ: sample the missile table for N seconds and print every projectile with measured velocity — validates the dodge oracle (stand near something that shoots)")
-	relogTest := flag.Bool("relogtest", false, "manual harness, staged: alone = open the pause menu, screenshot it (logs/relog_pausemenu.png), close it. With -exitxy = click Save+Exit, screenshot the main menu (logs/relog_mainmenu.png). With -playxy too = full relog loop, verify the corpse materialized in town")
+	relogTest := flag.Bool("relogtest", false, "RELOG DRILL (in game, hands off): one session relog end to end on the executive's Session FSM — pause menu by sight, Save and Exit, Play, new world — photographing every phase (logs/relog_<phase>.png), then report the seed and the corpse, exit. Live, create logs/relog.now to request one")
 	wpCalTest := flag.Bool("wpcaltest", false, "P-10 phase 1 harness: walk onto the nearest waypoint, click it open, photograph the panel (logs/wp_panel.png), and dump the blueness map — re-derives the compass column and destination rows for THIS client, exit")
 	replayF := flag.String("replay", "", "OFFLINE DECISION REPLAY: path to a flight .jsonl — every frame runs Demand + arbiter and prints the grant timeline. No game needed; live failures become desk-checkable evidence (the STE mentality: verify against recorded reality, not her blood)")
-	exitXY := flag.String("exitxy", "", "relogtest: screenshot x,y of the pause menu's Save and Exit button")
-	playXY := flag.String("playxy", "", "relogtest: screenshot x,y of the main menu's Play button")
+	exitXY := flag.String("exitxy", "", "relogtest: override the pause menu's Save and Exit button, screenshot x,y (default 958,822 on the 1920x1050 client)")
+	playXY := flag.String("playxy", "", "relogtest: override the character screen's Play button, screenshot x,y (default 922,822)")
 	janitorF := flag.Bool("janitor", false, "v2 step 6: the executive GATES every Step on the screen oracle and a janitor closes foreign panels by sight (replaces the pause sentry, startup hygiene, cursor-drop ESC, watchdog ESC probe and the services' blind ESCs). Also AZBOT_JANITOR=1")
 	logger := slog.New(slog.NewTextHandler(os.Stdout, nil))
 
@@ -340,7 +341,7 @@ func main() {
 		time.Sleep(500 * time.Millisecond)
 	}
 	logger.Info("attach report", "verdict", report.String())
-	if !report.OK() && !*relogTest {
+	if !report.OK() {
 		logger.Error("EPISTEMICS GATE FAILED — refusing to run on garbage reads. Is a character in-game?")
 		return
 	}
@@ -596,9 +597,12 @@ func main() {
 	}
 
 	if *relogTest {
-		// THE RELOG RITUAL, drilled in stages (the owner's ask: exit game and relog so
-		// the corpse materializes IN TOWN — no naked suicide runs across the moor).
-		// Menus read hardware-level input only: foreground + SendKeyReal/SendClickRealScreen.
+		// THE RELOG DRILL (docs/AZBOT_V2.md step 8): one relog end to end on the
+		// exact Session FSM and driver the executive runs — every phase judged by
+		// sight or memory validity with a bounded wait, every phase photographed
+		// (logs/relog_<phase>.png). No ESC of its own: the session sends its one
+		// OpenPause ESC only on a clear world screen. -exitxy / -playxy override
+		// the Save and Exit / Play buttons (screenshot px, 1920x1050 physical).
 		shot := func(path string) {
 			if f, err := os.Create(path); err == nil {
 				_ = png.Encode(f, gr.Screenshot())
@@ -606,17 +610,8 @@ func main() {
 				logger.Info("relogtest: screenshot", "path", path)
 			}
 		}
-		// Screenshot pixels are PHYSICAL client px (1920-wide); SendClickRealScreen wants
-		// LOGICAL screen coords (the DPI-unaware process's 1536-wide desktop): divide by
-		// the display scale, then add the logical client origin. Validated against the
-		// gamble-refresh pair: shot(569,744) ↔ logical screen (455,583).
-		toScreen := func(px, py int) (int, int) {
-			return int(float64(px)/(*dpiScale)) + gr.WindowLeftX, int(float64(py)/(*dpiScale)) + gr.WindowTopY
-		}
-		// MENUS DEMAND TRUE FOREGROUND (manager.go's law): a bare
-		// SetForegroundWindow from a background process silently fails —
-		// force it with the AttachThreadInput trick and VERIFY, or the click
-		// lands in whatever app actually holds focus.
+		// A manual drill runs from a terminal that holds the focus; the session
+		// never steals it, so hand it to the game once, verified.
 		for i := 0; i < 12; i++ {
 			if win.GetForegroundWindow() == hwnd {
 				break
@@ -625,76 +620,62 @@ func main() {
 			time.Sleep(300 * time.Millisecond)
 		}
 		logger.Info("relogtest: foreground check", "isForeground", win.GetForegroundWindow() == hwnd)
-		time.Sleep(400 * time.Millisecond)
-		atMenu := !report.OK() // already OUT of the game (character select): skip the exit phase
-		if atMenu && *playXY == "" {
-			shot("logs/relog_mainmenu.png")
-			logger.Info("relogtest: at the menu already — measure Play, rerun with -playxy")
-			close(stop)
-			return
+		dsh := newShadow(logger, gr)
+		dsd := newSessionDriver(logger, m, gr, dsh, activity.NewRelog())
+		if *exitXY != "" {
+			fmt.Sscanf(*exitXY, "%d,%d", &dsd.ses.SaveExit.X, &dsd.ses.SaveExit.Y)
 		}
-		if !atMenu {
-			game.SendKeyReal(0x1B) // ESC — the pause menu
-			time.Sleep(900 * time.Millisecond)
+		if *playXY != "" {
+			fmt.Sscanf(*playXY, "%d,%d", &dsd.ses.Play.X, &dsd.ses.Play.Y)
 		}
-		if !atMenu && *exitXY == "" {
-			shot("logs/relog_pausemenu.png")
-			game.SendKeyReal(0x1B) // close it again — touch nothing else
-			logger.Info("relogtest: stage A done — measure Save+Exit from the screenshot, rerun with -exitxy")
-			close(stop)
-			return
+		dsd.onChange = func(ses string) {
+			shot("logs/relog_" + strings.ReplaceAll(ses, "/", "_") + ".png")
 		}
-		if !atMenu {
-			var ex, ey int
-			fmt.Sscanf(*exitXY, "%d,%d", &ex, &ey)
-			sx, sy := toScreen(ex, ey)
-			logger.Info("relogtest: clicking Save+Exit", "shot", *exitXY, "screen", fmt.Sprintf("(%d,%d)", sx, sy))
-			game.SendClickRealScreen(sx, sy)
-			// Wait for the world to actually unload (position reads go garbage).
-			gone := false
-			for i := 0; i < 40; i++ {
-				time.Sleep(500 * time.Millisecond)
-				pos := gr.GetData().PlayerUnit.Position
-				if pos.X == 0 && pos.Y == 0 {
-					gone = true
-					break
+		var ended *exec.RelogEnd
+		dsd.onEnd = func(e exec.RelogEnd) { ended = &e }
+		requested, invalid := false, false
+		var tick uint64
+		deadline := time.Now().Add(2 * time.Minute)
+		for time.Now().Before(deadline) && (!requested || dsd.ses.Relogging()) {
+			tick++
+			s := p.Capture()
+			dsh.observe(tick, s, "relogtest")
+			invalid = invalid || !s.Valid
+			if s.Valid && invalid && dsd.ses.Relogging() {
+				invalid = false
+				if err := gr.FetchMapData(); err != nil {
+					logger.Warn("relogtest: map data fetch failed", "err", err)
 				}
 			}
-			logger.Info("relogtest: world unloaded", "gone", gone)
-			time.Sleep(3 * time.Second) // let the main menu settle
-			if *playXY == "" {
-				shot("logs/relog_mainmenu.png")
-				logger.Info("relogtest: stage B done — measure Play from the screenshot, rerun with -playxy (game is AT THE MENU)")
-				close(stop)
-				return
+			if !requested && dsd.ses.State() == exec.InGame {
+				requested = dsd.request("drill (-relogtest)")
 			}
+			dsd.step(tick, s)
+			time.Sleep(40 * time.Millisecond)
 		}
-		var px2, py2 int
-		fmt.Sscanf(*playXY, "%d,%d", &px2, &py2)
-		psx, psy := toScreen(px2, py2)
-		logger.Info("relogtest: clicking Play", "shot", *playXY, "screen", fmt.Sprintf("(%d,%d)", psx, psy))
-		game.SendClickRealScreen(psx, psy)
-		// Gate loop: wait for a sane in-game read.
-		ok := false
-		for i := 0; i < 60; i++ {
-			time.Sleep(1 * time.Second)
-			if p.Gate().OK() {
-				ok = true
-				break
-			}
-		}
-		if !ok {
+		switch {
+		case ended == nil:
 			shot("logs/relog_stuck.png")
-			logger.Error("relogtest: never gated back in — screenshot saved")
-			close(stop)
-			return
+			logger.Error("relogtest: the relog never ended inside 2 minutes", "ses", dsd.ses.String())
+		case !ended.OK():
+			logger.Error("relogtest: relog FAILED", "why", ended.Why.String(), "phase", ended.Phase.String(),
+				"churned", ended.Churned, "detail", ended.Detail)
+			if !ended.Churned {
+				// Live, the janitor clicks the now-foreign pause menu away; the
+				// drill has no janitor, so the same click by sight.
+				if n := activity.EnsureWorld(gr, m); n > 0 {
+					logger.Info("relogtest: pause menu clicked away by sight (Return to Game)", "layers", n)
+				}
+			}
+		default:
+			time.Sleep(2 * time.Second)
+			d := gr.GetData()
+			logger.Info("relogtest: BACK IN GAME", "took", ended.Took.Round(100*time.Millisecond), "detail", ended.Detail,
+				"pos", fmt.Sprintf("(%d,%d)", d.PlayerUnit.Position.X, d.PlayerUnit.Position.Y),
+				"area", int(d.PlayerUnit.Area), "seed", gr.MapSeed())
+			logger.Info("relogtest: corpse", "found", d.Corpse.Found,
+				"pos", fmt.Sprintf("(%d,%d)", d.Corpse.Position.X, d.Corpse.Position.Y))
 		}
-		time.Sleep(2 * time.Second)
-		d := gr.GetData()
-		logger.Info("relogtest: BACK IN GAME", "pos", fmt.Sprintf("(%d,%d)", d.PlayerUnit.Position.X, d.PlayerUnit.Position.Y),
-			"area", int(d.PlayerUnit.Area), "seed", gr.MapSeed())
-		logger.Info("relogtest: corpse", "found", d.Corpse.Found,
-			"pos", fmt.Sprintf("(%d,%d)", d.Corpse.Position.X, d.Corpse.Position.Y))
 		close(stop)
 		return
 	}
@@ -1836,7 +1817,11 @@ func main() {
 	// uses — every seen panel is foreign with no holder — and it runs once
 	// more every tick, so it also replaces the pause sentry below.
 	activity.JanitorOn = janitorOn
-	gk := newGatekeeper(logger, m, gr, sh)
+	// LAYER 0 — THE SESSION (v2 step 8): owns the relog, which is no longer an
+	// arbiter activity; Relog is its trigger and its motor half.
+	relog := activity.NewRelog()
+	sd := newSessionDriver(logger, m, gr, sh, relog)
+	gk := newGatekeeper(logger, m, gr, sh, sd.ses)
 	if janitorOn {
 		if n := gk.settle(p); n > 0 {
 			logger.Info("startup: janitor cleared foreign screens by sight", "actions", n)
@@ -2110,6 +2095,27 @@ func main() {
 	cursorItemAt := time.Time{}
 	cursorDropAt := time.Time{}
 	sawInvalid := false
+	// NEW GAME detection: a validity gap (relog, load screen) may mean a fresh
+	// world — the seed re-rolls per game. FetchMapData no-ops when the seed is
+	// unchanged; on a real change it re-fetches and the grid realigns below.
+	// The session's AwaitWorld reads the seed this refreshes.
+	newWorld := func() {
+		if !sawInvalid {
+			return
+		}
+		sawInvalid = false
+		prevSeed := gr.MapSeed()
+		if err := gr.FetchMapData(); err == nil && gr.MapSeed() != prevSeed {
+			logger.Info("executive: NEW WORLD", "seed", gr.MapSeed())
+			gridArea = -1 // force grid realign
+			lastArea = 0  // don't record a phantom crossing over the gap
+			// Beliefs retired by one world's bad frames must not silence
+			// services in the next (WARNING 8; the reviewer's finding 2).
+			activity.NewWorld()
+		}
+	}
+	var drillAt time.Time // last look for the owner's relog.now
+	wasRelogging := false
 	wasFocused := true
 	var trail []string // the last moments, for the owner's death reports
 	var trailAt time.Time
@@ -2158,14 +2164,48 @@ func main() {
 		// SHADOW SCREEN (v2 step 5): read, trace and publish what is on screen —
 		// engaged or not, so the owner's panels are named too. Nothing gates on it.
 		sh.observe(tick, s, holderWho(arb))
-		ses := "InGame"
-		switch {
-		case !m.Engage.Engaged():
-			ses = "Disengaged"
-		case holderWho(arb) == "relog":
-			ses = "Relogging"
+		// LAYER 0 — THE SESSION (v2 step 8). A relog is requested by Relog's
+		// trigger (a naked girl in town, her body far) or by the owner's
+		// logs/relog.now; once the session takes it, the holder's episode ends
+		// and the session owns every tick until it is InGame again — nothing
+		// below acts: no arbitration, no gate, no monitors, no sentry.
+		if s.Valid && sd.ses.Relogging() {
+			newWorld() // AwaitWorld judges the refreshed seed
 		}
-		sh.stateLine(tick, s, ses, arb, roster)
+		if sd.ses.State() == exec.InGame && s.Valid && m.Engage.Engaged() {
+			now := time.Now()
+			why, want := relog.Wants(s, now)
+			drill := false
+			if !want && now.Sub(drillAt) >= time.Second {
+				drillAt = now
+				if _, err := os.Stat(relogNowPath); err == nil {
+					why, want, drill = "owner drill ("+relogNowPath+")", true, true
+				}
+			}
+			if want && sd.request(why) {
+				if drill {
+					_ = os.Remove(relogNowPath)
+				}
+				if who := holderWho(arb); who != "" {
+					m.MoveStop()
+					core.End(&activity.Ctx{M: m, GR: gr, P: p, Led: led, Grid: grid, Cap: &cap, Snap: s, Mem: mem,
+						Seen: sh.Eye.Latest(), Held: arb.Held}, who, phase.Abandoned, phase.Preempted, "session: relog")
+				}
+			}
+		}
+		sesOwns := sd.step(tick, s)
+		sh.stateLine(tick, s, sd.ses.String(), arb, roster)
+		if wasRelogging && !sd.ses.Relogging() {
+			// A relog moves her to a new world's spawn (or leaves the world
+			// intact after a pause): the position monitors start fresh, the
+			// refocus precedent, so the jump is not read as pathology.
+			wd.Reset()
+		}
+		wasRelogging = sd.ses.Relogging()
+		if sesOwns {
+			sawInvalid = sawInvalid || !s.Valid
+			continue
+		}
 		if !s.Valid || !m.Engage.Engaged() {
 			// THE WATCHER NEVER SLEEPS (01:12, the owner: "i even entered dark
 			// wood" — and the cartographer was DEAF because this gate skipped
@@ -2200,21 +2240,7 @@ func main() {
 				}
 			}
 		}
-		// NEW GAME detection: a validity gap (relog, load screen) may mean a fresh
-		// world — the seed re-rolls per game. FetchMapData no-ops when the seed is
-		// unchanged; on a real change it re-fetches and the grid realigns below.
-		if sawInvalid {
-			sawInvalid = false
-			prevSeed := gr.MapSeed()
-			if err := gr.FetchMapData(); err == nil && gr.MapSeed() != prevSeed {
-				logger.Info("executive: NEW WORLD", "seed", gr.MapSeed())
-				gridArea = -1 // force grid realign
-				lastArea = 0  // don't record a phantom crossing over the gap
-				// Beliefs retired by one world's bad frames must not silence
-				// services in the next (WARNING 8; the reviewer's finding 2).
-				activity.NewWorld()
-			}
-		}
+		newWorld() // after a validity gap: a new seed means a new world
 		recordCrossing(s)
 		padWitness(s)            // any brush with a pad lights it, whatever the holder
 		activity.ObserveBlood(s) // P-2.0: one blood truth for every Demand this cycle
@@ -2306,14 +2332,15 @@ func main() {
 		// unless there's a good reason like relogging"): the quit menu is
 		// READABLE (OpenMenus.QuitMenu, UI byte 0x09 — never byte-blind after
 		// all). Standing unsanctioned, it is a wedge that freezes the world;
-		// the sentry closes it within a tick. Relog alone sanctions it.
+		// the sentry closes it within a tick. A relogging session alone claims it
+		// (and while it relogs this code is not reached at all).
 		// 2026-09-23: s.QuitMenu reads FALSE with the pause menu on screen, so this
 		// sentry never fired and a stray pause ate whole runs. The screen is the
 		// oracle now (game.PauseMenuVisible, 12/12 vs 0/12 on real captures), and
 		// the cure is a click on Return to Game — never an ESC, which toggles.
 		// JANITOR ON: retired — the gate below sees the pause menu every tick
-		// and the janitor clicks Return to Game (Relog's sanction honoured).
-		if !janitorOn && time.Now().After(activity.MenuSanctionUntil) && time.Since(lastDeEsc) > 3*time.Second {
+		// and the janitor clicks Return to Game (the session's claim honoured).
+		if !janitorOn && sd.ses.Claims()&screen.PauseMenu == 0 && time.Since(lastDeEsc) > 3*time.Second {
 			lastDeEsc = time.Now()
 			if activity.ClearPause(gr, m) {
 				logger.Warn("menu sentry: pause menu on screen with no sanction — clicked Return to Game")

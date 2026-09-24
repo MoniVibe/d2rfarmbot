@@ -15,10 +15,10 @@ import (
 )
 
 // ModeSet is the screen modes an activity may act in. A set, not one Mode:
-// Respawn and Relog act where World-only activities must not.
+// Respawn acts where World-only activities must not.
 type ModeSet uint8
 
-// AnyMode admits every mode (Relog's menus, Respawn until Dead is proven).
+// AnyMode admits every mode (Respawn until Dead is proven).
 const AnyMode ModeSet = 0xFF
 
 // ModeOf builds a set from modes.
