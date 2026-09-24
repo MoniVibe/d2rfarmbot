@@ -140,15 +140,16 @@ func Registry(legs []Leg, road []data.Position) *Roster {
 	adv := NewAdvance(legs)
 	fight := NewFight()
 	fight.March = adv.MarchGoal // P-5.8: the door mouth is shot open
-	svc := func(a Activity, claims screen.Panel) Life { return &Legacy{A: a, N: needsService(claims)} }
+	// The town services are native v2 (step 7): phase enums, per-phase claims,
+	// no sleeps. Everything else rides the Legacy adapter.
 	world := func(a Activity) Life { return &Legacy{A: a, N: needsWorld} }
 	free := func(a Activity) Life { return &Legacy{A: a, N: needsAnyMode} }
 	unst := NewUnstick()
 	r := &Roster{Advance: adv, Fight: fight, Unstick: unst, Acts: []Life{
 		world(&Breakout{}), world(&Stand{}), world(&Flee{March: adv.MarchGoal}), world(NewDodge()),
 		free(&Respawn{}), free(NewRelog()), unst, world(NewReclaim()), world(fight),
-		world(NewLoot()), world(NewImbibe()), svc(NewFence(), claimsVendor), svc(NewRestock(), claimsVendor),
-		svc(NewRepair(), claimsVendor), svc(NewHeal(), claimsVendor), NewIdentify(),
+		world(NewLoot()), world(NewImbibe()), NewFence(), NewRestock(),
+		NewRepair(), NewHeal(), NewIdentify(),
 		NewEquip(), NewSpend(), world(adv),
 		world(NewWithdraw()), world(&Return{}), world(&Travel{Road: road}), world(&Explore{Frontier: adv.FrontierFor}),
 	}}

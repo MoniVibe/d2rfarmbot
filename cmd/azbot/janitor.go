@@ -31,7 +31,6 @@ type gatekeeper struct {
 	sh     *shadow
 	j      *exec.Janitor
 
-	holder    string    // the holder the disowned set belongs to
 	said      string    // last gate line's why (a line per change, not per tick)
 	blockedAt time.Time // when the current block began; zero while open
 }
@@ -50,14 +49,14 @@ func (g *gatekeeper) Stable() *screen.Reading {
 	return &r
 }
 
-// needs is the holder's gate view: its claims minus what it disowned, plus the
-// pause menu while Relog's sanction stands (MenuSanctionUntil — relog walks
-// the pause menu on purpose; nothing else may keep it up).
+// needs is the holder's gate view: the claims of its CURRENT phase (a town
+// service claims nothing in its Clean phase, so every leftover is foreign),
+// plus the pause menu while Relog's sanction stands (MenuSanctionUntil — relog
+// walks the pause menu on purpose; nothing else may keep it up).
 func (g *gatekeeper) needs(who string, s *percept.Snapshot, roster *activity.Roster) exec.HolderNeeds {
 	n := exec.NoHolder
 	if a := roster.Get(who); a != nil {
 		n = a.Needs(s).Holder()
-		n.Claims &^= activity.Disowned()
 	}
 	if time.Now().Before(activity.MenuSanctionUntil) {
 		n.Claims |= screen.PauseMenu
@@ -93,16 +92,9 @@ func (g *gatekeeper) perform(d exec.Decision) string {
 // gate reopens, how long it was shut (0 otherwise).
 func (g *gatekeeper) step(tick uint64, s *percept.Snapshot, arb *arbiter.Arbiter, roster *activity.Roster) (ok bool, unblocked time.Duration) {
 	who := holderWho(arb)
-	if who != g.holder {
-		activity.ClearDisowned() // a disown lives only as long as its holder's grant
-		g.holder = who
-	}
 	now := time.Now()
 	seen := g.sh.Eye.Latest()
 	d := g.j.Decide(now, seen, g.needs(who, s, roster))
-	if seen != nil {
-		activity.SettleDisowned(exec.Positive(exec.Stable(*seen)), now)
-	}
 	g.sh.gate = d.Gate()
 	if d.Open {
 		arb.SetBlocked(false)

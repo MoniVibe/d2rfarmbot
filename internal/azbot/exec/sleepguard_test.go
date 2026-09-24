@@ -21,17 +21,16 @@ import (
 // comments and strings never count.
 var sleepAllowed = map[string]int{
 	// Short settles inside one click sequence (<150ms) may stay; everything
-	// else is on its way to Wait.
+	// else is on its way to Wait. Step 7 took the town services to zero
+	// (services.go 23, shopgrid.go 2, pause.go's safeEsc 2 — 50 → 23 in all).
 	"activity.go":   2,
 	"advance.go":    10, // TODO(step 11): Advance onto nav
 	"hovertrack.go": 1,
 	"imbibe.go":     1,
-	"pause.go":      3,
+	"pause.go":      1, // EnsureWorld's click peel (janitor-OFF legacy)
 	"reclaim.go":    1,
-	"relog.go":      5,  // TODO(step 8): Session Relogging phases
-	"selftest.go":   2,  // the manual -selftest harness
-	"services.go":   11, // step 7: Identify/Equip/Spend moved out, sleep-free
-	"shopgrid.go":   2,
+	"relog.go":      5, // TODO(step 8): Session Relogging phases
+	"selftest.go":   2, // the manual -selftest harness
 }
 
 // sleepCalls counts time.Sleep calls in one Go source file.

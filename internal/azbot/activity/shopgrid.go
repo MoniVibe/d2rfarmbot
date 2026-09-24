@@ -95,58 +95,92 @@ const (
 	buyDeaf                 // the click did nothing (no gold change)
 )
 
-// buyVerified buys ONE stock item matching want, or nothing.
-func buyVerified(ctx *Ctx, holder string, what string, want func(data.Item) bool) buyVerdict {
-	stock := vendorStock(ctx, want)
-	if len(stock) == 0 {
-		ctx.Led.Append(verbs.Outcome{Verb: "buy", Holder: holder, Result: verbs.ResRefused,
-			Evidence: what + ": vendor stocks none"})
-		return buyNotStock
-	}
-	// The panel must be ON SCREEN — lingering stock is not an open shop, and a
-	// right-click into the town casts a skill ("Impossible.").
-	if !game.ShopVisible(ctx.GR.Screenshot()) {
-		ctx.Led.Append(verbs.Outcome{Verb: "buy", Holder: holder, Result: verbs.ResRefused,
-			Evidence: what + ": trade panel not on screen — no click"})
-		return buyNoConfirm
-	}
-	target := stock[0]
-	tx, ty := shopTabPx(ctx, target.Location.Page)
-	cx, cy := shopCellPx(ctx, target.Position)
-	snapPNG(ctx, "logs/buy_pre.png")
-	// The tab first (harmless if already shown), then the purchase itself.
-	if !ctx.M.RealMenuClick(tx, ty) {
-		ctx.Led.Append(verbs.Outcome{Verb: "buy", Holder: holder, Result: verbs.ResRefused,
-			Evidence: what + ": could not foreground the game for the shop click"})
-		return buyNoConfirm
-	}
-	time.Sleep(250 * time.Millisecond)
-	snapPNG(ctx, "logs/buy_tab.png")
-	gold0 := ctx.GR.GetData().PlayerUnit.TotalPlayerGold()
-	have0 := ownedCount(ctx, int(target.ID))
-	if !ctx.M.RealMenuRightClick(cx, cy) {
-		return buyNoConfirm
-	}
-	var gold1, have1 int
-	for i := 0; i < 10; i++ {
-		time.Sleep(100 * time.Millisecond)
-		gold1 = ctx.GR.GetData().PlayerUnit.TotalPlayerGold()
-		have1 = ownedCount(ctx, int(target.ID))
-		if have1 > have0 {
-			break
+// buyTx is ONE verified purchase in flight, a Step at a time — no sleeps:
+// the tab click, a 250ms settle, the real right-click on the cell, then the
+// owned count and gold polled for up to 1s. The judgment is the proven one:
+// the item arrived (ok), gold dropped without it (WRONG: stop buying), or
+// nothing happened (deaf).
+type buyTx struct {
+	stage        uint8 // 0 idle, 1 tab clicked, 2 cell clicked (judging)
+	what         string
+	target       data.Item
+	cx, cy       int
+	gold0, have0 int
+	at           time.Time
+}
+
+// active: a purchase is in flight (resume it before deciding anything new).
+func (t *buyTx) active() bool { return t.stage != 0 }
+
+// step advances the purchase. done=false: come back after wait. want is read
+// only when a new purchase starts.
+func (t *buyTx) step(ctx *Ctx, holder, what string, want func(data.Item) bool) (v buyVerdict, done bool, wait time.Duration) {
+	switch t.stage {
+	case 0:
+		t.what = what
+		stock := vendorStock(ctx, want)
+		if len(stock) == 0 {
+			ctx.Led.Append(verbs.Outcome{Verb: "buy", Holder: holder, Result: verbs.ResRefused,
+				Evidence: what + ": vendor stocks none"})
+			return buyNotStock, true, 0
 		}
+		// The panel must be ON SCREEN — lingering stock is not an open shop, and a
+		// right-click into the town casts a skill ("Impossible.").
+		if !game.ShopVisible(ctx.GR.Screenshot()) {
+			ctx.Led.Append(verbs.Outcome{Verb: "buy", Holder: holder, Result: verbs.ResRefused,
+				Evidence: what + ": trade panel not on screen — no click"})
+			return buyNoConfirm, true, 0
+		}
+		t.target = stock[0]
+		tx, ty := shopTabPx(ctx, t.target.Location.Page)
+		t.cx, t.cy = shopCellPx(ctx, t.target.Position)
+		snapPNG(ctx, "logs/buy_pre.png")
+		// The tab first (harmless if already shown), then the purchase itself.
+		if !ctx.M.RealMenuClick(tx, ty) {
+			ctx.Led.Append(verbs.Outcome{Verb: "buy", Holder: holder, Result: verbs.ResRefused,
+				Evidence: what + ": could not foreground the game for the shop click"})
+			return buyNoConfirm, true, 0
+		}
+		t.stage = 1
+		return 0, false, 250 * time.Millisecond
+	case 1:
+		snapPNG(ctx, "logs/buy_tab.png")
+		t.gold0 = ctx.GR.GetData().PlayerUnit.TotalPlayerGold()
+		t.have0 = ownedCount(ctx, int(t.target.ID))
+		if !ctx.M.RealMenuRightClick(t.cx, t.cy) {
+			t.stage = 0
+			return buyNoConfirm, true, 0
+		}
+		t.stage, t.at = 2, time.Now()
+		return 0, false, 100 * time.Millisecond
 	}
+	gold1 := ctx.GR.GetData().PlayerUnit.TotalPlayerGold()
+	have1 := ownedCount(ctx, int(t.target.ID))
+	if have1 <= t.have0 && time.Since(t.at) < time.Second {
+		return 0, false, 100 * time.Millisecond
+	}
+	t.stage = 0
 	ev := fmt.Sprintf("%s id=%d page=%d grid(%d,%d) px(%d,%d) gold %d→%d owned %d→%d",
-		what, int(target.ID), target.Location.Page, target.Position.X, target.Position.Y, cx, cy, gold0, gold1, have0, have1)
-	switch {
-	case have1 > have0:
+		t.what, int(t.target.ID), t.target.Location.Page, t.target.Position.X, t.target.Position.Y, t.cx, t.cy, t.gold0, gold1, t.have0, have1)
+	v = judgeBuy(t.have0, have1, t.gold0, gold1)
+	switch v {
+	case buyOK:
 		ctx.Led.Append(verbs.Outcome{Verb: "buy", Holder: holder, Result: verbs.ResDone, Evidence: ev})
-		return buyOK
-	case gold1 < gold0:
+	case buyWrong:
 		ctx.Led.Append(verbs.Outcome{Verb: "buy", Holder: holder, Result: verbs.ResDeaf, Evidence: "PAID WITHOUT RECEIVING — buying halted: " + ev})
-		return buyWrong
 	default:
 		ctx.Led.Append(verbs.Outcome{Verb: "buy", Holder: holder, Result: verbs.ResDeaf, Evidence: "click did nothing: " + ev})
-		return buyDeaf
 	}
+	return v, true, 0
+}
+
+// judgeBuy: the verified purchase's verdict from the owned count and gold.
+func judgeBuy(have0, have1, gold0, gold1 int) buyVerdict {
+	switch {
+	case have1 > have0:
+		return buyOK
+	case gold1 < gold0:
+		return buyWrong
+	}
+	return buyDeaf
 }

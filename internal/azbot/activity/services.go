@@ -21,6 +21,7 @@ import (
 	"github.com/hectorgimenez/koolo/internal/azbot/memory"
 	"github.com/hectorgimenez/koolo/internal/azbot/percept"
 	"github.com/hectorgimenez/koolo/internal/azbot/phase"
+	"github.com/hectorgimenez/koolo/internal/azbot/screen"
 	"github.com/hectorgimenez/koolo/internal/azbot/verbs"
 	"github.com/hectorgimenez/koolo/internal/game"
 )
@@ -34,22 +35,24 @@ const (
 	repairBtnX, repairBtnY = 570, 747 // Charsi trade panel, repair-all (2g fixed Buckler 3/12->12/12)
 )
 
-// errand is the shared NPC-service state machine. One bounded slice per Step.
+// errand is the shared NPC-service state machine. One bounded slice per Step;
+// its lifecycle (phases, claims, budgets, closing) is svcLife's.
 type errand struct {
+	svcLife[errandPhase] // Clean, Seek, Approach, Talk, Menu, Opening, Act, Close (errandphase.go)
+
 	lastTrace string
 	// tradeSelected: vendor stock LINGERS in memory after the trade window closes
 	// (2026-09-23: buys fired into Drognan's Talk/Trade menu because stock still
 	// read). Stock is trusted as "shop open" ONLY after Trade was selected on THIS
 	// trip; a buy click that does nothing or a reset clears it.
 	tradeSelected bool
-	npcID   npc.ID
-	act1NPC npc.ID          // captured from the constructor on first use
-	act2NPC npc.ID          // service counterpart in Lut Gholein; zero means no alternate
-	ring    []data.Position // search waypoints until the NPC loads
-	ringIdx int
-	ph      phase.Phaser[errandPhase] // Seek, Approach, Talk, Menu, Act (errandphase.go)
-	clickAt time.Time
-	tries   int
+	npcID         npc.ID
+	act1NPC       npc.ID          // captured from the constructor on first use
+	act2NPC       npc.ID          // service counterpart in Lut Gholein; zero means no alternate
+	ring          []data.Position // search waypoints until the NPC loads
+	ringIdx       int
+	clickAt       time.Time
+	tries         int
 	// menuTry: which menu-option slot to ENTER on this attempt. The blind law was
 	// "Home, Down, Enter = TRADE is the second item" — but NPC menus GROW (quest
 	// lines appear), and run 26 spent 30 minutes failing a restock against a menu
@@ -60,18 +63,42 @@ type errand struct {
 	menuTry    int
 	blocked    int              // consecutive blocked approach strides — the fire-pit-wall detector
 	hoverFails int              // consecutive hover-sweep misses — the torch-owns-this-bearing detector
-	startedAt  time.Time        // hard budget: a missing/deaf NPC must not own the bot forever
 	j          *journey.Journey // the PLANNER for far movement — town walls live in the
 	// static grid, and local slides can never round a real wall (run 38: fence paced
 	// the north wall at y=4897 while every ring waypoint sat past y=4930)
 }
 
+// initLife wires the errand's lifecycle for its owner service.
+func (e *errand) initLife(who string) {
+	e.init(who, erClose, errandClaims)
+	for p, d := range errandBudgets {
+		e.ph.Budget(p, d)
+	}
+}
+
+// reset starts the trip over from the clean screen (an area change swapped
+// the NPC): counters go, the phase returns to Clean.
 func (e *errand) reset() {
-	e.to(erSeek, "reset")
+	e.to(erClean, "reset")
+	e.resetTrip()
+}
+
+// resetTrip forgets the trip's counters (not the phase).
+func (e *errand) resetTrip() {
 	e.ringIdx, e.tries, e.menuTry, e.blocked, e.hoverFails = 0, 0, 0, 0, 0
 	e.tradeSelected = false
-	e.startedAt = time.Time{}
 	e.j = nil
+}
+
+// resume re-verifies the phase after a preemption (errandResume).
+func (e *errand) resume(ctx *Ctx) {
+	seen, _ := seenPanels(ctx)
+	menu := ctx.Snap != nil && ctx.Snap.MenuOpen
+	cur := e.ph.Phase()
+	if p := errandResume(cur, JanitorOn, menu, seen&screen.Shop != 0); p != cur {
+		e.tradeSelected = false
+		e.to(p, "resumed: "+cur.String()+" no longer holds")
+	}
 }
 
 // useNPCForArea keeps the service state machine from carrying Act 1 town
@@ -111,26 +138,45 @@ func (e *errand) walkTo(ctx *Ctx, goal data.Position, who string) (exhausted boo
 	return false
 }
 
-// step advances the errand toward an open trade panel. Returns true when the shop is
-// OPEN (vendor stock readable — the honest oracle) and the caller may act.
-func (e *errand) step(ctx *Ctx, who string) (shopOpen bool, dead bool) {
+// shopOpen: the trade window is up — the vendor stock reads AND the panel is
+// on screen (stock LINGERS; the screen decides).
+func shopOpen(ctx *Ctx) bool {
+	return len(ctx.GR.GetData().Inventory.ByLocation(item.LocationVendor)) > 0 && game.ShopVisible(ctx.GR.Screenshot())
+}
+
+// step advances the errand toward an open trade panel. open=true when the shop
+// is OPEN (vendor stock readable — the honest oracle) and the caller may act.
+func (e *errand) step(ctx *Ctx, who string) errandStep {
 	s := ctx.Snap
-	e.ph.Act = who
 	// PHASE TRACE (2026-09-23: restock passed the town self-test yet failed in
 	// the live run; the state machine must be visible wherever it runs).
 	if tr := fmt.Sprintf("phase=%s menuTry=%d tries=%d menuOpen=%v tradeSelected=%v", e.ph.Phase(), e.menuTry, e.tries, s.MenuOpen, e.tradeSelected); tr != e.lastTrace {
 		e.lastTrace = tr
 		ctx.Led.Append(verbs.Outcome{Verb: "errand-trace", Holder: who, Result: verbs.ResRefused, Evidence: tr})
 	}
+	// THE PRECONDITION: an errand starts only from a clean screen (2026-09-24:
+	// "fence phase=0 menuOpen=true", "repair starts with menuOpen=true" — the
+	// previous errand's menu rode into the next one's talk). Clean claims
+	// nothing: the janitor closes leftovers (ON), or the errand does, by sight.
+	if e.ph.Phase() == erClean {
+		ok, st := e.cleanScreen(ctx, 0)
+		if !ok {
+			if st.V == phase.Abandoned {
+				return errandStep{dead: true, why: st.Why, ev: st.Evidence}
+			}
+			return errandStep{wait: time.Until(st.WakeAt)}
+		}
+		e.to(erSeek, "screen clear")
+	}
 	d := ctx.GR.GetData()
-	if e.startedAt.IsZero() {
-		e.startedAt = time.Now()
-	} else if time.Since(e.startedAt) > 45*time.Second {
-		ctx.Led.Append(verbs.Outcome{Verb: "errand", Holder: who, Result: verbs.ResTimeout,
-			Evidence: fmt.Sprintf("npc=%d service attempt exceeded 45s in area %d", int(e.npcID), int(s.Me.Area))})
-		return false, true
+	if e.ph.Phase() < erAct && heldOf(ctx, who) > errandBudget {
+		return errandStep{dead: true, why: phase.Timebox,
+			ev: fmt.Sprintf("npc=%d service attempt exceeded %s held in area %d", int(e.npcID), errandBudget, int(s.Me.Area))}
 	}
 	e.useNPCForArea(s.Me.Area)
+	if e.ph.Phase() == erClean {
+		return errandStep{} // the NPC changed with the area: re-verify the screen first
+	}
 	var target data.Monster
 	found := false
 	for _, mo := range d.Monsters {
@@ -158,27 +204,26 @@ func (e *errand) step(ctx *Ctx, who string) (shopOpen bool, dead bool) {
 	// oracle the Lexicon already trusts: if it reads, we are trading. Jump
 	// straight to act, and NEVER re-click an open shop closed. Trade errands
 	// only — Heal wants the heal-dialog, not the merchant's shelves.
-	if e.trade && e.tradeSelected && len(d.Inventory.ByLocation(item.LocationVendor)) > 0 && game.ShopVisible(ctx.GR.Screenshot()) {
+	if e.trade && e.tradeSelected && e.ph.Phase() >= erTalk && shopOpen(ctx) {
 		e.to(erAct, "shop open: stock readable and trade panel on screen")
-		return true, false
+		return errandStep{open: true}
 	}
 
 	switch e.ph.Phase() {
 	case erSeek: // walk the ring until the NPC loads
 		if found {
 			e.to(erApproach, "npc loaded")
-			return false, false
+			return errandStep{}
 		}
 		if e.ringIdx >= len(e.ring) {
-			ctx.Led.Append(verbs.Outcome{Verb: "errand", Holder: who, Result: verbs.ResWhiff,
-				Evidence: fmt.Sprintf("npc=%d never loaded on the whole ring (P-6.2)", int(e.npcID))})
-			return false, true // walked the whole ring, no NPC — give up this trip
+			return errandStep{dead: true, why: phase.NoTarget,
+				ev: fmt.Sprintf("npc=%d never loaded on the whole ring (P-6.2)", int(e.npcID))} // walked the whole ring, no NPC — give up this trip
 		}
 		wp := e.ring[e.ringIdx]
 		if chebyshev(s.Me.Pos, wp) <= 5 {
 			e.ringIdx++
 			e.j = nil
-			return false, false
+			return errandStep{}
 		}
 		if e.walkTo(ctx, wp, who) {
 			e.ringIdx++ // no route to this waypoint — try the next
@@ -186,15 +231,15 @@ func (e *errand) step(ctx *Ctx, who string) (shopOpen bool, dead bool) {
 	case erApproach: // the band (4..7) — closer breaks hover, farther breaks the click
 		if !found {
 			e.to(erSeek, "npc unloaded")
-			return false, false
+			return errandStep{}
 		}
 		dist := chebyshev(s.Me.Pos, target.Position)
-		if dist >= 4 && dist <= 7 {
+		if talkBand(dist) == 0 {
 			ctx.M.MoveStop()
 			e.to(erTalk, fmt.Sprintf("in band, dist %d", dist))
-			return false, false
+			return errandStep{}
 		}
-		if dist < 4 {
+		if talkBand(dist) < 0 {
 			// Proportional backstep TO THE BAND, not a triple-distance fling —
 			// the old *3 threw her from the clinch past 7 and the approach
 			// re-overshot: the torch dance (the owner, 10:2x: "walks back and
@@ -210,17 +255,16 @@ func (e *errand) step(ctx *Ctx, who string) (shopOpen bool, dead bool) {
 			// landing ~6 out: inside the 4..7 band.
 			back := data.Position{X: target.Position.X + adx*8/m, Y: target.Position.Y + ady*8/m}
 			verbs.Stride{To: back, Hold: 400 * time.Millisecond}.Do(ctx.M, ctx.GR, ctx.P, ctx.Led, who)
-			return false, false
+			return errandStep{}
 		}
 		// FAR approach goes by PLANNER (real walls demand real routing); the last
 		// stretch is local footwork around camp furniture the grids can't see.
 		if dist > 12 {
 			if e.walkTo(ctx, target.Position, who) {
-				ctx.Led.Append(verbs.Outcome{Verb: "errand", Holder: who, Result: verbs.ResBlocked,
-					Evidence: fmt.Sprintf("npc=%d: planner found no route from (%d,%d) at dist %d (P-6.2)", int(e.npcID), s.Me.Pos.X, s.Me.Pos.Y, dist)})
-				return false, true // no route to the NPC at all — give up this trip
+				return errandStep{dead: true, why: phase.Unreachable,
+					ev: fmt.Sprintf("npc=%d: planner found no route from (%d,%d) at dist %d (P-6.2)", int(e.npcID), s.Me.Pos.X, s.Me.Pos.Y, dist)}
 			}
-			return false, false
+			return errandStep{}
 		}
 		// AIM AT THE BAND, never the body: sliding at the NPC's center lands in
 		// the hover-breaking clinch and the backstep oscillates. A point 5 out
@@ -250,29 +294,30 @@ func (e *errand) step(ctx *Ctx, who string) (shopOpen bool, dead bool) {
 			slideStride(ctx, arc, 900*time.Millisecond, 1, who+"/arc")
 		}
 	case erTalk: // hover-confirm, BARE click, wait for the menu byte
-		// Clicking Akara opens a DIALOG (MenuOpen high) that the phase-3 nav
+		// Clicking Akara opens a DIALOG (MenuOpen high) that the Menu phase
 		// steers to Trade — REVERTED here after run 72 froze at gold=741 with
 		// this path removed (the 12:44 screenshot showed the END state, an open
 		// shop, not HOW it opened: dialog → Home/Down/Enter → trade). The
-		// vendor-stock short-circuit at the top of step() handles the
-		// already-open case so an open shop is never re-navigated closed.
+		// vendor-stock short-circuit above handles the already-open case so an
+		// open shop is never re-navigated closed.
 		if s.MenuOpen {
 			// OUR menu only (2026-09-23 selftest photo: a walk-click beside another
 			// NPC opened HIS Talk/Introduction/Gossip menu; the errand steered it six
 			// times and never traded). A menu that opened without our talk click in
-			// the last few seconds is a stray: close it for real and carry on.
-			if e.clickAt.IsZero() || time.Since(e.clickAt) > 5*time.Second {
-				safeEsc(ctx)
+			// the last few seconds is a stray: back to Clean, which closes it by
+			// sight (never a blind ESC), and talk again.
+			if !talkedRecently(e.clickAt, time.Now()) {
 				ctx.Led.Append(verbs.Outcome{Verb: "errand", Holder: who, Result: verbs.ResRefused,
-					Evidence: "closed a stray NPC menu (not opened by our talk click)"})
-				return false, false
+					Evidence: "stray NPC menu (not opened by our talk click) — closing by sight"})
+				e.to(erClean, "stray NPC menu")
+				return errandStep{}
 			}
 			e.to(erMenu, "menu byte after our talk click")
-			return false, false
+			return errandStep{}
 		}
 		if !found {
 			e.to(erSeek, "npc unloaded")
-			return false, false
+			return errandStep{}
 		}
 		// THE DIAG'S VERDICT (12:25: "dist=20 ... hoverConfirmed=true"): a
 		// missed bare click is a MOVE order — she sails past the NPC, and
@@ -281,17 +326,17 @@ func (e *errand) step(ctx *Ctx, who string) (shopOpen bool, dead bool) {
 		// attempt; beyond 8 she re-approaches instead of clicking.
 		if chebyshev(s.Me.Pos, target.Position) > 8 {
 			e.to(erApproach, "out of the talk band")
-			return false, false
+			return errandStep{}
 		}
-		// One bounded click attempt per grant of this phase.
-		if time.Since(e.clickAt) < 3*time.Second {
-			return false, false // the click starts a WALK-to-talk; let it play out
+		// One bounded click attempt per 3s: the click starts a WALK-to-talk; let
+		// it play out, polling lightly for the menu byte.
+		if left := 3*time.Second - time.Since(e.clickAt); left > 0 {
+			return errandStep{wait: minDur(left, 150*time.Millisecond)}
 		}
 		if e.tries >= 6 {
 			NoteGhost() // P-4.8a: a dead NPC counts toward the world's poison
-			ctx.Led.Append(verbs.Outcome{Verb: "errand", Holder: who, Result: verbs.ResDeaf,
-				Evidence: fmt.Sprintf("npc=%d: 6 talk attempts, menu never opened (hover or click deaf — P-6.2)", int(e.npcID))})
-			return false, true
+			return errandStep{dead: true, why: phase.Deaf,
+				ev: fmt.Sprintf("npc=%d: 6 talk attempts, menu never opened (hover or click deaf — P-6.2)", int(e.npcID))}
 		}
 		me := d.PlayerUnit.Position
 		bx := int(float32((target.Position.X-me.X)-(target.Position.Y-me.Y))*19.8) + ctx.GR.GameAreaSizeX/2
@@ -317,11 +362,11 @@ func (e *errand) step(ctx *Ctx, who string) (shopOpen bool, dead bool) {
 				e.hoverFails = 0
 				ctx.M.BareClick(bx, by-30) // the label sits above the base
 				e.clickAt = time.Now()
-				return false, false
+				return errandStep{}
 			}
 			// A tracked miss retries next tick. The old hover-arc side-step spent 0.9s
 			// for gain=0 and re-approached from scratch (2026-09-23 gap analysis).
-			return false, false
+			return errandStep{}
 		}
 		e.hoverFails = 0
 		ctx.M.BareClick(px, py)
@@ -331,7 +376,7 @@ func (e *errand) step(ctx *Ctx, who string) (shopOpen bool, dead bool) {
 			if time.Since(e.clickAt) > 4*time.Second {
 				e.to(erTalk, "menu died") // talk again
 			}
-			return false, false
+			return errandStep{wait: 100 * time.Millisecond}
 		}
 		ctx.M.MoveStop()
 		// MENUS DEMAND TRUE FOREGROUND (2026-09-23 photo: Drognan's Talk/Trade/Cancel
@@ -342,49 +387,72 @@ func (e *errand) step(ctx *Ctx, who string) (shopOpen bool, dead bool) {
 		for i := 0; i < downs; i++ {
 			ctx.M.RealKey(0x28) // DOWN
 		}
-		ctx.M.RealKey(0x0D) // ENTER
+		ctx.M.RealKey(0x0D)    // ENTER
 		e.tradeSelected = true // a Trade selection was actually made
-		e.to(erAct, fmt.Sprintf("trade selected (menu slot try %d)", e.menuTry))
-	case erAct:
+		e.to(erOpening, fmt.Sprintf("trade selected (menu slot try %d)", e.menuTry))
+		return errandStep{wait: 100 * time.Millisecond}
+	case erOpening:
 		// The trade window takes a moment to populate after ENTER. Poll, don't
 		// glance (2026-09-23 trace: an instant check read 0 stock, ESC'd the
-		// opening shop and burned all six menu tries in three seconds).
-		for i := 0; i < 20; i++ {
-			// stock LINGERS; the screen decides (game.TradePanelVisible)
-			if len(ctx.GR.GetData().Inventory.ByLocation(item.LocationVendor)) > 0 && game.ShopVisible(ctx.GR.Screenshot()) {
-				return true, false
-			}
-			time.Sleep(100 * time.Millisecond)
+		// opening shop and burned all six menu tries in three seconds). The
+		// short-circuit above takes the open shop; here it has not opened yet.
+		if e.ph.InPhase() < 2*time.Second {
+			return errandStep{wait: 100 * time.Millisecond}
 		}
 		// Trade did not open: the slot was wrong (menus GROW when quest lines appear —
 		// the blind 'second item is Trade' law cost run 26 a 30-minute restock loop).
-		// Back all the way out and try the next slot on a fresh talk.
+		// Back all the way out (Clean closes the menu by sight) and try the next
+		// slot on a fresh talk.
 		e.menuTry++
 		if e.menuTry >= 6 {
-			ctx.Led.Append(verbs.Outcome{Verb: "errand", Holder: who, Result: verbs.ResDeaf,
-				Evidence: fmt.Sprintf("npc=%d: no menu slot opened a trade in %d attempts", int(e.npcID), e.menuTry)})
-			return false, true
+			return errandStep{dead: true, why: phase.Deaf,
+				ev: fmt.Sprintf("npc=%d: no menu slot opened a trade in %d attempts", int(e.npcID), e.menuTry)}
 		}
-		if s.MenuOpen {
-			safeEsc(ctx) // close menu/dialog; re-clears a pause menu the ESC may open
-			time.Sleep(300 * time.Millisecond)
-		}
-		e.to(erTalk, fmt.Sprintf("trade never opened (menu slot try %d)", e.menuTry))
-		return false, false
+		e.tradeSelected = false
+		e.to(erClean, fmt.Sprintf("trade never opened (menu slot try %d)", e.menuTry))
+	case erAct:
+		// The window we traded in is gone (the short-circuit above failed):
+		// start over from a clean screen rather than click into whatever is up.
+		e.tradeSelected = false
+		e.to(erClean, "trade window no longer on screen")
 	}
-	return false, false
+	return errandStep{}
 }
 
-// closeShop escapes out of the panel stack.
-func closeShop(ctx *Ctx) {
-	// Close by the panel's own X — never ESC, which opens the pause menu when the
-	// shop has already closed. Then peel anything else off the screen.
+// talkBand: 0 inside the 4..7 talk band, <0 too close (hover breaks), >0 too
+// far (the click becomes a walk).
+func talkBand(dist int) int {
+	switch {
+	case dist < 4:
+		return -1
+	case dist > 7:
+		return 1
+	}
+	return 0
+}
+
+// talkedRecently: a menu that opens within 5s of our talk click is ours.
+func talkedRecently(clickAt, now time.Time) bool {
+	return !clickAt.IsZero() && now.Sub(clickAt) <= 5*time.Second
+}
+
+func minDur(a, b time.Duration) time.Duration {
+	if a < b {
+		return a
+	}
+	return b
+}
+
+// closeShopStep is ONE sight-driven step toward a closed trade window for the
+// manual -selftest harness (no executive, no Eye): the panel's own red X, then
+// the pause peel. Never ESC. done=true when nothing is left to click.
+func closeShopStep(ctx *Ctx) (done bool, wait time.Duration) {
 	if x, y, ok := game.ShopOpenX(ctx.GR.Screenshot()); ok {
 		ctx.M.RealMenuClick(x, y)
-		time.Sleep(400 * time.Millisecond)
+		return false, 400 * time.Millisecond
 	}
 	EnsureWorld(ctx.GR, ctx.M)
-	time.Sleep(300 * time.Millisecond)
+	return true, 0
 }
 
 // healerHeals: the live belief that Akara's talk-heal works on this mod (vanilla law:
@@ -463,6 +531,54 @@ func ServicesPending(s *percept.Snapshot) bool {
 	return false
 }
 
+// ---------------------------------------------------------------- vendor errands on contract v2
+
+// pre is the vendor services' common head: the phase budget, the close phase
+// (janitor OFF), the snapshot guards. stop=true: return st.
+func (e *errand) pre(ctx *Ctx) (st Status, stop bool) {
+	if st, over := e.overrun(ctx); over {
+		return st, true
+	}
+	if e.ph.Phase() == erClose {
+		return e.closing(ctx), true
+	}
+	s := ctx.Snap
+	if !s.Valid {
+		return e.wait(100 * time.Millisecond), true
+	}
+	if s.Me.CursorItem {
+		return e.wait(150 * time.Millisecond), true // WARNING 9: a shop or NPC click with a held item misfires
+	}
+	return Status{}, false
+}
+
+// drive runs one errand Step for its owner. open=true: the trade window is up
+// and the owner acts in this Step; dead=true: st is the abandoned verdict.
+func (e *errand) drive(ctx *Ctx, who string) (st Status, open, dead bool) {
+	es := e.step(ctx, who)
+	switch {
+	case es.dead:
+		ctx.Led.Append(verbs.Outcome{Verb: "errand", Holder: who, Result: verbs.ResDeaf, Evidence: es.why.String() + ": " + es.ev})
+		return e.finish(ctx, phase.Abandoned, es.why, es.ev), false, true
+	case es.open:
+		return Status{}, true, false
+	case es.wait > 0:
+		return e.wait(es.wait), false, false
+	}
+	return e.running(), false, false
+}
+
+// coolOnEnd: an episode that ran out of budget or wedged the screen cools its
+// service like a dead trip (P-4.2a: an abandoned trip stays abandoned), unless
+// the Step already set a longer cool.
+func coolOnEnd(v phase.Verdict, why phase.Reason, until *time.Time) {
+	if v == phase.Abandoned && (why == phase.Timebox || why == phase.UIWedge) {
+		if t := time.Now().Add(120 * time.Second); t.After(*until) {
+			*until = t
+		}
+	}
+}
+
 // ---------------------------------------------------------------- Restock (ClassService)
 
 // Restock keeps the belt at doctrine: one row of mana, the rest HP — scaled to the
@@ -483,13 +599,17 @@ type Restock struct {
 	frozenID   int
 	nextAt     time.Time // ghost-abort cooldown: a dead window stays dead for minutes,
 	// not seconds — eight identical aborts in eight minutes taught the churn (12:07)
-	probeHP  int // potion-cell discovery cursors (the shop layout SHIFTS with level —
-	probeMN  int // the level-5 cells died at level 9, measured 12:15)
-	frozenHP int
-	frozenMN int
-	potFails int  // consecutive verified-buy failures this trip
-	noMana   bool // the open vendor stocks no mana potion
+	potFails int      // consecutive verified-buy failures this trip
+	noMana   bool     // the open vendor stocks no mana potion
+	buy      buyTx    // the verified potion purchase in flight
+	kind     string   // its kind: "health" | "mana"
+	scr      scrollTx // the scroll purchase in flight
 }
+
+var (
+	_ Life   = (*Restock)(nil)
+	_ Phased = (*Restock)(nil)
+)
 
 // potCount: total bottles of one kind she owns, belt AND bag — the only honest
 // BUY check. A bottle that landed in the bag still landed; the belt-only read
@@ -508,64 +628,6 @@ func potCount(ctx *Ctx, id int) int {
 		}
 	}
 	return n
-}
-
-// buyPotion — one potion purchase with the scroll machinery's discipline:
-// judged by the OWNED-count delta, the cell LEARNED per kind (ScopeGame —
-// the shop restocks per level), and a learned cell that freezes twice is
-// FORGOTTEN and re-probed rather than trusted into a ghost. Returns false
-// when probing exhausts every candidate this trip.
-func (r *Restock) buyPotion(ctx *Ctx, id int, memKey string, probeIdx, frozen *int) bool {
-	var candidates [][2]int
-	if id == modHPPotionID {
-		candidates = [][2]int{{hpCellX, hpCellY}, {612, 431}, {612, 384}, {664, 478}, {664, 525}, {612, 337}}
-	} else {
-		candidates = [][2]int{{manaCellX, manaCellY}, {612, 478}, {664, 525}, {664, 478}, {612, 431}, {664, 384}}
-	}
-	var cell [2]int
-	learned := ctx.Mem != nil && ctx.Mem.GetJSON(memKey, &cell) && cell != [2]int{0, 0}
-	if !learned {
-		if *probeIdx >= len(candidates) {
-			NoteGhost() // P-4.8a: a whole probe pass into a dead window is poison
-			// P-4.2a THE ESCAPE CLAUSE: an abandoned trip cools its docket line —
-			// it must not gate the march (measured 23:55: idle at the hub, 501
-			// gold, nothing left to try, Advance locked out by pending potions).
-			potionCoolUntil = time.Now().Add(3 * time.Minute)
-			ctx.Led.Append(verbs.Outcome{Verb: "buy", Holder: r.Name(), Result: verbs.ResDeaf,
-				Evidence: fmt.Sprintf("potion %d: no candidate cell raised the owned count — trip abandoned", id)})
-			return false
-		}
-		cell = candidates[*probeIdx]
-	}
-	before := potCount(ctx, id)
-	ctx.M.UIClick(cell[0], cell[1])
-	time.Sleep(450 * time.Millisecond)
-	after := potCount(ctx, id)
-	switch {
-	case after > before:
-		*frozen = 0
-		if !learned && ctx.Mem != nil {
-			ctx.Mem.PutJSON(memKey, memory.ScopeGame,
-				memory.Provenance{Source: "measured", Evidence: fmt.Sprintf("probe: potion %d count %d→%d at (%d,%d)", id, before, after, cell[0], cell[1])}, cell)
-			ctx.Led.Append(verbs.Outcome{Verb: "buy", Holder: r.Name(), Result: verbs.ResDone,
-				Evidence: fmt.Sprintf("%s LEARNED at (%d,%d)", memKey, cell[0], cell[1])})
-		}
-	case !learned:
-		*probeIdx++ // wrong cell: whatever it bought, the fence sorts it out
-	default:
-		if *frozen++; *frozen >= 2 {
-			// The learned cell died — the shop restocked over it (level-up).
-			// Forget and re-probe next pass rather than trust it into a ghost.
-			if ctx.Mem != nil {
-				ctx.Mem.PutJSON(memKey, memory.ScopeGame,
-					memory.Provenance{Source: "proven-negative", Evidence: "cell froze twice — forgotten for reprobe"}, [2]int{0, 0})
-			}
-			ctx.Led.Append(verbs.Outcome{Verb: "buy", Holder: r.Name(), Result: verbs.ResDeaf,
-				Evidence: fmt.Sprintf("potion %d: learned cell froze twice — forgotten, reprobing", id)})
-			*probeIdx, *frozen = 0, 0
-		}
-	}
-	return true
 }
 
 // scrollWorks: the live belief that scroll restocking works here — retired when
@@ -606,8 +668,10 @@ func tomeCount(ctx *Ctx, tomeID int) int {
 }
 
 func NewRestock() *Restock {
-	return &Restock{e: errand{npcID: npc.Akara, act2NPC: npc.Drognan, trade: true,
+	r := &Restock{e: errand{npcID: npc.Akara, act2NPC: npc.Drognan, trade: true,
 		ring: []data.Position{{X: 6023, Y: 4933}, {X: 6070, Y: 4960}, {X: 6100, Y: 4990}, {X: 6050, Y: 5010}, {X: 6110, Y: 4930}}}}
+	r.e.initLife(r.Name())
+	return r
 }
 
 func (r *Restock) Name() string { return "restock" }
@@ -650,7 +714,9 @@ func plan(s *percept.Snapshot) (buyHP, buyMana int) {
 	return
 }
 
-func (r *Restock) Demand(s *percept.Snapshot) *arbiter.Demand {
+func (r *Restock) Demand(s *percept.Snapshot) *arbiter.Demand { return r.e.keepBid(r.demand(s), s) }
+
+func (r *Restock) demand(s *percept.Snapshot) *arbiter.Demand {
 	if servicesCooled() {
 		return nil
 	}
@@ -672,33 +738,64 @@ func (r *Restock) Demand(s *percept.Snapshot) *arbiter.Demand {
 		Commit:  arbiter.Commitment{MinHold: 5 * time.Second}}
 }
 
-func (r *Restock) Step(ctx *Ctx) Verdict {
-	s := ctx.Snap
-	if !s.Valid {
-		return Running
+func (r *Restock) Needs(*percept.Snapshot) Needs { return r.e.needs() }
+
+func (r *Restock) Begin(ctx *Ctx, resumed bool) {
+	r.e.begin(resumed)
+	// A purchase in flight is never resumed blind: the next decision reads
+	// the live counts again.
+	r.buy, r.scr = buyTx{}, scrollTx{}
+	if resumed {
+		r.e.resume(ctx)
+		return
 	}
-	if s.Me.CursorItem {
-		return Running // WARNING 9: an instant-buy cell click would misfire
+	r.e.resetTrip()
+	r.resetCounters()
+}
+
+func (r *Restock) Suspend(ctx *Ctx, _ phase.Reason) { r.e.suspend(ctx) }
+
+func (r *Restock) End(ctx *Ctx, v phase.Verdict, why phase.Reason) {
+	r.e.end(ctx, v, why)
+	r.e.resetTrip()
+	r.resetCounters()
+	r.buy, r.scr = buyTx{}, scrollTx{}
+	coolOnEnd(v, why, &r.nextAt)
+}
+
+func (r *Restock) Step(ctx *Ctx) Status {
+	e := &r.e
+	if st, stop := e.pre(ctx); stop {
+		return st
+	}
+	s := ctx.Snap
+	// A purchase in flight finishes first: its judgment reads the live counts.
+	if r.buy.active() {
+		v, done, w := r.buy.step(ctx, r.Name(), "", nil)
+		if !done {
+			return e.wait(w)
+		}
+		return r.afterPotion(ctx, v)
+	}
+	if r.scr.active() {
+		if done, w := r.buyScroll(ctx, 0, ""); !done {
+			return e.wait(w)
+		}
+		return r.afterScroll(ctx)
 	}
 	buyHP, buyMana := plan(s)
 	if buyHP+buyMana+scrollDeficit(s) == 0 {
-		if r.e.ph.Phase() >= erMenu {
-			closeShop(ctx)
-		}
-		r.e.reset()
-		r.resetCounters()
-		return Done
+		return e.finish(ctx, phase.Done, phase.Completed, "belt and tomes at doctrine")
 	}
-	open, dead := r.e.step(ctx, r.Name())
+	st, open, dead := e.drive(ctx, r.Name())
 	if dead {
 		r.nextAt = time.Now().Add(120 * time.Second)
-		r.e.reset()
-		return Abandoned
+		return st
 	}
 	if !open {
-		return Running
+		return st
 	}
-	// Shop open: ONE purchase per step (instant-buy cells). Potions first, then
+	// Shop open: ONE purchase at a time (instant-buy cells). Potions first, then
 	// scrolls (P-4.5): blood before the escape hatch.
 	if buyMana > 0 || buyHP > 0 {
 		// THE BELT THAT EATS NOTHING (P-4.9; the owner, 2026-07-20: "spammed
@@ -721,130 +818,170 @@ func (r *Restock) Step(ctx *Ctx) Verdict {
 			r.nextAt = time.Now().Add(5 * time.Minute)
 			ctx.Led.Append(verbs.Outcome{Verb: "buy", Holder: r.Name(), Result: verbs.ResDeaf,
 				Evidence: "belt frozen through 3 buys — bottles land in the bag; trip ended, potions cooled 5m"})
-			closeShop(ctx)
-			r.e.reset()
-			r.resetCounters()
-			return Abandoned
+			return e.finish(ctx, phase.Abandoned, phase.Refused, "belt frozen through 3 buys")
 		}
-			// VERIFIED BUYS (2026-09-23) supersede the probing: the stock is READ
-			// from memory, the cell hover-confirmed before the click, the result
-			// judged by gold AND owned count. Probe-by-purchase paid for its
-			// mistakes (9k gold of Act 2 junk on Act 1 cell guesses).
-			kind := "mana"
-			if buyMana == 0 || r.noMana {
-				kind = "health"
-			}
-			want := func(it data.Item) bool { return percept.PotionKind(it, true) == kind }
-			if kind == "health" && len(vendorStock(ctx, func(it data.Item) bool { return int(it.ID) == 603 })) > 0 {
-				want = func(it data.Item) bool { return int(it.ID) == 603 } // the proven belt bottle
-			}
-			switch buyVerified(ctx, r.Name(), kind+" potion", want) {
-			case buyOK:
-				r.potFails = 0
-			case buyNotStock:
-				if kind == "mana" {
-					r.noMana = true // this vendor sells no mana: fill the belt with health
-					return Running
-				}
-				r.potFails = 99
-			case buyWrong:
-				potionCoolUntil = time.Now().Add(30 * time.Minute)
-				r.potFails = 99
-			default:
-				// The click did nothing: the shop is NOT open, whatever lingering
-				// stock says. Talk again and select Trade for real.
-				r.potFails++
-				r.e.tradeSelected = false
-				r.e.to(erTalk, "buy click did nothing")
-				return Running
-			}
-			if r.potFails >= 3 {
-				if time.Now().After(potionCoolUntil) {
-					potionCoolUntil = time.Now().Add(5 * time.Minute)
-				}
-				closeShop(ctx)
-				r.e.reset()
-				r.resetCounters()
-				r.nextAt = time.Now().Add(4 * time.Minute)
-				return Abandoned
-			}
-			r.potBought++
-		if r.potBought > s.Me.BeltSlots+2+8 { // runaway guard, probe headroom included
-			// The runaway abandon must COOL or it re-grants in seconds and buys
-			// another armful — the 10:56 spam re-granted 25s after abandoning.
-			potionCoolUntil = time.Now().Add(4 * time.Minute)
-			r.nextAt = time.Now().Add(4 * time.Minute)
-			closeShop(ctx)
-			r.e.reset()
-			r.resetCounters()
-			return Abandoned
+		// VERIFIED BUYS (2026-09-23) supersede the probing: the stock is READ
+		// from memory, the cell computed from measured geometry, the result
+		// judged by gold AND owned count. Probe-by-purchase paid for its
+		// mistakes (9k gold of Act 2 junk on Act 1 cell guesses).
+		r.kind = "mana"
+		if buyMana == 0 || r.noMana {
+			r.kind = "health"
 		}
-	} else {
-		// Scrolls: the TP tome first (the escape hatch), then the ID tome.
-		if scrollGap(s.Me.TPScrolls, s.Me.Gold) > 0 {
-			r.buyScroll(ctx, 533, "shop.akara.cell.tpscroll", &r.probeTP, &r.frozenTP)
-		} else {
-			r.buyScroll(ctx, 534, "shop.akara.cell.idscroll", &r.probeID, &r.frozenID)
+		kind := r.kind
+		want := func(it data.Item) bool { return percept.PotionKind(it, true) == kind }
+		if kind == "health" && len(vendorStock(ctx, func(it data.Item) bool { return int(it.ID) == 603 })) > 0 {
+			want = func(it data.Item) bool { return int(it.ID) == 603 } // the proven belt bottle
 		}
-		r.scrBought++
-		if r.scrBought > 2*tpScrollFloor+12 { // probes + refills, generously bounded
-			closeShop(ctx)
-			r.e.reset()
-			r.resetCounters()
-			return Abandoned
+		v, done, w := r.buy.step(ctx, r.Name(), kind+" potion", want)
+		if !done {
+			return e.wait(w)
 		}
+		return r.afterPotion(ctx, v)
 	}
-	time.Sleep(400 * time.Millisecond)
-	return Running
+	// Scrolls: the TP tome first (the escape hatch), then the ID tome.
+	tome, key := 534, "shop.akara.cell.idscroll"
+	if scrollGap(s.Me.TPScrolls, s.Me.Gold) > 0 {
+		tome, key = 533, "shop.akara.cell.tpscroll"
+	}
+	if done, w := r.buyScroll(ctx, tome, key); !done {
+		return e.wait(w)
+	}
+	return r.afterScroll(ctx)
+}
+
+// afterPotion applies one verified purchase's verdict (the proven law, one
+// purchase per decision, 400ms between purchases).
+func (r *Restock) afterPotion(ctx *Ctx, v buyVerdict) Status {
+	e := &r.e
+	switch v {
+	case buyOK:
+		r.potFails = 0
+	case buyNotStock:
+		if r.kind == "mana" {
+			r.noMana = true // this vendor sells no mana: fill the belt with health
+			return e.running()
+		}
+		r.potFails = 99
+	case buyWrong:
+		potionCoolUntil = time.Now().Add(30 * time.Minute)
+		r.potFails = 99
+	default:
+		// The click did nothing: the shop is NOT open, whatever lingering
+		// stock says. Close what is up by sight and talk again, selecting
+		// Trade for real.
+		r.potFails++
+		e.tradeSelected = false
+		e.to(erClean, "buy click did nothing")
+		return e.running()
+	}
+	if r.potFails >= 3 {
+		if time.Now().After(potionCoolUntil) {
+			potionCoolUntil = time.Now().Add(5 * time.Minute)
+		}
+		r.nextAt = time.Now().Add(4 * time.Minute)
+		why := phase.Deaf
+		if v == buyNotStock {
+			why = phase.Refused
+		}
+		return e.finish(ctx, phase.Abandoned, why, "potion buys failing (verdict "+fmt.Sprint(v)+")")
+	}
+	r.potBought++
+	if r.potBought > ctx.Snap.Me.BeltSlots+2+8 { // runaway guard, probe headroom included
+		// The runaway abandon must COOL or it re-grants in seconds and buys
+		// another armful — the 10:56 spam re-granted 25s after abandoning.
+		potionCoolUntil = time.Now().Add(4 * time.Minute)
+		r.nextAt = time.Now().Add(4 * time.Minute)
+		return e.finish(ctx, phase.Abandoned, phase.Refused, fmt.Sprintf("runaway guard: %d potion buys", r.potBought))
+	}
+	return e.wait(400 * time.Millisecond)
+}
+
+func (r *Restock) afterScroll(ctx *Ctx) Status {
+	r.scrBought++
+	if r.scrBought > 2*tpScrollFloor+12 { // probes + refills, generously bounded
+		return r.e.finish(ctx, phase.Abandoned, phase.Refused, fmt.Sprintf("runaway guard: %d scroll buys", r.scrBought))
+	}
+	return r.e.wait(400 * time.Millisecond)
 }
 
 func (r *Restock) resetCounters() {
 	r.potBought, r.beltFrozen, r.scrBought, r.potFails, r.noMana = 0, 0, 0, 0, false
 	r.lastBeltHP, r.lastBeltMN = 0, 0
 	r.frozenTP, r.frozenID = 0, 0
-	r.probeHP, r.probeMN, r.frozenHP, r.frozenMN = 0, 0, 0, 0
 }
+
+// scrollTx is one scroll purchase in flight: the misc-tab click, a 450ms
+// settle, then the TOME's quantity delta judges it.
+type scrollTx struct {
+	stage   uint8 // 0 idle, 1 clicked (judging)
+	tomeID  int
+	memKey  string
+	cell    [2]int
+	learned bool
+	before  int
+}
+
+func (t *scrollTx) active() bool { return t.stage != 0 }
 
 // buyScroll — P-4.5: one scroll purchase, judged by the TOME's quantity delta
 // (gold cannot tell a scroll from junk). The cell is LEARNED once per tome and
 // kept forever; until learned, probe the misc-tab candidates — a wrong probe's
-// junk goes to the fence like any other merchandise.
-func (r *Restock) buyScroll(ctx *Ctx, tomeID int, memKey string, probeIdx, frozen *int) {
-	candidates := [][2]int{{612, 431}, {612, 384}, {612, 337}, {664, 478}, {664, 431}, {664, 384}}
-	var cell [2]int
-	learned := ctx.Mem != nil && ctx.Mem.GetJSON(memKey, &cell)
-	if !learned {
-		if *probeIdx >= len(candidates) {
-			scrollWorks.Store(false)
-			ctx.Led.Append(verbs.Outcome{Verb: "buy", Holder: r.Name(), Result: verbs.ResDeaf,
-				Evidence: fmt.Sprintf("no misc-tab candidate raised tome %d — scroll belief retired", tomeID)})
-			return
+// junk goes to the fence like any other merchandise. done=false: come back
+// after wait (the click landed; the judgment follows). tomeID/memKey are read
+// only when a new purchase starts.
+func (r *Restock) buyScroll(ctx *Ctx, tomeID int, memKey string) (done bool, wait time.Duration) {
+	t := &r.scr
+	if t.stage == 0 {
+		probeIdx, _ := r.scrollCursors(tomeID)
+		candidates := [][2]int{{612, 431}, {612, 384}, {612, 337}, {664, 478}, {664, 431}, {664, 384}}
+		var cell [2]int
+		learned := ctx.Mem != nil && ctx.Mem.GetJSON(memKey, &cell)
+		if !learned {
+			if *probeIdx >= len(candidates) {
+				scrollWorks.Store(false)
+				ctx.Led.Append(verbs.Outcome{Verb: "buy", Holder: r.Name(), Result: verbs.ResDeaf,
+					Evidence: fmt.Sprintf("no misc-tab candidate raised tome %d — scroll belief retired", tomeID)})
+				return true, 0
+			}
+			cell = candidates[*probeIdx]
 		}
-		cell = candidates[*probeIdx]
+		*t = scrollTx{stage: 1, tomeID: tomeID, memKey: memKey, cell: cell, learned: learned, before: tomeCount(ctx, tomeID)}
+		ctx.M.UIClick(cell[0], cell[1])
+		return false, 450 * time.Millisecond
 	}
-	before := tomeCount(ctx, tomeID)
-	ctx.M.UIClick(cell[0], cell[1])
-	time.Sleep(450 * time.Millisecond)
-	after := tomeCount(ctx, tomeID)
+	tx := *t
+	*t = scrollTx{}
+	probeIdx, frozen := r.scrollCursors(tx.tomeID)
+	after := tomeCount(ctx, tx.tomeID)
 	switch {
-	case after > before:
+	case after > tx.before:
 		*frozen = 0
-		if !learned && ctx.Mem != nil {
-			ctx.Mem.PutJSON(memKey, memory.ScopeForever,
-				memory.Provenance{Source: "measured", Evidence: fmt.Sprintf("probe: tome %d %d→%d at (%d,%d)", tomeID, before, after, cell[0], cell[1])}, cell)
+		if !tx.learned && ctx.Mem != nil {
+			ctx.Mem.PutJSON(tx.memKey, memory.ScopeForever,
+				memory.Provenance{Source: "measured", Evidence: fmt.Sprintf("probe: tome %d %d→%d at (%d,%d)", tx.tomeID, tx.before, after, tx.cell[0], tx.cell[1])}, tx.cell)
 			ctx.Led.Append(verbs.Outcome{Verb: "buy", Holder: r.Name(), Result: verbs.ResDone,
-				Evidence: fmt.Sprintf("%s LEARNED at (%d,%d)", memKey, cell[0], cell[1])})
+				Evidence: fmt.Sprintf("%s LEARNED at (%d,%d)", tx.memKey, tx.cell[0], tx.cell[1])})
 		}
-	case !learned:
+	case !tx.learned:
 		*probeIdx++ // wrong cell: whatever it bought is the fence's problem
 	default:
 		// A learned cell with a frozen delta twice is a GHOST WINDOW (WARNING 2).
 		if *frozen++; *frozen >= 2 {
 			scrollWorks.Store(false)
 			ctx.Led.Append(verbs.Outcome{Verb: "buy", Holder: r.Name(), Result: verbs.ResDeaf,
-				Evidence: fmt.Sprintf("tome %d frozen at %d twice on the learned cell — scroll belief retired", tomeID, before)})
+				Evidence: fmt.Sprintf("tome %d frozen at %d twice on the learned cell — scroll belief retired", tx.tomeID, tx.before)})
 		}
 	}
+	return true, 0
+}
+
+// scrollCursors: the probe and frozen counters of one tome.
+func (r *Restock) scrollCursors(tomeID int) (probe, frozen *int) {
+	if tomeID == 533 {
+		return &r.probeTP, &r.frozenTP
+	}
+	return &r.probeID, &r.frozenID
 }
 
 // ---------------------------------------------------------------- Fence (ClassService)
@@ -852,7 +989,7 @@ func (r *Restock) buyScroll(ctx *Ctx, tomeID int, memKey string, probeIdx, froze
 // Fence sells inventory junk to Akara — the classic bots' economy law: loot → sell →
 // gold → repair/potions. A bot with an empty purse cannot take care of itself (the
 // owner, 03:08: "she doesn't repair either but she's out of gold i guess?"). One
-// ctrl-click quick-sell per Step, gold delta as the postcondition.
+// ctrl-click quick-sell at a time, exactly-this-item-gone as the postcondition.
 //
 // THE TOME OATH (the owner: "she simply dropped her tp book again. i'd like her to
 // stop that"): a tome must never leave the bag at the Fence. Three layers —
@@ -862,7 +999,6 @@ func (r *Restock) buyScroll(ctx *Ctx, tomeID int, memKey string, probeIdx, froze
 type Fence struct {
 	e      errand
 	sold   int
-	gold0  int
 	tomes0 int // tome census when the shop opened; -1 = not yet taken
 	// Ghost-window defense (the owner: "trying to sell outside akara's trade
 	// window"): the vendor-stock read can LINGER after the panel closes, and a
@@ -872,11 +1008,19 @@ type Fence struct {
 	lastJunk int
 	ghost    int
 	coolAt   time.Time
+	sell     sellTx // the quick-sell in flight
 }
 
+var (
+	_ Life   = (*Fence)(nil)
+	_ Phased = (*Fence)(nil)
+)
+
 func NewFence() *Fence {
-	return &Fence{tomes0: -1, e: errand{npcID: npc.Akara, act2NPC: npc.Drognan, trade: true,
+	fc := &Fence{tomes0: -1, e: errand{npcID: npc.Akara, act2NPC: npc.Drognan, trade: true,
 		ring: []data.Position{{X: 6023, Y: 4933}, {X: 6070, Y: 4960}, {X: 6100, Y: 4990}, {X: 6050, Y: 5010}, {X: 6110, Y: 4930}}}}
+	fc.e.initLife(fc.Name())
+	return fc
 }
 
 // tomeCensus counts TP+ID tomes in the live inventory read — the Fence's oath audit.
@@ -892,7 +1036,9 @@ func tomeCensus(ctx *Ctx) int {
 
 func (fc *Fence) Name() string { return "fence" }
 
-func (fc *Fence) Demand(s *percept.Snapshot) *arbiter.Demand {
+func (fc *Fence) Demand(s *percept.Snapshot) *arbiter.Demand { return fc.e.keepBid(fc.demand(s), s) }
+
+func (fc *Fence) demand(s *percept.Snapshot) *arbiter.Demand {
 	if servicesCooled() {
 		return nil
 	}
@@ -905,6 +1051,29 @@ func (fc *Fence) Demand(s *percept.Snapshot) *arbiter.Demand {
 	return &arbiter.Demand{Who: fc.Name(), Class: arbiter.ClassService,
 		Urgency: 0.45 + float64(minInt(s.Me.JunkCount, 8))/20, // poverty + full bags push it up
 		Commit:  arbiter.Commitment{MinHold: 5 * time.Second}}
+}
+
+func (fc *Fence) Needs(*percept.Snapshot) Needs { return fc.e.needs() }
+
+func (fc *Fence) Begin(ctx *Ctx, resumed bool) {
+	fc.e.begin(resumed)
+	fc.sell = sellTx{}
+	if resumed {
+		fc.e.resume(ctx)
+		return
+	}
+	fc.e.resetTrip()
+	fc.sold, fc.tomes0, fc.ghost, fc.lastJunk = 0, -1, 0, 0
+}
+
+func (fc *Fence) Suspend(ctx *Ctx, _ phase.Reason) { fc.e.suspend(ctx) }
+
+func (fc *Fence) End(ctx *Ctx, v phase.Verdict, why phase.Reason) {
+	fc.e.end(ctx, v, why)
+	fc.e.resetTrip()
+	fc.sold, fc.tomes0, fc.ghost, fc.lastJunk = 0, -1, 0, 0
+	fc.sell = sellTx{}
+	coolOnEnd(v, why, &fc.coolAt)
 }
 
 // invCell converts an inventory GRID slot to the proven panel pixel formula.
@@ -923,33 +1092,75 @@ func invCellPx(ctx *Ctx, gx, gy int) (int, int) {
 	return int(x), int(y)
 }
 
-func (fc *Fence) Step(ctx *Ctx) Verdict {
-	s := ctx.Snap
-	if !s.Valid {
-		return Running
+// sellVerdict is one verified quick-sell's result.
+type sellVerdict uint8
+
+const (
+	sellOK    sellVerdict = iota // exactly the target left the bag
+	sellWrong                    // something else left: STOP fencing
+	sellDeaf                     // nothing left the bag
+)
+
+// judgeSell: the fence's postcondition — EXACTLY this item gone.
+func judgeSell(target data.UnitID, gone []data.UnitID) sellVerdict {
+	switch {
+	case len(gone) == 1 && gone[0] == target:
+		return sellOK
+	case len(gone) > 0:
+		return sellWrong
 	}
-	if s.Me.CursorItem {
-		return Running // WARNING 9: a ctrl-click with a held item is a drop
+	return sellDeaf
+}
+
+// sellTx is one quick-sell in flight: the real Ctrl+click, then the bag
+// polled for up to 1s — no sleeps.
+type sellTx struct {
+	active bool
+	target data.UnitID
+	gx, gy int
+	cx, cy int
+	gold0  int
+	before map[data.UnitID]bool
+	at     time.Time
+}
+
+// gone: units of before no longer in the bag.
+func (t *sellTx) gone(ctx *Ctx) []data.UnitID {
+	now := map[data.UnitID]bool{}
+	for _, inv := range ctx.GR.GetData().Inventory.ByLocation(item.LocationInventory) {
+		now[inv.UnitID] = true
+	}
+	var out []data.UnitID
+	for u := range t.before {
+		if !now[u] {
+			out = append(out, u)
+		}
+	}
+	return out
+}
+
+func (fc *Fence) Step(ctx *Ctx) Status {
+	e := &fc.e
+	if st, stop := e.pre(ctx); stop {
+		return st
+	}
+	s := ctx.Snap
+	if fc.sell.active {
+		return fc.judge(ctx)
 	}
 	if len(s.Junk) == 0 {
-		if fc.e.ph.Phase() >= erMenu {
-			closeShop(ctx)
-		}
-		fc.e.reset()
-		fc.sold, fc.tomes0 = 0, -1
-		return Done // the bag is honest merchandise no more
+		return e.finish(ctx, phase.Done, phase.Completed, fmt.Sprintf("bag clean: %d sold", fc.sold)) // the bag is honest merchandise no more
 	}
-	open, dead := fc.e.step(ctx, fc.Name())
+	st, open, dead := e.drive(ctx, fc.Name())
 	if dead {
 		// P-4.2a: an abandoned trip stays abandoned (05:17: Fence re-bid 0.65
 		// the instant it gave up on a wall-blocked Akara — the idle breaker
 		// never sees idle, so the SERVICE must cool itself). Retry next town.
 		fc.coolAt = time.Now().Add(120 * time.Second)
-		fc.e.reset()
-		return Abandoned
+		return st
 	}
 	if !open {
-		return Running
+		return st
 	}
 	// WARNING 2 + Lexicon/SELL: the delta check is the only proof — a sell that
 	// doesn't shrink the junk count is firing into a GHOST WINDOW, and ctrl-clicks
@@ -964,11 +1175,8 @@ func (fc *Fence) Step(ctx *Ctx) Verdict {
 			NoteGhost() // P-4.8a: the classic ghost window counts toward the poison
 			ctx.Led.Append(verbs.Outcome{Verb: "fence", Holder: fc.Name(), Result: verbs.ResDeaf,
 				Evidence: "GHOST TRADE WINDOW: sells not landing — aborting before a ctrl-click drops an item"})
-			closeShop(ctx)
-			fc.e.reset()
-			fc.sold, fc.tomes0, fc.ghost = 0, -1, 0
 			fc.coolAt = time.Now().Add(45 * time.Second)
-			return Abandoned
+			return e.finish(ctx, phase.Abandoned, phase.Deaf, "ghost trade window: sells not landing")
 		}
 	}
 	fc.lastJunk = len(s.Junk)
@@ -979,15 +1187,11 @@ func (fc *Fence) Step(ctx *Ctx) Verdict {
 	if fc.tomes0 < 0 {
 		fc.tomes0 = census
 	} else if census < fc.tomes0 {
-		ctx.Led.Append(verbs.Outcome{Verb: "fence", Holder: fc.Name(), Result: verbs.ResDeaf,
-			Evidence: fmt.Sprintf("TOME LOST mid-errand (%d -> %d) — fencing aborted", fc.tomes0, census)})
-		closeShop(ctx)
-		fc.e.reset()
-		fc.sold, fc.tomes0 = 0, -1
-		return Abandoned
+		ev := fmt.Sprintf("TOME LOST mid-errand (%d -> %d) — fencing aborted", fc.tomes0, census)
+		ctx.Led.Append(verbs.Outcome{Verb: "fence", Holder: fc.Name(), Result: verbs.ResDeaf, Evidence: ev})
+		return e.finish(ctx, phase.Abandoned, phase.Precondition, ev)
 	}
-	// Shop open: quick-sell ONE junk item per step; the next snapshot's Junk list and
-	// gold are the postcondition.
+	// Shop open: quick-sell ONE junk item; the bag is the postcondition.
 	it := s.Junk[0]
 	// TOME OATH, identity layer: the snapshot called this cell junk — re-identify it
 	// against LIVE memory the instant before the ctrl-click. Percept and reality
@@ -1000,12 +1204,9 @@ func (fc *Fence) Step(ctx *Ctx) Verdict {
 		}
 		id := int(inv.ID)
 		if id == 533 || id == 534 || id == 549 || inv.Desc().Type == item.TypeQuest {
-			ctx.Led.Append(verbs.Outcome{Verb: "fence", Holder: fc.Name(), Result: verbs.ResRefused,
-				Evidence: fmt.Sprintf("cell (%d,%d) holds a LIFELINE (id %d, type %s) — sell refused", it.GX, it.GY, id, inv.Desc().Type)})
-			closeShop(ctx)
-			fc.e.reset()
-			fc.sold, fc.tomes0 = 0, -1
-			return Abandoned
+			ev := fmt.Sprintf("cell (%d,%d) holds a LIFELINE (id %d, type %s) — sell refused", it.GX, it.GY, id, inv.Desc().Type)
+			ctx.Led.Append(verbs.Outcome{Verb: "fence", Holder: fc.Name(), Result: verbs.ResRefused, Evidence: ev})
+			return e.finish(ctx, phase.Abandoned, phase.Precondition, ev)
 		}
 	}
 	// REAL SELL, VERIFIED (2026-09-23: the posted SellClick at the old 45-px Act 1
@@ -1013,66 +1214,53 @@ func (fc *Fence) Step(ctx *Ctx) Verdict {
 	// from the MEASURED inventory grid (10x8 on this mod), the click is a real
 	// Ctrl+click, and the result must be EXACTLY this item gone. Any other item
 	// leaving the bag stops fencing on the spot.
-	var targetUnit data.UnitID
-	before := map[data.UnitID]bool{}
+	t := sellTx{gx: it.GX, gy: it.GY, before: map[data.UnitID]bool{}}
 	for _, inv := range ctx.GR.GetData().Inventory.ByLocation(item.LocationInventory) {
-		before[inv.UnitID] = true
+		t.before[inv.UnitID] = true
 		if inv.Position.X == it.GX && inv.Position.Y == it.GY {
-			targetUnit = inv.UnitID
+			t.target = inv.UnitID
 		}
 	}
-	if targetUnit == 0 {
+	if t.target == 0 {
 		ctx.Led.Append(verbs.Outcome{Verb: "fence", Holder: fc.Name(), Result: verbs.ResRefused,
 			Evidence: fmt.Sprintf("junk cell (%d,%d) no longer holds an item — resync", it.GX, it.GY)})
-		time.Sleep(300 * time.Millisecond)
-		return Running
+		return e.wait(300 * time.Millisecond)
 	}
-	gold0 := ctx.GR.GetData().PlayerUnit.TotalPlayerGold()
-	cx, cy := invCellPx(ctx, it.GX, it.GY)
-	ctx.M.RealMenuCtrlClick(cx, cy)
-	var gone []data.UnitID
-	for i := 0; i < 10; i++ {
-		time.Sleep(100 * time.Millisecond)
-		now := map[data.UnitID]bool{}
-		for _, inv := range ctx.GR.GetData().Inventory.ByLocation(item.LocationInventory) {
-			now[inv.UnitID] = true
-		}
-		gone = gone[:0]
-		for u := range before {
-			if !now[u] {
-				gone = append(gone, u)
-			}
-		}
-		if len(gone) > 0 {
-			break
-		}
+	t.gold0 = ctx.GR.GetData().PlayerUnit.TotalPlayerGold()
+	t.cx, t.cy = invCellPx(ctx, it.GX, it.GY)
+	ctx.M.RealMenuCtrlClick(t.cx, t.cy)
+	t.active, t.at = true, time.Now()
+	fc.sell = t
+	return e.wait(100 * time.Millisecond)
+}
+
+// judge polls the sell in flight (≤1s) and applies its verdict.
+func (fc *Fence) judge(ctx *Ctx) Status {
+	e, t := &fc.e, &fc.sell
+	gone := t.gone(ctx)
+	if len(gone) == 0 && time.Since(t.at) < time.Second {
+		return e.wait(100 * time.Millisecond)
 	}
+	t.active = false
 	gold1 := ctx.GR.GetData().PlayerUnit.TotalPlayerGold()
-	switch {
-	case len(gone) == 1 && gone[0] == targetUnit:
+	switch judgeSell(t.target, gone) {
+	case sellOK:
 		ctx.Led.Append(verbs.Outcome{Verb: "fence", Holder: fc.Name(), Result: verbs.ResDone,
-			Evidence: fmt.Sprintf("sold cell (%d,%d) px(%d,%d) gold %d→%d", it.GX, it.GY, cx, cy, gold0, gold1)})
-	case len(gone) > 0:
-		ctx.Led.Append(verbs.Outcome{Verb: "fence", Holder: fc.Name(), Result: verbs.ResDeaf,
-			Evidence: fmt.Sprintf("WRONG ITEM LEFT THE BAG (wanted unit %d at (%d,%d), gone=%v) — fencing halted", targetUnit, it.GX, it.GY, gone)})
-		closeShop(ctx)
-		fc.e.reset()
-		fc.sold, fc.tomes0 = 0, -1
+			Evidence: fmt.Sprintf("sold cell (%d,%d) px(%d,%d) gold %d→%d", t.gx, t.gy, t.cx, t.cy, t.gold0, gold1)})
+	case sellWrong:
+		ev := fmt.Sprintf("WRONG ITEM LEFT THE BAG (wanted unit %d at (%d,%d), gone=%v) — fencing halted", t.target, t.gx, t.gy, gone)
+		ctx.Led.Append(verbs.Outcome{Verb: "fence", Holder: fc.Name(), Result: verbs.ResDeaf, Evidence: ev})
 		fc.coolAt = time.Now().Add(30 * time.Minute)
-		return Abandoned
+		return e.finish(ctx, phase.Abandoned, phase.Deaf, ev)
 	default:
 		ctx.Led.Append(verbs.Outcome{Verb: "fence", Holder: fc.Name(), Result: verbs.ResWhiff,
-			Evidence: fmt.Sprintf("sell click did nothing: cell (%d,%d) px(%d,%d) gold %d→%d", it.GX, it.GY, cx, cy, gold0, gold1)})
+			Evidence: fmt.Sprintf("sell click did nothing: cell (%d,%d) px(%d,%d) gold %d→%d", t.gx, t.gy, t.cx, t.cy, t.gold0, gold1)})
 	}
 	fc.sold++
 	if fc.sold > 40 { // runaway guard
-		closeShop(ctx)
-		fc.e.reset()
-		fc.sold = 0
-		return Abandoned
+		return e.finish(ctx, phase.Abandoned, phase.Refused, "runaway guard: 40 sells")
 	}
-	time.Sleep(400 * time.Millisecond)
-	return Running
+	return e.wait(400 * time.Millisecond)
 }
 
 // ---------------------------------------------------------------- Heal (ClassService)
@@ -1088,14 +1276,23 @@ type Heal struct {
 	coolAt time.Time
 }
 
+var (
+	_ Life   = (*Heal)(nil)
+	_ Phased = (*Heal)(nil)
+)
+
 func NewHeal() *Heal {
-	return &Heal{e: errand{npcID: npc.Akara, act2NPC: npc.Fara,
+	h := &Heal{e: errand{npcID: npc.Akara, act2NPC: npc.Fara,
 		ring: []data.Position{{X: 6023, Y: 4933}, {X: 6070, Y: 4960}, {X: 6100, Y: 4990}, {X: 6050, Y: 5010}, {X: 6110, Y: 4930}}}}
+	h.e.initLife(h.Name())
+	return h
 }
 
 func (h *Heal) Name() string { return "heal" }
 
-func (h *Heal) Demand(s *percept.Snapshot) *arbiter.Demand {
+func (h *Heal) Demand(s *percept.Snapshot) *arbiter.Demand { return h.e.keepBid(h.demand(s), s) }
+
+func (h *Heal) demand(s *percept.Snapshot) *arbiter.Demand {
 	if servicesCooled() {
 		return nil
 	}
@@ -1110,30 +1307,43 @@ func (h *Heal) Demand(s *percept.Snapshot) *arbiter.Demand {
 		Commit:  arbiter.Commitment{MinHold: 5 * time.Second}}
 }
 
-func (h *Heal) Step(ctx *Ctx) Verdict {
+func (h *Heal) Needs(*percept.Snapshot) Needs { return h.e.needs() }
+
+func (h *Heal) Begin(ctx *Ctx, resumed bool) {
+	h.e.begin(resumed)
+	if resumed {
+		h.e.resume(ctx)
+		return
+	}
+	h.e.resetTrip()
+	h.talks = 0
+}
+
+func (h *Heal) Suspend(ctx *Ctx, _ phase.Reason) { h.e.suspend(ctx) }
+
+func (h *Heal) End(ctx *Ctx, v phase.Verdict, why phase.Reason) {
+	h.e.end(ctx, v, why)
+	h.e.resetTrip()
+	h.talks = 0
+	coolOnEnd(v, why, &h.coolAt)
+}
+
+func (h *Heal) Step(ctx *Ctx) Status {
+	e := &h.e
+	if st, stop := e.pre(ctx); stop {
+		return st
+	}
 	s := ctx.Snap
-	if !s.Valid {
-		return Running
-	}
-	if s.Me.CursorItem {
-		return Running // WARNING 9: an NPC click with a held item can drop it
-	}
 	if s.Me.HPPct > 90 {
-		if s.MenuOpen {
-			closeShop(ctx)
-		}
-		h.e.reset()
-		h.talks = 0
-		return Done // refilled — the pending clears and the march resumes
+		return e.finish(ctx, phase.Done, phase.Completed, fmt.Sprintf("refilled: hp %d", s.Me.HPPct)) // the pending clears and the march resumes
 	}
-	// The menu byte high = the talk happened = the heal (if this mod kept it) already
-	// landed. Close and read the verdict from a FRESH hp — the snapshot predates the talk.
-	if s.MenuOpen {
-		closeShop(ctx)
+	// The menu byte high after OUR talk click = the talk happened = the heal (if
+	// this mod kept it) already landed. Read the verdict from a FRESH hp — the
+	// snapshot predates the talk. A menu that was up before our click is a
+	// leftover: Clean (and the errand's Talk) close it by sight first.
+	if e.ph.Phase() >= erTalk && s.MenuOpen && talkedRecently(e.clickAt, time.Now()) {
 		if hp := ctx.GR.GetData().PlayerUnit.HPPercent(); hp > 60 {
-			h.e.reset()
-			h.talks = 0
-			return Done
+			return e.finish(ctx, phase.Done, phase.Completed, fmt.Sprintf("talk healed: hp %d", hp))
 		}
 		h.talks++
 		if h.talks >= 2 {
@@ -1142,20 +1352,19 @@ func (h *Heal) Step(ctx *Ctx) Verdict {
 			healerHeals.Store(false)
 			ctx.Led.Append(verbs.Outcome{Verb: "heal", Holder: h.Name(), Result: verbs.ResDeaf,
 				Evidence: "two talks, no HP change — this Akara does not heal; belief retired"})
-			h.e.reset()
-			h.talks = 0
-			return Abandoned
+			return e.finish(ctx, phase.Abandoned, phase.Refused, "two talks, no HP change")
 		}
-		return Running
+		e.clickAt = time.Time{}
+		e.to(erClean, "talk did not heal: close the menu and talk again")
+		return e.running()
 	}
-	// Drive the errand only through the TALK (phases 0-2); the MenuOpen intercept
-	// above fires before e.step could ever advance into trade navigation.
-	if _, dead := h.e.step(ctx, h.Name()); dead {
+	// Drive the errand only through the TALK: the intercept above fires before
+	// the errand could ever advance into trade navigation.
+	st, _, dead := e.drive(ctx, h.Name())
+	if dead {
 		h.coolAt = time.Now().Add(120 * time.Second)
-		h.e.reset()
-		return Abandoned
 	}
-	return Running
+	return st
 }
 
 // snapPNG: one screenshot into logs/ — the debugging eye for rituals whose oracles
@@ -1182,14 +1391,23 @@ type Repair struct {
 	coolAt  time.Time
 }
 
+var (
+	_ Life   = (*Repair)(nil)
+	_ Phased = (*Repair)(nil)
+)
+
 func NewRepair() *Repair {
-	return &Repair{lastDur: -1, e: errand{npcID: npc.Charsi, act2NPC: npc.Fara, trade: true,
+	rp := &Repair{lastDur: -1, e: errand{npcID: npc.Charsi, act2NPC: npc.Fara, trade: true,
 		ring: []data.Position{{X: 6020, Y: 4952}, {X: 5992, Y: 4941}, {X: 5963, Y: 5001}, {X: 5962, Y: 4956}, {X: 5952, Y: 4944}}}}
+	rp.e.initLife(rp.Name())
+	return rp
 }
 
 func (rp *Repair) Name() string { return "repair" }
 
-func (rp *Repair) Demand(s *percept.Snapshot) *arbiter.Demand {
+func (rp *Repair) Demand(s *percept.Snapshot) *arbiter.Demand { return rp.e.keepBid(rp.demand(s), s) }
+
+func (rp *Repair) demand(s *percept.Snapshot) *arbiter.Demand {
 	if servicesCooled() {
 		return nil
 	}
@@ -1201,29 +1419,46 @@ func (rp *Repair) Demand(s *percept.Snapshot) *arbiter.Demand {
 		Commit:  arbiter.Commitment{MinHold: 5 * time.Second}}
 }
 
-func (rp *Repair) Step(ctx *Ctx) Verdict {
+func (rp *Repair) Needs(*percept.Snapshot) Needs { return rp.e.needs() }
+
+func (rp *Repair) Begin(ctx *Ctx, resumed bool) {
+	rp.e.begin(resumed)
+	if resumed {
+		rp.e.resume(ctx)
+		return
+	}
+	rp.e.resetTrip()
+	rp.lastDur, rp.stale = -1, 0
+}
+
+func (rp *Repair) Suspend(ctx *Ctx, _ phase.Reason) { rp.e.suspend(ctx) }
+
+func (rp *Repair) End(ctx *Ctx, v phase.Verdict, why phase.Reason) {
+	rp.e.end(ctx, v, why)
+	rp.e.resetTrip()
+	rp.lastDur, rp.stale = -1, 0
+	coolOnEnd(v, why, &rp.coolAt)
+}
+
+func (rp *Repair) Step(ctx *Ctx) Status {
+	e := &rp.e
+	if st, stop := e.pre(ctx); stop {
+		return st
+	}
 	s := ctx.Snap
-	if !s.Valid {
-		return Running
-	}
 	if s.Me.MinDurPct > 90 { // repaired — the durability delta happened
-		if rp.e.ph.Phase() >= erMenu {
-			closeShop(ctx)
-		}
-		rp.reset()
-		return Done
+		return e.finish(ctx, phase.Done, phase.Completed, fmt.Sprintf("durability %d%%", s.Me.MinDurPct))
 	}
-	open, dead := rp.e.step(ctx, rp.Name())
+	st, open, dead := e.drive(ctx, rp.Name())
 	if dead {
 		// P-4.2a: the abandoned trip stays abandoned (04:36: 'never loaded on
 		// the whole ring' re-bid three times a SECOND while he wall-hugged —
 		// Charsi lives elsewhere on this seed; retry when the world changes).
 		rp.coolAt = time.Now().Add(120 * time.Second)
-		rp.reset()
-		return Abandoned
+		return st
 	}
 	if !open {
-		return Running
+		return st
 	}
 	if rp.lastDur >= 0 {
 		if s.Me.MinDurPct <= rp.lastDur {
@@ -1234,21 +1469,13 @@ func (rp *Repair) Step(ctx *Ctx) Verdict {
 		if rp.stale >= 2 {
 			// The button no longer buys durability (unrepairable piece or a ghost
 			// window): the errand is over — cool off so the demand can't re-loop.
-			ctx.Led.Append(verbs.Outcome{Verb: "repair", Holder: rp.Name(), Result: verbs.ResTimeout,
-				Evidence: fmt.Sprintf("durability frozen at %d%% after repairs — leaving with what we got", s.Me.MinDurPct)})
-			closeShop(ctx)
-			rp.reset()
+			ev := fmt.Sprintf("durability frozen at %d%% after repairs — leaving with what we got", s.Me.MinDurPct)
+			ctx.Led.Append(verbs.Outcome{Verb: "repair", Holder: rp.Name(), Result: verbs.ResTimeout, Evidence: ev})
 			rp.coolAt = time.Now().Add(3 * time.Minute)
-			return Done
+			return e.finish(ctx, phase.Abandoned, phase.Refused, ev)
 		}
 	}
 	rp.lastDur = s.Me.MinDurPct
 	ctx.M.UIClick(repairBtnX, repairBtnY)
-	time.Sleep(500 * time.Millisecond)
-	return Running
-}
-
-func (rp *Repair) reset() {
-	rp.e.reset()
-	rp.lastDur, rp.stale = -1, 0
+	return e.wait(500 * time.Millisecond)
 }
