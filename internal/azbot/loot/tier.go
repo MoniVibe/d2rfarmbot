@@ -172,6 +172,7 @@ func (c *Config) Evaluate(it Item) Verdict {
 
 // Carried describes one item in her bag.
 type Carried struct {
+	Unique     int    // unique row (uniqueitems.txt) for a unique, else -1 (0 = unknown)
 	Unit       uint32 // the unit ID (the drop verb's identity check)
 	Item       Item
 	GX, GY     int

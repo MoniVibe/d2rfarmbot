@@ -19,6 +19,7 @@ import (
 	"github.com/hectorgimenez/d2go/pkg/data/npc"
 	"github.com/hectorgimenez/d2go/pkg/data/object"
 	"github.com/hectorgimenez/d2go/pkg/data/stat"
+	"github.com/hectorgimenez/koolo/internal/azbot/inventory"
 	"github.com/hectorgimenez/koolo/internal/azbot/loot"
 	"github.com/hectorgimenez/koolo/internal/game"
 )
@@ -159,6 +160,7 @@ type ItemRef struct {
 // BagItem is one item in the bag: identity, grid cell, and what the loot
 // policy needs to value it (the swap's victim list, the catalog's bag rows).
 type BagItem struct {
+	Unique  int32 // unique row (UniqueSetID) for quality 7, else -1
 	Unit    data.UnitID
 	ID      int
 	Name    string
@@ -684,12 +686,17 @@ func (p *Perceptor) Capture() *Snapshot {
 		return int(bag[i].ID), bag[i].Position.X, bag[i].Position.Y
 	})
 	policy := loot.Active()
-	potSpares := map[potionKind]int{} // bag potions per kind — the reserve audit (P-4.5)
+	bagPots := map[inventory.Potion]int{} // bag potions per family — the reserve audit (P-4.5)
 	planner := policy.NewPlanner(loot.BagCells - occupied)
+	planner.Level = s.Me.Level
 	for _, it := range bag {
 		id := int(it.ID)
 		up := isUpgrade(it)
-		s.Bag = append(s.Bag, BagItem{Unit: it.UnitID, ID: id, Name: string(it.Name), GX: it.Position.X, GY: it.Position.Y,
+		uq := int32(-1)
+		if it.Quality == item.QualityUnique {
+			uq = it.UniqueSetID
+		}
+		s.Bag = append(s.Bag, BagItem{Unique: uq, Unit: it.UnitID, ID: id, Name: string(it.Name), GX: it.Position.X, GY: it.Position.Y,
 			Qual: int(it.Quality), Ident: it.Identified, Upgrade: up})
 		if up {
 			s.Upgrades = append(s.Upgrades, InvItem{ID: id, GX: it.Position.X, GY: it.Position.Y, Qual: int(it.Quality), IsBow: it.Desc().Type == "bow"})
@@ -715,13 +722,14 @@ func (p *Perceptor) Capture() *Snapshot {
 			// her cube somehow, what the hell"). Type by numeric ID cannot be lied to
 			// by the scrambled name table.
 			continue
-		case potionKindForItem(it) != potionNone:
-			// Potions are fuel, not stock — up to a RESERVE of 4 per kind. The
-			// bag is not a cellar (P-4.5): the junky's surplus is merchandise,
-			// or it strangles the landing room the equip ritual needs.
-			kind := potionKindForItem(it)
-			potSpares[kind]++
-			if potSpares[kind] > 4 {
+		case inventory.PotionOf(id) != inventory.PotNone:
+			// Potions are fuel, not stock — a RESERVE per family (hp 4, mp 2, rv 2)
+			// beside the belt; the surplus is merchandise. The family comes from the
+			// MOD's item code (R37: hp2 = row 603 was missing from the old ID list,
+			// so 14 bottles rode the bag as "fuel" forever).
+			fam := inventory.PotionOf(id)
+			bagPots[fam]++
+			if bagPots[fam] > potionReserve[fam] {
 				s.Junk = append(s.Junk, InvItem{ID: id, GX: it.Position.X, GY: it.Position.Y, Qual: int(it.Quality)})
 			}
 			continue
@@ -729,7 +737,11 @@ func (p *Perceptor) Capture() *Snapshot {
 			// THE BAG PLAN (loot/plan.go): one disposition per item — the sell list
 			// is exactly the plan's "sell" (R27: the old rules kept rares and blues
 			// the plan now sells, and the fence cleared 3-4 items a visit).
-			disp, _ := planner.Dispose(loot.Carried{Unit: uint32(it.UnitID), Item: loot.Item{ID: id, Name: string(it.Name), Quality: int(it.Quality)},
+			uq := -1
+			if it.Quality == item.QualityUnique {
+				uq = int(it.UniqueSetID)
+			}
+			disp, _ := planner.Dispose(loot.Carried{Unit: uint32(it.UnitID), Unique: uq, Item: loot.Item{ID: id, Name: string(it.Name), Quality: int(it.Quality)},
 				GX: it.Position.X, GY: it.Position.Y, Identified: it.Identified})
 			switch disp {
 			case loot.DispIdentify:
@@ -998,3 +1010,6 @@ func (p *Perceptor) SurvivalRead() (m mode.PlayerMode, hp, mp int, a area.ID, va
 
 // Last returns the most recent snapshot (may be nil before the first Capture).
 func (p *Perceptor) Last() *Snapshot { return p.last.Load() }
+
+// potionReserve: bottles per family the bag keeps beside a full belt.
+var potionReserve = map[inventory.Potion]int{inventory.PotHP: 4, inventory.PotMP: 2, inventory.PotRV: 2}

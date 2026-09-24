@@ -31,3 +31,35 @@ func TestBagPlanDispositions(t *testing.T) {
 		t.Fatalf("tight bag: charms go to the stash, got %v", d)
 	}
 }
+
+func TestUniquesSellWhenDuplicateOrOutlevelled(t *testing.T) {
+	p := Default().NewPlanner(40)
+	p.Level = 30
+	p.UniqueReq = func(row int) (string, int, bool) {
+		switch row {
+		case 5:
+			return "tax", 3, true // Gull's-like low unique on a throwing axe
+		case 9:
+			return "tax", 25, true
+		}
+		return "", 0, false
+	}
+	u := func(row int) Carried {
+		return Carried{Unique: row, Item: Item{ID: 44, Quality: QUnique}, Identified: true} // row 44 = tax (throwing axe)
+	}
+	if c := Classify(44); c.Code != "tax" {
+		t.Skipf("row 44 is %s, not tax", c.Code)
+	}
+	if d, why := p.Dispose(u(5)); d != DispSell || why != "outlevelled unique" {
+		t.Fatalf("req 3 at level 30: sell, got %v %s", d, why)
+	}
+	if d, _ := p.Dispose(u(9)); d != DispStash {
+		t.Fatalf("req 25 at level 30: keep (stash), got %v", d)
+	}
+	if d, why := p.Dispose(u(9)); d != DispSell || why != "duplicate unique" {
+		t.Fatalf("second copy: sell, got %v %s", d, why)
+	}
+	if d, _ := p.Dispose(Carried{Unique: 5, Item: Item{ID: 44, Quality: QUnique}, Identified: true, Upgrade: true}); d != DispWear {
+		t.Fatal("an upgrade is worn, never sold")
+	}
+}

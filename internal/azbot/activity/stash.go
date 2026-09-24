@@ -141,9 +141,10 @@ func stashable(s *percept.Snapshot, c *loot.Config) []percept.BagItem {
 		return nil
 	}
 	p := c.NewPlanner(s.Me.InvFree)
+	p.Level = s.Me.Level
 	var out []percept.BagItem
 	for _, b := range s.Bag {
-		d, _ := p.Dispose(loot.Carried{Unit: uint32(b.Unit), Item: loot.Item{ID: b.ID, Name: b.Name, Quality: b.Qual}, GX: b.GX, GY: b.GY, Identified: b.Ident, Upgrade: b.Upgrade})
+		d, _ := p.Dispose(loot.Carried{Unit: uint32(b.Unit), Unique: int(b.Unique), Item: loot.Item{ID: b.ID, Name: b.Name, Quality: b.Qual}, GX: b.GX, GY: b.GY, Identified: b.Ident, Upgrade: b.Upgrade})
 		if d == loot.DispStash && !InvTracker.Quarantined(uint32(b.Unit), now) {
 			out = append(out, b)
 		}
