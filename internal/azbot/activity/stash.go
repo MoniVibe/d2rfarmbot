@@ -37,16 +37,18 @@ import (
 // Stash-panel geometry in screenshot px at the 1050-px reference (measured on the
 // R2 capture, 1920x1050): a 16x13 grid, column 0 center x=183, row 0 center y=129.
 const (
-	stashCols     = 16
-	stashRows     = 13
-	stashCell0X   = 183.0
-	stashCell0Y   = 129.0
-	stashPitchX   = 47.5
-	stashPitchY   = 47.7
-	stashNextPgX  = 615.0 // the page arrow right of "Page n / 5"
-	stashNextPgY  = 752.0
-	stashMaxPages = 5
-	stashEmptyMax = 22 // every sampled channel at or below this = an empty cell
+	stashCols       = 16
+	stashRows       = 13
+	stashCell0X     = 183.0
+	stashCell0Y     = 129.0
+	stashPitchX     = 47.5
+	stashPitchY     = 47.7
+	stashNextPgX    = 615.0 // the page arrow right of "Page n / 5"
+	stashNextPgY    = 752.0
+	stashSharedTabX = 297.0 // the "Shared" tab header (measured in a click drill, R29)
+	stashSharedTabY = 89.0
+	stashMaxPages   = 5
+	stashEmptyMax   = 22 // every sampled channel at or below this = an empty cell
 )
 
 // stashWorks: the live belief that the stash ritual moves items on this mod. Two
@@ -90,6 +92,7 @@ type Stash struct {
 	moved     int
 	fails     int
 	coolAt    time.Time
+	tabbed    bool      // the Shared tab was clicked this episode
 	fullUntil time.Time // a stash with no room for the keeper: stand down (no retry loop)
 	// the chest hover sweep (one aim per tick)
 	aimIdx     int
@@ -172,7 +175,7 @@ func (st *Stash) Begin(ctx *Ctx, resumed bool) {
 	if !resumed {
 		st.moved, st.fails = 0, 0
 	}
-	st.target, st.pages = 0, 0
+	st.target, st.pages, st.tabbed = 0, 0, false
 }
 
 func (st *Stash) Suspend(ctx *Ctx, _ phase.Reason) { st.life.suspend(ctx) }
@@ -232,7 +235,17 @@ func (st *Stash) Step(ctx *Ctx) Status {
 		return l.running()
 	case stOpen:
 		if open {
-			l.to(stLift, "stash open (by sight)")
+			// THE SHARED TAB FIRST (R29, the owner's photo + a click drill): the stash
+			// opens on PERSONAL — full, and with NO page arrow — so five "page turns"
+			// clicked nothing and it read "full on 5 pages" while Shared pages 4-5
+			// stood empty. Shared has the pages.
+			if !st.tabbed {
+				k := shopScale(ctx)
+				ctx.M.RealMenuClick(int(stashSharedTabX*k), int(stashSharedTabY*k))
+				st.tabbed, st.clickT = true, time.Now()
+				return l.wait(400 * time.Millisecond)
+			}
+			l.to(stLift, "stash open on the Shared tab (by sight)")
 			return l.running()
 		}
 		if time.Since(st.clickT) < 1500*time.Millisecond {
