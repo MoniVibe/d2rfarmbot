@@ -87,6 +87,10 @@ type Journey struct {
 	lastStep time.Time
 }
 
+// NavGrid adapts the game's collision grid to the nav core (walls = NonWalkable),
+// clearance field included — for callers that judge bearings, not routes.
+func NavGrid(g *game.Grid) *nav.Grid { return navGrid(g) }
+
 // navGrid adapts the game's collision grid to the nav core (walls = NonWalkable).
 func navGrid(g *game.Grid) *nav.Grid {
 	return nav.NewGrid(g.OffsetX, g.OffsetY, g.Width, g.Height, func(x, y int) bool {

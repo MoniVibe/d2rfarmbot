@@ -7,6 +7,7 @@ import (
 	"github.com/hectorgimenez/koolo/internal/azbot/percept"
 	"github.com/hectorgimenez/koolo/internal/azbot/phase"
 	"github.com/hectorgimenez/koolo/internal/azbot/screen"
+	"github.com/hectorgimenez/koolo/internal/azbot/watchdog"
 )
 
 // Activity contract v2 (docs/AZBOT_V2.md): the executive owns the lifecycle.
@@ -56,6 +57,20 @@ func (l *Legacy) Suspend(ctx *Ctx, _ phase.Reason) {
 	}
 	if s, ok := l.A.(suspender); ok {
 		s.suspended()
+	}
+}
+
+// Judgeable is an activity that consumes a watchdog verdict against it (Advance
+// climbs its escalation ladder, so the plan it returns to is a different one).
+// The executive calls it before benching the culprit; it must not actuate.
+type Judgeable interface {
+	Judged(ctx *Ctx, v watchdog.Verdict)
+}
+
+// Judged forwards a verdict to the wrapped activity when it consumes them.
+func (l *Legacy) Judged(ctx *Ctx, v watchdog.Verdict) {
+	if j, ok := l.A.(Judgeable); ok {
+		j.Judged(ctx, v)
 	}
 }
 
@@ -121,6 +136,7 @@ type Roster struct {
 	Acts    []Life
 	Advance *Advance
 	Fight   *Fight
+	Unstick *Unstick // carries out the watchdog's prescriptions
 	byName  map[string]Life
 }
 
@@ -133,9 +149,10 @@ func Registry(legs []Leg, road []data.Position) *Roster {
 	svc := func(a Activity, claims screen.Panel) Life { return &Legacy{A: a, N: needsService(claims)} }
 	world := func(a Activity) Life { return &Legacy{A: a, N: needsWorld} }
 	free := func(a Activity) Life { return &Legacy{A: a, N: needsAnyMode} }
-	r := &Roster{Advance: adv, Fight: fight, Acts: []Life{
+	unst := NewUnstick()
+	r := &Roster{Advance: adv, Fight: fight, Unstick: unst, Acts: []Life{
 		world(&Breakout{}), world(&Stand{}), world(&Flee{March: adv.MarchGoal}), world(NewDodge()),
-		free(&Respawn{}), free(NewRelog()), world(NewReclaim()), world(fight),
+		free(&Respawn{}), free(NewRelog()), unst, world(NewReclaim()), world(fight),
 		world(NewLoot()), world(NewImbibe()), svc(NewFence(), claimsVendor), svc(NewRestock(), claimsVendor),
 		svc(NewRepair(), claimsVendor), svc(NewHeal(), claimsVendor), svc(NewIdentify(), claimsBag),
 		svc(NewEquip(), claimsBag), svc(NewSpend(), claimsSpend), world(adv),

@@ -52,6 +52,9 @@ type Ctx struct {
 	// Screen: the stable screen Reading the gate judged this tick (janitor ON
 	// only; nil when the janitor is off or nothing has been captured yet).
 	Screen *screen.Reading
+	// Held is the arbiter's held-time ledger (phase budgets spend it; preempted
+	// and gate-blocked time never counts). nil in replay and harnesses.
+	Held func(who string) time.Duration
 }
 
 type Activity interface {

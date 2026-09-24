@@ -24,6 +24,7 @@ import (
 	"github.com/hectorgimenez/d2go/pkg/data"
 	"github.com/hectorgimenez/koolo/internal/azbot/route"
 	"github.com/hectorgimenez/koolo/internal/azbot/verbs"
+	"github.com/hectorgimenez/koolo/internal/azbot/watchdog"
 )
 
 // ladderKey is the ladder's identity — the committed campaign leg. As long as
@@ -102,4 +103,14 @@ func (a *Advance) NoteWatchdog(kind string, led *verbs.Ledger) {
 		return
 	}
 	a.escalate(led, a.ladderKey(), "watchdog "+kind)
+}
+
+// Judged is Advance's side of the executive's verdict hook (Judgeable): the
+// verdict climbs the ladder before the bench lands.
+func (a *Advance) Judged(ctx *Ctx, v watchdog.Verdict) {
+	var led *verbs.Ledger
+	if ctx != nil {
+		led = ctx.Led
+	}
+	a.NoteWatchdog(v.Pathology.String(), led)
 }
