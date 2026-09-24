@@ -8,6 +8,7 @@ package percept
 import (
 	"fmt"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"time"
 
@@ -278,6 +279,35 @@ type Perceptor struct {
 	corpseLatch    data.Position
 	corpseLatched  bool
 	lastAliveArmed bool
+	// Effective max life: the MaxLife stat omits gear/skill bonuses on this
+	// mod (HPPercent read ~127 at full in relay R10), so every HP threshold
+	// fired late. The highest life seen since MaxLife last changed is the
+	// truer denominator.
+	lifeMu             sync.Mutex // the Sentinel reads HP on its own goroutine
+	lifePeak, lifeBase int
+}
+
+// hpPct is life over the larger of the MaxLife stat and the peak life seen
+// since that stat last changed (a level-up or gear swap resets the peak).
+func (p *Perceptor) hpPct(pu data.PlayerUnit) int {
+	p.lifeMu.Lock()
+	defer p.lifeMu.Unlock()
+	life, _ := pu.FindStat(stat.Life, 0)
+	maxLife, _ := pu.FindStat(stat.MaxLife, 0)
+	if maxLife.Value != p.lifeBase {
+		p.lifeBase, p.lifePeak = maxLife.Value, 0
+	}
+	if life.Value > p.lifePeak {
+		p.lifePeak = life.Value
+	}
+	den := maxLife.Value
+	if p.lifePeak > den {
+		den = p.lifePeak
+	}
+	if den <= 0 {
+		return pu.HPPercent()
+	}
+	return life.Value * 100 / den
 }
 
 func New(gr *game.MemoryReader) *Perceptor { return &Perceptor{gr: gr} }
@@ -348,7 +378,7 @@ func (p *Perceptor) Capture() *Snapshot {
 		Pos:   pos,
 		Area:  d.PlayerUnit.Area,
 		Mode:  d.PlayerUnit.Mode,
-		HPPct: d.PlayerUnit.HPPercent(),
+		HPPct: p.hpPct(d.PlayerUnit),
 		MPPct: d.PlayerUnit.MPPercent(),
 		MaxMana: func() int {
 			// THE FIXED-POINT LIE (11:39: maxmana=0 while the orb held 33 —
@@ -404,7 +434,7 @@ func (p *Perceptor) Capture() *Snapshot {
 	}
 	for _, it := range d.Inventory.ByLocation(item.LocationGround) {
 		s.Items = append(s.Items, ItemRef{ID: it.UnitID, Pos: it.Position, Name: string(it.Name), Quality: int(it.Quality),
-				Potion: PotionKind(it, true)})
+			Potion: PotionKind(it, true)})
 	}
 	// P-5R roadside rites: a cheap nearby-rite flag for the Imbibe demand —
 	// the Step re-verifies against the live object list before a single step.
@@ -898,7 +928,7 @@ func (p *Perceptor) SurvivalRead() (m mode.PlayerMode, hp, mp int, a area.ID, va
 	if pos.X == 0 && pos.Y == 0 {
 		return 0, 0, 0, 0, false
 	}
-	return d.PlayerUnit.Mode, d.PlayerUnit.HPPercent(), d.PlayerUnit.MPPercent(), d.PlayerUnit.Area, true
+	return d.PlayerUnit.Mode, p.hpPct(d.PlayerUnit), d.PlayerUnit.MPPercent(), d.PlayerUnit.Area, true
 }
 
 // Last returns the most recent snapshot (may be nil before the first Capture).
