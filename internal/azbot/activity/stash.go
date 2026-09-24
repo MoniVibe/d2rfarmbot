@@ -127,7 +127,7 @@ func NewStash() *Stash {
 	st.life.ph.Budget(stClean, 10*time.Second)
 	st.life.ph.Budget(stWalk, 45*time.Second)
 	st.life.ph.Budget(stOpen, 10*time.Second)
-	st.life.ph.Budget(stLift, 4*time.Second)
+	st.life.ph.Budget(stLift, 60*time.Second) // R40: Lift moves every keeper in turn (tab reads, the page-1 rewind, Ctrl+clicks); 4s timeboxed each visit
 	st.life.ph.Budget(stPlace, 12*time.Second)
 	st.life.ph.Budget(stClose, 8*time.Second)
 	return st
