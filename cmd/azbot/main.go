@@ -1831,6 +1831,10 @@ func main() {
 
 	// ---- THE EXECUTIVE: one arbiter, one activity per cycle, honest grants ----
 	led := verbs.NewLedger(2048)
+	// THE ONE COVERAGE MODEL (activity/coverage.go): the tiles she has SEEN,
+	// per seed and area, persisted at seed scope — a town trip or a restart
+	// comes back to them. Explore and Advance's search share its picker.
+	activity.Cov = activity.NewCovTracker(gr, mem, func(msg string, kv ...any) { logger.Info(msg, kv...) })
 	sh := newShadow(logger, gr)
 	sh.Start()
 	led.Sink = func(o verbs.Outcome) {
@@ -2468,6 +2472,9 @@ func main() {
 				gridAt = time.Now()
 			}
 		}
+		// Coverage follows the same grid: mark what she sees (a no-op unless she
+		// moved), rebuild its terrain when the grid regrew, flush every 10s.
+		activity.Cov.Tick(s, grid, area.ID(gridArea))
 		// DEATH REPORT for the owner ("i didnt even know how it died"): the last
 		// moments, from the trail ring — hp slope, who held the actuator, how many
 		// teeth were on her.
@@ -2841,6 +2848,7 @@ func main() {
 	// THE NORMAL EXIT, reached only when the session judged it safe (Stopped):
 	// the feet were stopped above; the defers release modifiers and heal the
 	// input patches exactly as every clean exit does.
+	activity.Cov.Flush() // the last seen tiles reach the WAL before the scribe stops
 	close(stop)
 	logger.Info("azbot done", "ses", sd.ses.String())
 }

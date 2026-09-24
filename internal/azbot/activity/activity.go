@@ -17,6 +17,7 @@ import (
 	"github.com/hectorgimenez/koolo/internal/azbot/combat"
 	"github.com/hectorgimenez/koolo/internal/azbot/combat/learn"
 	"github.com/hectorgimenez/koolo/internal/azbot/combat/policy"
+	"github.com/hectorgimenez/koolo/internal/azbot/coverage"
 	"github.com/hectorgimenez/koolo/internal/azbot/exec"
 	"github.com/hectorgimenez/koolo/internal/azbot/journey"
 	"github.com/hectorgimenez/koolo/internal/azbot/memory"
@@ -2353,28 +2354,26 @@ func (l *Loot) Step(ctx *Ctx) Verdict {
 
 // ---------------------------------------------------------------- Explore (ClassExplore)
 
-// Explore v2: a PERSISTENT HEADING, not a circle (the owner watched v1's rotating
-// offsets orbit in place — a rotation around the current position IS a circle
-// generator). Hold one bearing while strides succeed; on a wall, turn 45° and
-// remember it; the heading survives across grants. The atlas frontier replaces
-// this in M8 with real coverage knowledge.
+// Explore v3: COVERAGE, not a room tour (the owner: "In the cave it goes to
+// already-explored bits; it should try unexplored areas"). The P-5F map tour
+// counted a room visited only when she stood inside its rectangle and forgot
+// everything on any area change — a town trip re-toured the cave from the
+// door. Now the shared coverage tracker (coverage.go) knows every tile she has
+// SEEN, per seed and area, across portals and restarts; Explore walks to the
+// nearest-by-path frontier cluster until none reachable remains (or 95% is
+// seen). The blind heading walk survives only for an area with no grid.
 type Explore struct {
-	heading int  // index into the 8 bearings
+	heading int  // blind fallback: index into the 8 bearings
 	set     bool // heading initialized from the road's outward direction
-	blockedN int // consecutive blocked room-center attempts; skip a bad center quickly
-	j       *journey.Journey // planner-owned route to the current room interior
 	// Frontier is Advance's hint (P-5F): the itinerary leg the march owns for
 	// this level. Exploration exists only there — behind it, ground is
 	// corridor and the march owns every idle moment. Nil-safe: no itinerary,
 	// classic wander.
 	Frontier func(level int) area.ID
-	// P-5F map tour: the maphack knows every room (the owner, 23:58: "aint
-	// it weird that she needs to explore despite having a maphack?") — the
-	// wander is a nearest-first tour of unvisited rooms, not a wall-bounce.
-	tourArea area.ID
-	visited  map[int]bool
-	tourIdx  int
-	goalAt   time.Time
+	// Bias is the leg's exit hint (Advance.ExploreBias): frontier toward the
+	// way on scores better. Nil or !ok: nearest-by-path alone.
+	Bias func() (at data.Position, key string, ok bool)
+	walk covWalker
 }
 
 var bearings = []data.Position{{X: 35, Y: 0}, {X: 25, Y: 25}, {X: 0, Y: 35}, {X: -25, Y: 25},
@@ -2410,106 +2409,23 @@ func (x *Explore) Step(ctx *Ctx) Verdict {
 	}
 	CarryReach(ctx) // P-5.9: the wander walks with the bow out too
 
-	// P-5F THE MAP TOUR: the maphack already knows every room of this area —
-	// walking blind past a map oracle is absurd (the owner, 23:58). Tour the
-	// unvisited rooms nearest-first; a room unreached in 45 s is skipped; a
-	// fully toured area hands the moment back to the march.
-	if ad, ok := ctx.GR.GetData().Areas[s.Me.Area]; ok && len(ad.Rooms) > 0 {
-		if x.tourArea != s.Me.Area {
-			x.tourArea, x.visited, x.tourIdx = s.Me.Area, map[int]bool{}, -1
-			x.j = nil
+	// THE FRONTIER WALK: the one coverage model (coverage.go) picks the
+	// nearest-by-path unexplored frontier; an area with no reachable frontier
+	// (or 95% seen) hands the moment back to the march.
+	var b coverage.Bias
+	if x.Bias != nil {
+		if at, key, ok := x.Bias(); ok {
+			b = coverage.Bias{At: at, Key: key, OK: true}
 		}
-		for i, r := range ad.Rooms {
-			if !x.visited[i] &&
-				s.Me.Pos.X >= r.Position.X && s.Me.Pos.X < r.Position.X+r.Width &&
-				s.Me.Pos.Y >= r.Position.Y && s.Me.Pos.Y < r.Position.Y+r.Height {
-				x.visited[i] = true // standing in it = streamed = seen
-			}
-		}
-		if x.tourIdx >= 0 && time.Since(x.goalAt) > 45*time.Second {
-			x.visited[x.tourIdx] = true // unreachable room: skipped, not besieged
-			x.tourIdx = -1
-		}
-		if x.tourIdx < 0 || x.visited[x.tourIdx] {
-			best, bd := -1, 1<<30
-			for i, r := range ad.Rooms {
-				if x.visited[i] {
-					continue
-				}
-				c := data.Position{X: r.Position.X + r.Width/2, Y: r.Position.Y + r.Height/2}
-				if dd := chebyshev(s.Me.Pos, c); dd < bd {
-					best, bd = i, dd
-				}
-			}
-			if best < 0 {
-				return Done // the area is toured — the march decides what's next
-			}
-			x.tourIdx, x.goalAt, x.blockedN, x.j = best, time.Now(), 0, nil
-		}
-		r := ad.Rooms[x.tourIdx]
-		// Aim at the room's interior, not its edge. The map rectangles include
-		// collision-border tiles; a raw center can still land on a seam in small
-		// rooms, so keep a modest inset whenever the room is wide enough.
-		marginX, marginY := r.Width/6, r.Height/6
-		if marginX < 2 {
-			marginX = 2
-		}
-		if marginY < 2 {
-			marginY = 2
-		}
-		left, right := r.Position.X+marginX, r.Position.X+r.Width-marginX
-		top, bottom := r.Position.Y+marginY, r.Position.Y+r.Height-marginY
-		if right < left {
-			left, right = r.Position.X, r.Position.X+r.Width
-		}
-		if bottom < top {
-			top, bottom = r.Position.Y, r.Position.Y+r.Height
-		}
-		c := data.Position{X: (left + right) / 2, Y: (top + bottom) / 2}
-		if chebyshev(s.Me.Pos, c) <= 6 {
-			x.visited[x.tourIdx] = true
-			x.tourIdx, x.j, x.blockedN = -1, nil, 0
-			return Running
-		}
-		if ctx.Grid != nil {
-			// Exploration is center-seeking; use the collision-aware planner so a
-			// blocked room center produces a route around the room instead of a
-			// wall-slide that parks the character in a corner. Advance keeps its
-			// own door/entrance routing and is unaffected by this preference.
-			if x.j == nil || chebyshev(x.j.Goal, c) > 4 {
-				x.j = journey.New(ctx.GR, ctx.Grid, c, x.Name())
-				x.j.Arrive = 6
-			}
-			st := x.j.Step(ctx.M, ctx.P, ctx.Led)
-			if st.State == journey.Arrived {
-				x.visited[x.tourIdx] = true
-				x.tourIdx, x.j, x.blockedN = -1, nil, 0
-			} else if st.State == journey.Stalled || st.State == journey.NoPath {
-				// A room center can be behind a wall or a stale streamed tile. Do
-				// not besiege it; the next room is a better exploration target.
-				x.visited[x.tourIdx] = true
-				x.tourIdx, x.j, x.blockedN = -1, nil, 0
-			}
-			return Running
-		}
-		o := slideStride(ctx, c, 1500*time.Millisecond, 1, x.Name())
-		if o.Result == verbs.ResBlocked {
-			x.blockedN++
-			// Plan-less fallback: still avoid spending the whole 45s goal lease
-			// rubbing the same corner.
-			if x.blockedN >= 3 {
-				x.visited[x.tourIdx] = true
-				x.tourIdx, x.j = -1, nil
-				x.goalAt = time.Time{}
-				x.blockedN = 0
-			}
-		} else if o.Result == verbs.ResDone {
-			x.blockedN = 0
+	}
+	if st, ok := x.walk.step(ctx, b, x.Name()); ok {
+		if st != coverage.Exploring {
+			return Done
 		}
 		return Running
 	}
 
-	// No map data for this area: the blind heading walk survives as fallback.
+	// No coverage knowledge (no grid, no tracker): the blind heading walk.
 	if !x.set {
 		x.heading, x.set = 5, true // southwest-ish: away from the town gate into the moor
 	}

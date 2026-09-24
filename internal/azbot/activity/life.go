@@ -154,7 +154,7 @@ func Registry(legs []Leg, road []data.Position) *Roster {
 		world(NewLoot()), world(NewImbibe()), NewFence(), NewRestock(),
 		NewRepair(), NewHeal(), NewIdentify(),
 		NewEquip(), NewSpend(), world(adv),
-		world(NewWithdraw()), world(&Return{}), world(&Travel{Road: road}), world(&Explore{Frontier: adv.FrontierFor}),
+		world(NewWithdraw()), world(&Return{}), world(&Travel{Road: road}), world(&Explore{Frontier: adv.FrontierFor, Bias: adv.ExploreBias}),
 	}}
 	r.byName = make(map[string]Life, len(r.Acts))
 	for _, a := range r.Acts {

@@ -11,8 +11,10 @@
 //     every crossing she ever makes, both sides of the door, however she made it.
 //  2. The live room graph's cross-level border rooms (walkable borders, readable from
 //     anywhere in the area).
-//  3. Nothing known → SEARCH: tour the area on a persistent heading and walk through
-//     unknown entrance units on sight — the wrong cave teaches its own way back.
+//  3. Nothing known → SEARCH: walk the coverage frontier (the one coverage model,
+//     coverage.go — nearest-by-path unseen ground, leaning toward the projected exit)
+//     and through unknown entrance units on sight — the wrong cave teaches its own
+//     way back.
 package activity
 
 import (
@@ -23,6 +25,7 @@ import (
 	"github.com/hectorgimenez/d2go/pkg/data"
 	"github.com/hectorgimenez/d2go/pkg/data/area"
 	"github.com/hectorgimenez/koolo/internal/azbot/arbiter"
+	"github.com/hectorgimenez/koolo/internal/azbot/coverage"
 	"github.com/hectorgimenez/koolo/internal/azbot/journey"
 	"github.com/hectorgimenez/koolo/internal/azbot/memory"
 	"github.com/hectorgimenez/koolo/internal/azbot/percept"
@@ -166,9 +169,10 @@ type Advance struct {
 	frontier     int
 	frontierRead bool
 	tgtFromMap   bool // current border target came from the LYING map oracle (strike accounting)
-	// visited: search's coverage ledger — 20-boxes walked, per area, process-
-	// lifetime (survives town re-entries; the same-spots loop, 21:50).
-	visited   map[area.ID]map[[2]int]int
+	// cov: search's walker on THE ONE COVERAGE MODEL (coverage.go) — the
+	// 20-box least-visited ledger it replaced lived here (the same-spots
+	// loop, 21:50); seen tiles now persist per seed and area in the store.
+	cov       covWalker
 	burstAt   time.Time // one-shot door burst rate limit (22:44)
 	huntLogAt time.Time // unfiltered-hover naming rate limit (23:00)
 	legStart  data.Position
@@ -956,8 +960,8 @@ func (a *Advance) Step(ctx *Ctx) Verdict {
 	tgt, known := a.borderTarget(ctx, d, hop, me)
 	if !known {
 		// UNKNOWN DOOR (relay R1, run w): never march a zero or a phantom —
-		// explore. The search tours least-visited ground and walks any unknown
-		// entrance on sight; a lying map hint may still point the first bearing.
+		// explore. The search walks the coverage frontier and any unknown
+		// entrance on sight; a lying map hint still biases which frontier.
 		a.seedSearchBias(ctx, me, hop)
 		a.search(ctx, d, me)
 		return Running
@@ -1067,7 +1071,7 @@ func (a *Advance) Step(ctx *Ctx) Verdict {
 	// directly — cross() owns the band; the wall-slide handles the posts.
 	if ed > 12 {
 		// THE MAZE SEARCH RELAY: while armed, the coverage search owns the
-		// march — real streamed ground, least-visited bearings, no map lies.
+		// march — real streamed ground, the unseen frontier, no map lies.
 		if time.Now().Before(a.searchUntil) {
 			a.search(ctx, d, me)
 			return Running
@@ -1358,44 +1362,51 @@ func (a *Advance) search(ctx *Ctx, d game.Data, me data.Position) {
 		// initial bearing: away from where the leg began — outward, not backtracking
 		a.heading = bearingFrom(a.legStart, me)
 	}
-	// THE VISITED LEDGER (the owner, 21:50: "he might be running the same
-	// spots over and over in underground passage... definitely isn't finding
-	// the dark wood"): a heading tour with 45° wall-turns retraces looping
-	// corridors forever, and every town-trip re-entry restarts the same tour
-	// from the same door. Search now remembers 20-boxes it has walked (per
-	// area, process-lifetime — it survives re-entries) and biases each stride
-	// toward the LEAST-visited probe; ties keep the current heading so the
-	// walk stays a line, not a dither.
-	if a.visited == nil {
-		a.visited = map[area.ID]map[[2]int]int{}
+	// THE ONE COVERAGE MODEL (the owner: "In the cave it goes to already-
+	// explored bits"): the search walks the same frontier picker Explore does
+	// — nearest-by-path unexplored ground, leaning toward the projected exit
+	// (or the tour bearing a FAIL-LEG turned) — instead of its old 20-box
+	// least-visited ledger. Coverage survives the town trip and the restart.
+	if st, ok := a.cov.step(ctx, a.searchBias(me), a.Name()); ok && st == coverage.Exploring {
+		return
 	}
-	av := a.visited[d.PlayerUnit.Area]
-	if av == nil {
-		av = map[[2]int]int{}
-		a.visited[d.PlayerUnit.Area] = av
-	}
-	av[[2]int{me.X / 20, me.Y / 20}]++
-	bestH, bestV := a.heading, 1<<30
-	for hh := a.heading; hh < a.heading+len(bearings); hh++ {
-		o := bearings[hh%len(bearings)]
-		probe := [2]int{(me.X + o.X) / 20, (me.Y + o.Y) / 20} // bearings are ~35-tile strides: one box ahead
-		if v := av[probe]; v < bestV {
-			bestH, bestV = hh, v
-		}
-	}
-	a.heading = bestH
+	// No coverage knowledge (no grid, no tracker) or no reachable frontier
+	// left: hold the heading, one 45° turn per wall — the doors seen so far
+	// were all crossed above, so keep walking the level's rim.
 	o := bearings[a.heading%len(bearings)]
 	res := verbs.Stride{To: data.Position{X: me.X + o.X, Y: me.Y + o.Y}, MinGain: 2}.
 		Do(ctx.M, ctx.GR, ctx.P, ctx.Led, a.Name())
 	if res.Result != verbs.ResDone {
 		a.heading++ // walled: one 45° turn, then hold the new line
-		// An UNREACHABLE box is never walked, so its visit count stays 0 — the
-		// least-visited chooser then picked the same walled bearing every tick,
-		// undoing the turn (live 2026-09-23, Rocky Waste: 19s pinned against a
-		// ridge, stride to the same target 35 tiles south, gain=0 each time).
-		// Charge the failed probe as visits so the wall stops looking unexplored.
-		av[[2]int{(me.X + o.X) / 20, (me.Y + o.Y) / 20}] += 3
 	}
+}
+
+// searchBias is the search's lean for the coverage picker: the projected map
+// exit when a lying hint still knows the side, else the tour bearing (set
+// outward at the leg start, turned 135° by each FAIL-LEG) as a far point.
+func (a *Advance) searchBias(me data.Position) coverage.Bias {
+	if a.exitBias != (data.Position{}) {
+		return coverage.Bias{At: a.exitBias, Key: fmt.Sprintf("exit.%d", int(a.biasHop)), OK: true}
+	}
+	if a.heading != 0 {
+		o := bearings[a.heading%len(bearings)]
+		return coverage.Bias{At: data.Position{X: me.X + o.X*4, Y: me.Y + o.Y*4},
+			Key: fmt.Sprintf("bearing.%d", a.heading%len(bearings)), OK: true}
+	}
+	return coverage.Bias{}
+}
+
+// ExploreBias is Explore's lean (the wander on the frontier leg): the
+// projected exit if known, else the fresh march goal. Keys change when the
+// hint does, which re-picks the frontier goal.
+func (a *Advance) ExploreBias() (data.Position, string, bool) {
+	if a.exitBias != (data.Position{}) {
+		return a.exitBias, fmt.Sprintf("exit.%d", int(a.biasHop)), true
+	}
+	if g, ok := a.MarchGoal(); ok {
+		return g, fmt.Sprintf("march.%d.%d", g.X/20, g.Y/20), true
+	}
+	return data.Position{}, "", false
 }
 
 // knownDoor reports whether a fact already explains the door at pos — i.e. we recorded
