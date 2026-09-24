@@ -59,18 +59,19 @@ func screenHints(s *percept.Snapshot) screen.Hints {
 }
 
 type shadow struct {
-	logger *slog.Logger
-	gr     *game.MemoryReader
-	cad    exec.Cadence
-	tr     *screen.Tracker
-	Eye    *exec.Eye // the stable Reading, for the Sentinel (step 6)
-	lat    exec.Latency
-	latAt  time.Time
-	kick   atomic.Bool
-	seen   bool // at least one capture observed
-	last   screen.Reading
-	lineAt time.Time
-	gate   string // janitor gate for the state line: ok | blocked(<panels>) | wedge ("" = janitor off)
+	logger     *slog.Logger
+	gr         *game.MemoryReader
+	cad        exec.Cadence
+	curX, curY int // OS cursor at the previous observation
+	tr         *screen.Tracker
+	Eye        *exec.Eye // the stable Reading, for the Sentinel (step 6)
+	lat        exec.Latency
+	latAt      time.Time
+	kick       atomic.Bool
+	seen       bool // at least one capture observed
+	last       screen.Reading
+	lineAt     time.Time
+	gate       string // janitor gate for the state line: ok | blocked(<panels>) | wedge ("" = janitor off)
 }
 
 // Every 2nd tick, 100ms floor: the 40ms tick floor would otherwise ask for
@@ -94,9 +95,13 @@ func (sh *shadow) observe(tick uint64, s *percept.Snapshot, hold string) {
 		t0 := time.Now()
 		r := screen.Observe(sh.gr.Screenshot(), screenHints(s))
 		sh.lat.Add(time.Since(t0))
+		cx, cy := game.OSCursorPos()
 		if tr, ok := sh.tr.Update(now, r); ok {
-			emit(trace.UI(tr, tick, hold))
+			// The cursor before/after a panel flip: toggles were seen to move it,
+			// which would throw off the next aimed hover or click.
+			emit(fmt.Sprintf("%s cursor=%d,%d->%d,%d", trace.UI(tr, tick, hold), sh.curX, sh.curY, cx, cy))
 		}
+		sh.curX, sh.curY = cx, cy
 		sh.last, sh.seen = r, true
 		sh.Eye.Publish(exec.Seen{At: now, Tick: tick, State: sh.tr.State(), Reading: r})
 	}

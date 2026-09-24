@@ -197,3 +197,12 @@ func SendCtrlClickRealScreen(screenX, screenY int) {
 	SendClickRealScreen(screenX, screenY)
 	time.Sleep(60 * time.Millisecond)
 }
+
+// OSCursorPos: the desktop cursor as Windows reports it to THIS process (the
+// in-game GetCursorPos patch lives in D2R, not here). Diagnostic only — panel
+// toggles were seen to move the cursor (owner, 2026-09-24).
+func OSCursorPos() (int, int) {
+	var cur winPoint
+	procGetCursorPos.Call(uintptr(unsafe.Pointer(&cur)))
+	return int(cur.X), int(cur.Y)
+}
