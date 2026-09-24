@@ -104,8 +104,16 @@ func (a *Advance) questHold(ctx *Ctx) bool {
 	key := fmt.Sprintf("%d.%d", ctx.GR.MapSeed(), int(s.Me.Area))
 	if !pending {
 		if _, isQuest := questLegs[s.Me.Area]; isQuest && !a.questDone[key] {
-			a.questDone[key] = true // also stops Demand's quest bid for this area
-			a.markQuestForever(ctx, s.Me.Area, questItemHeld(d.Data, q.item), seen)
+			a.questDone[key] = true // also stops Demand's quest bid for this area (this game)
+			held := questItemHeld(d.Data, q.item)
+			// FOREVER only with the artifact in hand (owner, R41: "we still miss the
+			// staff in maggot lair 3" — R35 found the chest spent, held=false, and
+			// marked the leg done for good). A spent chest without the artifact
+			// re-arms in a new game until it is taken; only a chest spent in two
+			// different games (the cube the old fence sold) ends the leg for good.
+			if held || a.spentInGames(ctx, s.Me.Area) >= 2 {
+				a.markQuestForever(ctx, s.Me.Area, held, seen)
+			}
 			ctx.Led.Append(verbs.Outcome{Verb: "quest", Holder: a.Name(), Result: verbs.ResDone,
 				Evidence: fmt.Sprintf("%s leg complete in area %d (held=%v chestSeen=%v)", q.label, int(s.Me.Area), questItemHeld(d.Data, q.item), seen)})
 		}
@@ -219,4 +227,28 @@ func (a *Advance) questForeverDone(ctx *Ctx, ar area.ID) bool {
 		return true
 	}
 	return false
+}
+
+// questRun names this bot run: the map seed survives a relog, so distinct runs
+// (processes) stand in for distinct games.
+var questRun = uint(time.Now().Unix())
+
+// spentInGames records this run as one where the area's quest chest was found
+// spent without the artifact, and returns how many distinct runs did so.
+func (a *Advance) spentInGames(ctx *Ctx, ar area.ID) int {
+	if ctx.Mem == nil {
+		return 0
+	}
+	key := fmt.Sprintf("questspent.%s.%d", ctx.GR.GetData().PlayerUnit.Name, int(ar))
+	var seeds []uint
+	ctx.Mem.GetJSON(key, &seeds)
+	seed := questRun
+	for _, x := range seeds {
+		if x == seed {
+			return len(seeds)
+		}
+	}
+	seeds = append(seeds, seed)
+	ctx.Mem.PutJSON(key, memory.ScopeForever, memory.Provenance{Source: "measured", Evidence: "quest chest spent, artifact not held"}, seeds)
+	return len(seeds)
 }
