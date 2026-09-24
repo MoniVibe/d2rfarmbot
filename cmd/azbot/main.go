@@ -2346,6 +2346,11 @@ func main() {
 		if sd.ses.State() == exec.InGame && s.Valid && m.Engage.Engaged() {
 			now := time.Now()
 			why, want := relog.Wants(s, now)
+			if !want {
+				if w := activity.TakeRelogRequest(); w != "" {
+					why, want = w, true // an activity asked (a quest chest that only a new game re-arms)
+				}
+			}
 			drill := false
 			if !want && now.Sub(drillAt) >= time.Second {
 				drillAt = now

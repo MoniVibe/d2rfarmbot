@@ -157,13 +157,14 @@ func CampaignItinerary(start area.ID) []Leg {
 
 type Advance struct {
 	// quest legs (quest.go): per seed.area, when the hold began and whether it ended.
-	questSince map[string]time.Time
-	questDone  map[string]bool
+	questSince   map[string]time.Time
+	questDone    map[string]bool
 	questForever map[area.ID]bool // quest legs ended in this save (persisted: quest.go)
-	questSeed  uint // map seed the quest maps belong to (set in Step)
-	questCap   int // first unfinished quest leg index at or behind the frontier; -1 none (refreshed each Step)
-	Itinerary   []Leg
-	campaignAct int // saved frontier namespace; prevents Act 1 indices leaking into Act 2
+	relogAsked   map[area.ID]bool // a new game was requested for this quest area
+	questSeed    uint             // map seed the quest maps belong to (set in Step)
+	questCap     int              // first unfinished quest leg index at or behind the frontier; -1 none (refreshed each Step)
+	Itinerary    []Leg
+	campaignAct  int // saved frontier namespace; prevents Act 1 indices leaking into Act 2
 
 	idx int // current position on the itinerary (highest adopted)
 	// frontier: THE CAMPAIGN'S FRONT LINE (the owner, 02:16: "should we have
@@ -204,7 +205,7 @@ type Advance struct {
 	seenArea area.ID
 	arrival  arrivalDoor
 	pickNote string // last door-pick evidence logged (dedupe)
-	heading          int // search-mode tour bearing
+	heading  int    // search-mode tour bearing
 	// border-room cache (the room-graph read is a few hundred RPMs; 2s is plenty fresh)
 	extRooms map[area.ID][]game.TileRect
 	extAt    time.Time

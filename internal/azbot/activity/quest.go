@@ -2,6 +2,7 @@ package activity
 
 import (
 	"fmt"
+	"sync"
 	"time"
 
 	"github.com/hectorgimenez/d2go/pkg/data"
@@ -77,9 +78,11 @@ func questState(d data.Data, ar area.ID) (q questLeg, chest data.Object, seen, p
 		}
 	}
 	if seen && !chest.Selectable {
-		// Spent: the artifact is on the ground or already taken. Loot (quest tier S)
-		// picks it up; a chest that is open with nothing held still ends the leg so
-		// a failed pickup can't hold the march forever.
+		// Spent: the artifact is on the ground (Loot, quest tier S, picks it up —
+		// the leg stays pending while it lies there) or gone from this game.
+		if questItemOnGround(d, q.item) {
+			return q, chest, true, true
+		}
 		return q, chest, true, false
 	}
 	return q, chest, seen, true
@@ -106,6 +109,18 @@ func (a *Advance) questHold(ctx *Ctx) bool {
 		if _, isQuest := questLegs[s.Me.Area]; isQuest && !a.questDone[key] {
 			a.questDone[key] = true // also stops Demand's quest bid for this area (this game)
 			held := questItemHeld(d.Data, q.item)
+			// A spent chest, the artifact neither carried nor on the ground: THIS
+			// game will never give it (R43: the Staff chest opened in R35 stayed
+			// open — bot restarts keep the same game). A relog makes a new game,
+			// where the chest re-arms. Once per area per run.
+			if !held && seen && !a.relogAsked[s.Me.Area] {
+				if a.relogAsked == nil {
+					a.relogAsked = map[area.ID]bool{}
+				}
+				a.relogAsked[s.Me.Area] = true
+				RequestRelog(fmt.Sprintf("%s: the chest is spent in this game and the artifact is gone — a new game re-arms it", q.label))
+				delete(a.questDone, key) // pending again in the new game
+			}
 			// FOREVER only with the artifact in hand (owner, R41: "we still miss the
 			// staff in maggot lair 3" — R35 found the chest spent, held=false, and
 			// marked the leg done for good). A spent chest without the artifact
@@ -251,4 +266,40 @@ func (a *Advance) spentInGames(ctx *Ctx, ar area.ID) int {
 	seeds = append(seeds, seed)
 	ctx.Mem.PutJSON(key, memory.ScopeForever, memory.Provenance{Source: "measured", Evidence: "quest chest spent, artifact not held"}, seeds)
 	return len(seeds)
+}
+
+// questItemOnGround: the artifact lies on the ground within reach of the reads.
+func questItemOnGround(d data.Data, code string) bool {
+	db := gamedata.Get()
+	if db == nil {
+		return false
+	}
+	for _, it := range d.Inventory.ByLocation(item.LocationGround) {
+		if row := db.Item(int(it.ID)); row != nil && row.Code == code {
+			return true
+		}
+	}
+	return false
+}
+
+// relog requests from activities (the executive takes one per call).
+var relogReq struct {
+	sync.Mutex
+	why string
+}
+
+// RequestRelog asks the session for a new game.
+func RequestRelog(why string) {
+	relogReq.Lock()
+	relogReq.why = why
+	relogReq.Unlock()
+}
+
+// TakeRelogRequest returns and clears a pending request ("" = none).
+func TakeRelogRequest() string {
+	relogReq.Lock()
+	defer relogReq.Unlock()
+	w := relogReq.why
+	relogReq.why = ""
+	return w
 }
