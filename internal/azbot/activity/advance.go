@@ -26,6 +26,7 @@ import (
 	"github.com/hectorgimenez/koolo/internal/azbot/journey"
 	"github.com/hectorgimenez/koolo/internal/azbot/memory"
 	"github.com/hectorgimenez/koolo/internal/azbot/percept"
+	"github.com/hectorgimenez/koolo/internal/azbot/route"
 	"github.com/hectorgimenez/koolo/internal/azbot/verbs"
 	"github.com/hectorgimenez/koolo/internal/game"
 )
@@ -255,9 +256,20 @@ type Advance struct {
 	// escalation ladder (escalate.go) — how Advance CONSUMES repeated
 	// stalls / watchdog verdicts for one committed intent, climbing to a
 	// different remedy each time instead of just being cooled. Flag-gated.
-	ladRung ladderRung
-	ladKey  string
-	ladAt   time.Time
+	lad        route.Ladder
+	ladPending bool // climbed but not yet acted on (applyRung)
+	// disbelief: doors the ladder convicted, each with an expiry — never
+	// session-long, so a hint gets a second look as rooms stream in.
+	disbelief route.Disbelief
+	// door bookkeeping for the ledger: the source last marched, implausible
+	// hints already reported this area, and the exploration bias a lying map
+	// hint still offers (its relative place in the level).
+	doorSrc  string
+	doorPos  data.Position
+	rejSeen  map[string]bool
+	exitBias data.Position
+	biasHop  area.ID
+	extGrid  *game.Grid // the grid extRooms was read against; a regrow re-reads now
 }
 
 // FrontierFor is the P-5F hint: the itinerary leg the march owns at this
@@ -502,6 +514,12 @@ func (a *Advance) Step(ctx *Ctx) Verdict {
 		}
 		a.idx = i
 		a.resetLeg(s.Me.Pos)
+		// A crossing is progress: the ladder, the convictions and the door
+		// bookkeeping all belonged to the area left behind.
+		a.lad, a.ladPending = route.Ladder{}, false
+		a.disbelief.Clear()
+		a.doorSrc, a.doorPos, a.rejSeen = "", data.Position{}, nil
+		a.exitBias, a.biasHop = data.Position{}, 0
 		a.lastArea, a.pendN = s.Me.Area, 0
 		// CROSSING IS NOT ARRIVAL (Travel's ribbon law, finally ported): before the
 		// next leg gets a thought, push CLEAR of the door — onward, in the crossing's
@@ -877,6 +895,9 @@ func (a *Advance) Step(ctx *Ctx) Verdict {
 		return Abandoned // no topological route — honest refusal
 	}
 	me := s.Me.Pos
+	if deliberate {
+		a.applyRung(ctx) // a watchdog verdict climbed the ladder while we were cooled
+	}
 
 	// THE ROAD REPLAY (P-5.2a): a proven walk outranks every derivation —
 	// find the furthest crumb we can still see ourselves near, then walk the
@@ -934,6 +955,10 @@ func (a *Advance) Step(ctx *Ctx) Verdict {
 
 	tgt, known := a.borderTarget(ctx, d, hop, me)
 	if !known {
+		// UNKNOWN DOOR (relay R1, run w): never march a zero or a phantom —
+		// explore. The search tours least-visited ground and walks any unknown
+		// entrance on sight; a lying map hint may still point the first bearing.
+		a.seedSearchBias(ctx, me, hop)
 		a.search(ctx, d, me)
 		return Running
 	}
@@ -963,14 +988,14 @@ func (a *Advance) Step(ctx *Ctx) Verdict {
 		// hand-back below (ALTERNATE door → PORTAL reroute → the next itinerary
 		// option), so the hard-won crossing epistemology stays the backstop.
 		if deliberate && a.intent.Active() {
-			switch a.escalate(ctx.Led, a.ladderKey(), fmt.Sprintf("60s stall at (%d,%d)", tgt.X, tgt.Y)) {
-			case rungReplan:
-				a.j, a.grid = nil, nil // force a Journey replan next tick
-				a.bestAt = time.Now()  // one fresh plan gets its own clock
+			r := a.escalate(ctx.Led, a.ladderKey(), fmt.Sprintf("60s stall at (%d,%d)", tgt.X, tgt.Y))
+			a.applyRung(ctx)
+			if r == route.Replan {
+				a.bestAt = time.Now() // one fresh plan gets its own clock
 				return Running
 			}
-			// rung ALTERNATE and above: fall through to the strike + Abandon path,
-			// which disbelieves this exit and hands the march to the next option.
+			// rung ALTERNATE and above: acted on, then the strike + Abandon path
+			// below still runs as the backstop.
 		}
 		// A WASTED LEG IS A STRIKE (the owner, 21:17: "trying to traverse
 		// dark wood from a wrong place, just stuck there"): the map oracle
@@ -1116,20 +1141,29 @@ func mapWalk(d game.Data, a1, a2 area.ID, p data.Position) bool {
 	return false
 }
 
-// borderTarget resolves the door toward hop: learned fact, then live border rooms.
+// borderTarget resolves the door toward hop: learned fact, map hint (or the live
+// entrance beside it), then live border rooms — the first one that is PLAUSIBLE
+// for the level she stands in (route.PickDoor). None plausible is "unknown", and
+// the caller explores. Relay R1, run w: the 42->56 hint was (15080,6580), 9450
+// tiles outside Dry Hills, and nothing checked it — the march pinned for 20 min.
+// Evaluated every call, never cached: a hint rejected now is re-judged next tick,
+// and the border rooms are re-read as soon as the grid regrows.
 func (a *Advance) borderTarget(ctx *Ctx, d game.Data, hop area.ID, me data.Position) (data.Position, bool) {
-	a.tgtFromMap = false // stamped true only on the map-oracle branch below
+	a.tgtFromMap = false // stamped true only when a map-sourced door wins
+	cur := d.PlayerUnit.Area
+	var cands []route.Candidate
 	if ctx.Mem != nil {
 		var p data.Position
-		if ctx.Mem.GetJSON(BorderKey(ctx.GR.MapSeed(), d.PlayerUnit.Area, hop), &p) && p.X != 0 {
-			return p, true
+		if ctx.Mem.GetJSON(BorderKey(ctx.GR.MapSeed(), cur, hop), &p) && p.X != 0 {
+			cands = append(cands, route.Candidate{Src: "fact", Pos: p})
 		}
 	}
 	// THE MAP NAMES EVERY EXIT — entrances included (01:10: she toured the
 	// Stony border wall-hugging in search of stairs the seed server had
 	// named since attach). Mapped exits lie by a few tiles (the farmbot
 	// law), but the door band's drive and the entrance ritual absorb that.
-	if ad, ok := d.Areas[d.PlayerUnit.Area]; ok {
+	var mapHint data.Position
+	if ad, ok := d.Areas[cur]; ok {
 		for _, lv := range ad.AdjacentLevels {
 			if lv.Area == hop && (lv.Position.X != 0 || lv.Position.Y != 0) {
 				if CursedNear(lv.Position) {
@@ -1138,7 +1172,7 @@ func (a *Advance) borderTarget(ctx *Ctx, d game.Data, hop area.ID, me data.Posit
 				}
 				if ctx.Mem != nil { // durable strikes (21:52): a proven lie stays proven
 					n := 0
-					ctx.Mem.GetJSON(fmt.Sprintf("badexit.%d.%d.%d", ctx.GR.MapSeed(), int(d.PlayerUnit.Area), int(hop)), &n)
+					ctx.Mem.GetJSON(fmt.Sprintf("badexit.%d.%d.%d", ctx.GR.MapSeed(), int(cur), int(hop)), &n)
 					if n >= 2 {
 						break
 					}
@@ -1150,7 +1184,7 @@ func (a *Advance) borderTarget(ctx *Ctx, d game.Data, hop area.ID, me data.Posit
 				if a.mapHintConflictsWithKnownDoor(ctx, d, hop, lv.Position) {
 					break
 				}
-				a.tgtFromMap = true
+				mapHint = lv.Position
 				// The map position is a topology hint, not a clickable doorway.
 				// On this mod the entrance unit can be tens of tiles away from
 				// that hint (Jail 1 -> Jail 2 measured 63 tiles away).  If the
@@ -1158,31 +1192,112 @@ func (a *Advance) borderTarget(ctx *Ctx, d game.Data, hop area.ID, me data.Posit
 				// steer to that unit so the planner does not pin itself against
 				// the false map point and never reach cross().
 				if ent, ok := nearestLiveEntrance(d.Entrances, lv.Position, 96); ok {
-					return ent.Position, true
+					cands = append(cands, route.Candidate{Src: "map-entrance", Pos: ent.Position})
 				}
-				return lv.Position, true
+				cands = append(cands, route.Candidate{Src: "map", Pos: lv.Position})
+				break
 			}
 		}
 	}
-	// The live room graph is a fallback for walkable borders when no learned
-	// fact or trustworthy map hint exists. Its coordinates are frame-sensitive
-	// on some streamed rooms, so it must not outrank a measured door/map point.
-	if time.Since(a.extAt) > 2*time.Second {
-		if ext, err := ctx.GR.AdjacentLevelRooms(); err == nil {
-			a.extRooms, a.extAt = ext, time.Now()
+	live := liveFrame(ctx.Grid)
+	now := time.Now()
+	doubted := func(p data.Position) bool { return a.disbelief.Has(p, now) }
+	pick := route.PickDoor(cands, me, live, doubted)
+	if !pick.Known {
+		// The live room graph is a fallback for walkable borders when no learned
+		// fact or trustworthy map hint exists. Its coordinates are frame-sensitive
+		// on some streamed rooms, so it must not outrank a measured door/map point.
+		if ctx.Grid != a.extGrid {
+			a.extGrid, a.extAt = ctx.Grid, time.Time{} // rooms streamed in: re-read now
 		}
-	}
-	if rects := a.extRooms[hop]; len(rects) > 0 {
-		best, bd := data.Position{}, 1<<30
-		for _, r := range rects {
-			p := nearestInRect(me, r)
-			if dd := chebyshev(me, p); dd < bd {
-				best, bd = p, dd
+		if time.Since(a.extAt) > 2*time.Second {
+			if ext, err := ctx.GR.AdjacentLevelRooms(); err == nil {
+				a.extRooms, a.extAt = ext, time.Now()
 			}
 		}
-		return best, true
+		if rects := a.extRooms[hop]; len(rects) > 0 {
+			best, bd := data.Position{}, 1<<30
+			for _, r := range rects {
+				p := nearestInRect(me, r)
+				if dd := chebyshev(me, p); dd < bd {
+					best, bd = p, dd
+				}
+			}
+			rp := route.PickDoor([]route.Candidate{{Src: "rooms", Pos: best}}, me, live, doubted)
+			rp.Rejected = append(pick.Rejected, rp.Rejected...)
+			pick = rp
+		}
 	}
-	return data.Position{}, false
+	a.noteRejects(ctx, d, hop, me, live, pick.Rejected, mapHint)
+	if !pick.Known {
+		a.doorSrc, a.doorPos = "", data.Position{}
+		return data.Position{}, false
+	}
+	a.tgtFromMap = pick.Door.Src == "map" || pick.Door.Src == "map-entrance"
+	if pick.Door.Src != a.doorSrc || chebyshev(pick.Door.Pos, a.doorPos) > 8 {
+		a.doorSrc, a.doorPos = pick.Door.Src, pick.Door.Pos
+		ctx.Led.Append(verbs.Outcome{Verb: "door", Holder: a.Name(), Result: verbs.ResDone,
+			Evidence: fmt.Sprintf("%d->%d src=%s at (%d,%d), %d from me", int(cur), int(hop),
+				pick.Door.Src, pick.Door.Pos.X, pick.Door.Pos.Y, chebyshev(me, pick.Door.Pos))})
+	}
+	return pick.Door.Pos, true
+}
+
+// liveFrame is the current level's live DrlgLevel placement — the executive's
+// grid is built on it, so its bounds are the frame (Empty when there is none).
+func liveFrame(g *game.Grid) route.Rect {
+	if g == nil {
+		return route.Rect{}
+	}
+	return route.Rect{X: g.OffsetX, Y: g.OffsetY, W: g.Width, H: g.Height}
+}
+
+func mapFrame(d game.Data, ar area.ID) route.Rect {
+	if ad, ok := d.Areas[ar]; ok && ad.Grid != nil {
+		return route.Rect{X: ad.Grid.OffsetX, Y: ad.Grid.OffsetY, W: ad.Grid.Width, H: ad.Grid.Height}
+	}
+	return route.Rect{}
+}
+
+// noteRejects ledgers each implausible door hint once per area — with where it
+// actually falls (the current level's map frame, the hop's, or neither), so a
+// laptop log says WHICH lie it was — and keeps a lying map hint's relative
+// place in the level as the exploration bias.
+func (a *Advance) noteRejects(ctx *Ctx, d game.Data, hop area.ID, me data.Position, live route.Rect, rej []route.Candidate, mapHint data.Position) {
+	cur := d.PlayerUnit.Area
+	for _, c := range rej {
+		mf, hf := mapFrame(d, cur), mapFrame(d, hop)
+		if c.Src == "map" && c.Pos == mapHint && live.Contains(me) {
+			if b, ok := route.Project(c.Pos, mf, live); ok {
+				a.exitBias = b
+			}
+		}
+		k := fmt.Sprintf("%d.%s.%d.%d", int(hop), c.Src, c.Pos.X, c.Pos.Y)
+		if a.rejSeen[k] {
+			continue
+		}
+		if a.rejSeen == nil {
+			a.rejSeen = map[string]bool{}
+		}
+		a.rejSeen[k] = true
+		ctx.Led.Append(verbs.Outcome{Verb: "door", Holder: a.Name(), Result: verbs.ResRefused,
+			Evidence: fmt.Sprintf("%d->%d src=%s (%d,%d) implausible: %d from me, live frame %s; in map %d %s=%v, in map %d %s=%v — unknown door, exploring",
+				int(cur), int(hop), c.Src, c.Pos.X, c.Pos.Y, chebyshev(me, c.Pos), live,
+				int(cur), mf, mf.Contains(c.Pos), int(hop), hf, hf.Contains(c.Pos))})
+	}
+}
+
+// seedSearchBias points the coverage search's bearing once per hop at the
+// projected map exit — the "which side of the level" a lying hint still knows.
+func (a *Advance) seedSearchBias(ctx *Ctx, me data.Position, hop area.ID) {
+	if a.exitBias == (data.Position{}) || a.biasHop == hop || a.legStart == me {
+		return
+	}
+	a.biasHop = hop
+	a.heading = bearingFrom(me, a.exitBias) + len(bearings) // non-zero: search reads 0 as unset
+	ctx.Led.Append(verbs.Outcome{Verb: "door", Holder: a.Name(), Result: verbs.ResDone,
+		Evidence: fmt.Sprintf("exploring for %d toward projected map exit (%d,%d), bearing %d",
+			int(hop), a.exitBias.X, a.exitBias.Y, a.heading%len(bearings))})
 }
 
 // mapHintConflictsWithKnownDoor rejects a topology hint whose geometry is
