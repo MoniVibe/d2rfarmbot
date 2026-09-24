@@ -159,6 +159,7 @@ type Advance struct {
 	// quest legs (quest.go): per seed.area, when the hold began and whether it ended.
 	questSince map[string]time.Time
 	questDone  map[string]bool
+	questCap   int // first unfinished quest leg index at or behind the frontier; -1 none (refreshed each Step)
 	Itinerary   []Leg
 	campaignAct int // saved frontier namespace; prevents Act 1 indices leaking into Act 2
 
@@ -316,7 +317,7 @@ func NewAdvance(legs []Leg) *Advance {
 	if len(legs) > 0 && legs[0].Area != 0 {
 		act = legs[0].Area.Act()
 	}
-	return &Advance{Itinerary: legs, campaignAct: act, bestDist: 1 << 30, bestAt: time.Now()}
+	return &Advance{Itinerary: legs, campaignAct: act, bestDist: 1 << 30, bestAt: time.Now(), questCap: -1}
 }
 
 func (a *Advance) Name() string { return "advance" }
@@ -425,10 +426,16 @@ func (a *Advance) Demand(s *percept.Snapshot) *arbiter.Demand {
 // campIdx: the campaign index — the deeper of where he STANDS and where the
 // war has REACHED. Targets derive from this; routing still starts from his feet.
 func (a *Advance) campIdx() int {
-	if a.frontier > a.idx {
-		return a.frontier
+	c := a.idx
+	if a.frontier > c {
+		c = a.frontier
 	}
-	return a.idx
+	// An unfinished quest leg caps the campaign (quest.go): a frontier saved past
+	// Maggot Lair 3 must not skip the Staff of Kings chest.
+	if a.questCap >= 0 && a.questCap < c {
+		c = a.questCap
+	}
+	return c
 }
 
 func (a *Advance) campaignKey(char string) string {
@@ -469,6 +476,7 @@ func (a *Advance) syncFrontier(ctx *Ctx) {
 }
 
 func (a *Advance) Step(ctx *Ctx) Verdict {
+	a.questCap = a.questCapFor(ctx)
 	s := ctx.Snap
 	if !s.Valid {
 		return Running

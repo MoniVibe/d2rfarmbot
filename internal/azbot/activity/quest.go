@@ -134,3 +134,24 @@ func (a *Advance) questHold(ctx *Ctx) bool {
 	}
 	return false // nothing left to explore: let the march judge (the budget still ends it)
 }
+
+// questCapFor: the first itinerary leg, at or behind the saved frontier, whose
+// quest is unfinished on this seed (artifact not held, hold not ended). -1 = none.
+func (a *Advance) questCapFor(ctx *Ctx) int {
+	far := a.idx
+	if a.frontier > far {
+		far = a.frontier
+	}
+	d := ctx.GR.GetData()
+	for i := 0; i <= far && i < len(a.Itinerary); i++ {
+		q, ok := questLegs[a.Itinerary[i].Area]
+		if !ok || questItemHeld(d.Data, q.item) {
+			continue
+		}
+		if a.questDone[fmt.Sprintf("%d.%d", ctx.GR.MapSeed(), int(a.Itinerary[i].Area))] {
+			continue
+		}
+		return i
+	}
+	return -1
+}
