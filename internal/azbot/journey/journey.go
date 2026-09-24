@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/hectorgimenez/d2go/pkg/data"
+	"github.com/hectorgimenez/koolo/internal/azbot/mapfuse"
 	"github.com/hectorgimenez/koolo/internal/azbot/motor"
 	"github.com/hectorgimenez/koolo/internal/azbot/nav"
 	"github.com/hectorgimenez/koolo/internal/azbot/percept"
@@ -75,6 +76,7 @@ type Journey struct {
 
 	gr      *game.MemoryReader
 	holder  string
+	src     *game.Grid // the fused grid the nav grid was built from (Source swaps it)
 	grid    *nav.Grid
 	f       *nav.Follower
 	obs     []nav.Obstacle
@@ -87,22 +89,96 @@ type Journey struct {
 	lastStep time.Time
 }
 
+// Source, when set, returns the executive's CURRENT fused grid. Every Step adopts a
+// newer grid of the same area: rooms streamed in (or the prior earned trust) since
+// the plan was made. A new wall across the route ahead replans at once instead of
+// walking into it; otherwise the route stands and future replans see the new map.
+var Source func() *game.Grid
+
+// OnPlan, when set, hears every committed route (the map-fusion debug picture).
+var OnPlan func(path []data.Position)
+
 // NavGrid adapts the game's collision grid to the nav core (walls = NonWalkable),
 // clearance field included — for callers that judge bearings, not routes.
 func NavGrid(g *game.Grid) *nav.Grid { return navGrid(g) }
 
-// navGrid adapts the game's collision grid to the nav core (walls = NonWalkable).
+// Conversions are memoized per source grid: the executive regrids every few
+// seconds and every journey of that period shares one nav grid (the clearance
+// field over a whole level is the expensive part).
+var memo struct {
+	src, relaxSrc *game.Grid
+	ng, relaxed   *nav.Grid
+}
+
+// navGrid adapts the (fused) game grid to the nav core: walls block; unknown and
+// prior-only cells are walkable at mapfuse's per-step surcharge.
 func navGrid(g *game.Grid) *nav.Grid {
-	return nav.NewGrid(g.OffsetX, g.OffsetY, g.Width, g.Height, func(x, y int) bool {
+	if g == memo.src && memo.ng != nil {
+		return memo.ng
+	}
+	ng := buildNav(g, false)
+	memo.src, memo.ng = g, ng
+	return ng
+}
+
+// relaxedNavGrid is the NoPath fallback: a trusted prior's walls become heavily
+// penalized guesses — the prior earned trust, not infallibility.
+func relaxedNavGrid(g *game.Grid) *nav.Grid {
+	if g == memo.relaxSrc && memo.relaxed != nil {
+		return memo.relaxed
+	}
+	ng := buildNav(g, true)
+	memo.relaxSrc, memo.relaxed = g, ng
+	return ng
+}
+
+func cellClass(c game.CollisionType, relaxed bool) mapfuse.Class {
+	switch c {
+	case game.CollisionTypeNonWalkable:
+		return mapfuse.ClassLiveBlock
+	case game.CollisionTypeUnknown:
+		return mapfuse.ClassUnknown
+	case game.CollisionTypeUnknownWall:
+		return mapfuse.ClassUnknownPriorWall
+	case game.CollisionTypePriorWalk:
+		return mapfuse.ClassPriorWalk
+	case game.CollisionTypePriorBlocked:
+		if relaxed {
+			return mapfuse.ClassPriorBlock.Relaxed()
+		}
+		return mapfuse.ClassPriorBlock
+	}
+	return mapfuse.ClassLiveWalk
+}
+
+func buildNav(g *game.Grid, relaxed bool) *nav.Grid {
+	return nav.NewGridCost(g.OffsetX, g.OffsetY, g.Width, g.Height, func(x, y int) bool {
 		row := g.CollisionGrid[y]
-		return x < len(row) && row[x] != game.CollisionTypeNonWalkable
+		return x < len(row) && cellClass(row[x], relaxed).Walkable()
+	}, func(x, y int) int32 {
+		row := g.CollisionGrid[y]
+		if x >= len(row) {
+			return 0
+		}
+		return cellClass(row[x], relaxed).StepCost()
 	})
+}
+
+func hasPriorWalls(g *game.Grid) bool {
+	for _, row := range g.CollisionGrid {
+		for _, c := range row {
+			if c == game.CollisionTypePriorBlocked {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 func New(gr *game.MemoryReader, grid *game.Grid, goal data.Position, holder string) *Journey {
 	j := &Journey{
 		Goal: goal, Arrive: 5,
-		gr: gr, holder: holder, grid: navGrid(grid),
+		gr: gr, holder: holder, src: grid, grid: navGrid(grid),
 		bestDist: 1 << 30, bestAt: time.Now(),
 	}
 	j.f = nav.NewFollower(j.grid, nil)
@@ -145,13 +221,56 @@ func (j *Journey) SetObstacles(obs []data.Position) {
 func (j *Journey) State() nav.State { return j.f.State() }
 
 func (j *Journey) plan(me data.Position, now time.Time) (bool, string) {
-	pl := j.grid.Plan(me, j.Goal, nav.Options{Obstacles: j.obs})
+	g := j.grid
+	pl := g.Plan(me, j.Goal, nav.Options{Obstacles: j.obs})
+	if !pl.Found && j.src != nil && hasPriorWalls(j.src) {
+		// Every route crosses a trusted prior's wall: plan again with those walls
+		// as expensive guesses. Observed walls stay hard.
+		g = relaxedNavGrid(j.src)
+		if rp := g.Plan(me, j.Goal, nav.Options{Obstacles: j.obs}); rp.Found {
+			pl = rp
+			j.note("planner: trusted prior walled every route — planned through its walls as guesses")
+		}
+	}
 	if !pl.Found {
 		return false, "planner: " + pl.Reason
 	}
 	j.snapped = pl.Snapped
-	j.f.SetPath(j.grid.Simplify(pl.Path, j.obs), me, now)
+	path := g.Simplify(pl.Path, j.obs)
+	j.f.SetPath(path, me, now)
+	if OnPlan != nil {
+		OnPlan(path)
+	}
 	return true, ""
+}
+
+func (j *Journey) note(ev string) {
+	if j.led == nil {
+		return
+	}
+	j.led.Append(verbs.Outcome{Verb: "nav", Holder: j.holder, Result: verbs.ResDone,
+		Target: fmt.Sprintf("(%d,%d)", j.Goal.X, j.Goal.Y), Evidence: ev})
+}
+
+// adopt swaps in a newer fused grid of the SAME frame (a different frame is a
+// different area — the caller's business, not this journey's). It reports the
+// cell where a newly known wall crosses the route ahead, and arms the replan.
+func (j *Journey) adopt(g *game.Grid) (data.Position, bool) {
+	if g == nil || g == j.src {
+		return data.Position{}, false
+	}
+	ng := navGrid(g)
+	if !ng.SameFrame(j.grid) {
+		return data.Position{}, false
+	}
+	old := j.grid
+	j.src, j.grid = g, ng
+	j.f.SetGrid(ng)
+	at, hit := j.f.NewlyBlocked(old, ng)
+	if hit {
+		j.replan = true
+	}
+	return at, hit
 }
 
 // Step advances the journey by ONE bounded stride. The caller holds a RoleSteer lease.
@@ -177,6 +296,11 @@ func (j *Journey) Step(m *motor.Motor, p *percept.Perceptor, led *verbs.Ledger) 
 		return Status{State: Stalled, Note: fmt.Sprintf("no approach in %s at (%d,%d) best=%d", approachBackstop, me.X, me.Y, j.bestDist)}
 	}
 	j.f.ArriveR = float64(max(j.Arrive, 1))
+	if Source != nil {
+		if at, hit := j.adopt(Source()); hit {
+			j.note(fmt.Sprintf("map: new wall on the route at (%d,%d) — replanning", at.X, at.Y))
+		}
+	}
 	if j.replan && j.f.State() != nav.Failed {
 		j.replan = false
 		if ok, why := j.plan(me, now); !ok {

@@ -428,6 +428,9 @@ func main() {
 	} else {
 		logger.Info("map data fetched", "seed", gr.MapSeed(), "areas", len(gr.GetData().Areas))
 	}
+	// MAP FUSION: every navigation grid is live > atlas > trusted prior > priced unknown.
+	fz := newFusion(gr, logger)
+	defer fz.flush()
 
 	if *exitProbe {
 		// The training drill for the leg-walker: read everything Advance would act on,
@@ -1689,7 +1692,7 @@ func main() {
 			return
 		}
 		logger.Info("fighttest: in Blood Moor — hunting", "pos", fmt.Sprintf("(%d,%d)", s.Me.Pos.X, s.Me.Pos.Y))
-		grid, _, err := gr.BuildLiveGridRooms()
+		grid, err := fz.build()
 		if err != nil {
 			logger.Error("fighttest: grid failed", "err", err)
 			close(stop)
@@ -1768,7 +1771,7 @@ func main() {
 		led.Sink = func(o verbs.Outcome) {
 			logger.Info("outcome", "verb", o.Verb, "holder", o.Holder, "result", o.Result.String(), "ev", o.Evidence)
 		}
-		grid, _, err := gr.BuildLiveGridRooms()
+		grid, err := fz.build()
 		if err != nil {
 			logger.Error("jtest: live grid failed", "err", err)
 			return
@@ -2041,6 +2044,9 @@ func main() {
 	core := &exec.Core[*activity.Ctx]{Arb: arb, Find: roster.Lifecycle, Trace: emit}
 
 	var grid *game.Grid
+	// Live journeys adopt every regrid: a wall that streams in across a route
+	// replans it at once.
+	journey.Source = func() *game.Grid { return grid }
 	// Stride's look-ahead reads the CURRENT live grid (the closure follows every
 	// regrid). Unknown/unloaded ground stays walkable — only real walls refuse.
 	verbs.Walkable = func(p data.Position) bool {
@@ -2190,7 +2196,7 @@ func main() {
 	// Regrid: mid-area grid regrowth for the leg-walker — rooms stream in as she walks,
 	// and a grid built at the border knows nothing of the far exit.
 	regrid := func() *game.Grid {
-		if g, _, err := gr.BuildLiveGridRooms(); err == nil {
+		if g, err := fz.build(); err == nil {
 			grid = g
 			logger.Info("executive: grid regrown", "origin", fmt.Sprintf("(%d,%d)", g.OffsetX, g.OffsetY))
 		}
@@ -2461,13 +2467,13 @@ func main() {
 		// planning against that stale truth (Advance was the only one regridding);
 		// fresh journeys now always start on current rooms.
 		if int(s.Me.Area) != gridArea {
-			if g, _, err := gr.BuildLiveGridRooms(); err == nil {
+			if g, err := fz.build(); err == nil {
 				grid, gridArea = g, int(s.Me.Area)
 				gridAt = time.Now()
 				logger.Info("executive: grid re-aligned", "area", gridArea)
 			}
 		} else if !s.Me.InTown && time.Since(gridAt) > 6*time.Second {
-			if g, _, err := gr.BuildLiveGridRooms(); err == nil {
+			if g, err := fz.build(); err == nil {
 				grid = g
 				gridAt = time.Now()
 			}

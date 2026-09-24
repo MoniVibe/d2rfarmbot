@@ -15,6 +15,15 @@ type Grid struct {
 	W, H       int
 	walk       []bool
 	clr        []int32 // Chebyshev distance to the nearest non-walkable cell (0 = wall)
+	// cost is an optional per-cell surcharge paid on entering the cell (a straight
+	// step is 10): the fused map's price for unknown/unverified ground. nil = none.
+	cost []int32
+	// hw is the heuristic weight (tenths) used when costs exist: 10 + the cheapest
+	// surcharge, capped at 15. Priced ground dominates the far field, where it keeps
+	// the estimate admissible; over free ground it is a bounded (≤1.5×) greed. Without
+	// it A* floods: a 1000² field priced +5 expanded 682k cells, weighted 68k — for
+	// the same route cost.
+	hw int32
 }
 
 // NewGrid builds a grid; walkable is asked in RELATIVE (x,y), row-major.
@@ -27,6 +36,45 @@ func NewGrid(offX, offY, w, h int, walkable func(x, y int) bool) *Grid {
 	}
 	g.buildClearance()
 	return g
+}
+
+// NewGridCost is NewGrid plus a per-cell entry surcharge (RELATIVE x,y) — the
+// planner prefers observed ground over guesses without ever forbidding a guess.
+func NewGridCost(offX, offY, w, h int, walkable func(x, y int) bool, cost func(x, y int) int32) *Grid {
+	g := NewGrid(offX, offY, w, h, walkable)
+	if cost == nil {
+		return g
+	}
+	g.cost = make([]int32, w*h)
+	minC := int32(1 << 30)
+	for y := 0; y < h; y++ {
+		for x := 0; x < w; x++ {
+			if c := cost(x, y); c > 0 {
+				g.cost[y*w+x] = c
+				minC = min(minC, c)
+			}
+		}
+	}
+	if minC == 1<<30 {
+		g.cost = nil
+		return g
+	}
+	g.hw = min(costStraight+minC, 15)
+	return g
+}
+
+// CellCost is p's entry surcharge (0 outside the grid or without costs).
+func (g *Grid) CellCost(p Pos) int {
+	i, ok := g.idx(p)
+	if !ok || g.cost == nil {
+		return 0
+	}
+	return int(g.cost[i])
+}
+
+// SameFrame reports whether o covers exactly the same world rectangle.
+func (g *Grid) SameFrame(o *Grid) bool {
+	return g != nil && o != nil && g.OffX == o.OffX && g.OffY == o.OffY && g.W == o.W && g.H == o.H
 }
 
 // ParseGrid builds a grid from rows of '.' (walkable) and anything else (wall).

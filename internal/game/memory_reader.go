@@ -55,6 +55,13 @@ func (gd *MemoryReader) MapSeed() uint {
 	return gd.mapSeed
 }
 
+// MapArea is koolo-map's cached data for one area of the current seed (no live
+// memory reads — cheap enough for every regrid).
+func (gd *MemoryReader) MapArea(id area.ID) (AreaData, bool) {
+	ad, ok := gd.cachedMapData[id]
+	return ad, ok
+}
+
 func (gd *MemoryReader) FetchMapData() error {
 	d := gd.GameReader.GetData()
 	prevSeed := gd.mapSeed

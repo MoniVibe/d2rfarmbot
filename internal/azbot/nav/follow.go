@@ -129,6 +129,41 @@ func (f *Follower) Committed() float64 { return f.committedS }
 // SetObstacles swaps the live obstacle set (the caller replans on change).
 func (f *Follower) SetObstacles(obs []Obstacle) { f.obs = obs }
 
+// SetGrid swaps in a newer grid of the same area (rooms streamed in). The route is
+// kept; the caller checks NewlyBlocked first and replans when it says so.
+func (f *Follower) SetGrid(g *Grid) { f.g = g }
+
+// NewlyBlocked reports the first cell on the route still AHEAD (from the committed
+// segment on) that old let us walk and next does not — a wall that streamed in (or
+// a prior that earned trust) across the plan. A route cell next cannot represent
+// (outside its frame) counts as blocked.
+func (f *Follower) NewlyBlocked(old, next *Grid) (Pos, bool) {
+	if len(f.pts) == 0 || old == nil || next == nil {
+		return Pos{}, false
+	}
+	seg := 0
+	for seg < len(f.cumS)-2 && f.cumS[seg+1] < f.committedS {
+		seg++
+	}
+	var hit Pos
+	blocked := func(p Pos) bool {
+		if old.Walkable(p) && !next.Walkable(p) {
+			hit = p
+			return true
+		}
+		return false
+	}
+	if len(f.pts) == 1 {
+		return hit, blocked(f.pts[0])
+	}
+	for i := seg; i < len(f.pts)-1; i++ {
+		if !walkLine(f.pts[i], f.pts[i+1], func(p Pos) bool { return !blocked(p) }) {
+			return hit, true
+		}
+	}
+	return Pos{}, false
+}
+
 func (f *Follower) defaults() {
 	if f.ArriveR <= 0 {
 		f.ArriveR = 5

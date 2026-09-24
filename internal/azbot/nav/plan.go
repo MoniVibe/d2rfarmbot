@@ -171,12 +171,17 @@ func (g *Grid) Plan(start, goal Pos, opt Options) Plan {
 		gs[i] = math.MaxInt32
 		par[i] = -1
 	}
+	hw := int32(costStraight)
+	if g.cost != nil {
+		hw = g.hw
+	}
+	heur := func(p Pos) int32 { return octile(p, res.Goal) * hw / costStraight }
 	var seq uint32
 	open := &openSet{}
 	for _, si := range seeds {
 		g0 := stepOutCost * octile(start, g.at(si))
 		gs[si] = g0
-		h := octile(g.at(si), res.Goal)
+		h := heur(g.at(si))
 		seq++
 		heap.Push(open, node{f: g0 + h, h: h, seq: seq, i: int32(si)})
 	}
@@ -225,11 +230,14 @@ func (g *Grid) Plan(start, goal Pos, opt Options) Plan {
 				if pen != nil {
 					step += pen[int32(ni)]
 				}
+				if g.cost != nil {
+					step += g.cost[ni]
+				}
 				ng := gs[ci] + step
 				if ng < gs[ni] {
 					gs[ni] = ng
 					par[ni] = int32(ci)
-					h := octile(g.at(ni), res.Goal)
+					h := heur(g.at(ni))
 					seq++
 					heap.Push(open, node{f: ng + h, h: h, seq: seq, i: int32(ni)})
 				}
@@ -317,12 +325,17 @@ func (g *Grid) Simplify(path []Pos, obs []Obstacle) []Pos {
 		if g.Walkable(path[i]) {
 			minC := minInt(g.Clearance(path[i]), g.Clearance(path[i+1]))
 			maxP := maxInt(obstaclePenalty(obs, path[i]), obstaclePenalty(obs, path[i+1]))
+			maxK := maxInt(g.CellCost(path[i]), g.CellCost(path[i+1]))
 			for j := i + 2; j < len(path) && j <= i+64; j++ {
 				minC = minInt(minC, g.Clearance(path[j]))
 				maxP = maxInt(maxP, obstaclePenalty(obs, path[j]))
+				maxK = maxInt(maxK, g.CellCost(path[j]))
 				need := minInt(minC, simplifyClearCap)
+				// Nor may a shortcut cut through pricier (less certain) ground than
+				// the stretch it replaces.
 				if walkLine(path[i], path[j], func(p Pos) bool {
-					return g.Walkable(p) && g.Clearance(p) >= need && (obs == nil || obstaclePenalty(obs, p) <= maxP)
+					return g.Walkable(p) && g.Clearance(p) >= need && (obs == nil || obstaclePenalty(obs, p) <= maxP) &&
+						g.CellCost(p) <= maxK
 				}) {
 					best = j
 				}
