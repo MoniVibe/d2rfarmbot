@@ -28,7 +28,7 @@ type Core[C any] struct {
 
 	open     map[string]bool      // begun and not yet ended (holding or suspended)
 	wake     map[string]time.Time // parked by a Wait: not Stepped before this time
-	last     arbiter.Change  // last non-keep change, for flight frames
+	last     arbiter.Change       // last non-keep change, for flight frames
 	lastTick uint64
 }
 

@@ -41,7 +41,7 @@ var curTick atomic.Uint64
 // photographs the screen instead of waiting for the cadence.
 var uiVerbs = map[string]bool{
 	"buy": true, "fence": true, "equip": true, "spend": true, "identify": true,
-	"repair": true, "heal": true, "errand": true, "waypoint": true, "relog": true,
+	"repair": true, "heal": true, "errand": true, "waypoint": true, "relog": true, "tidy": true,
 }
 
 // screenHints fills the oracle's memory hints from what the snapshot carries.

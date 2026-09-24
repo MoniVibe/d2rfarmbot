@@ -2347,7 +2347,8 @@ func main() {
 		}
 		// One context per tick: the lifecycle calls inside Decide and the Step
 		// below see the same world.
-		actx := &activity.Ctx{M: m, GR: gr, P: p, Led: led, Grid: grid, Cap: &cap, Snap: s, SwapKey: hid.GetASCIICode(*swapKey), InvKey: hid.GetASCIICode(*invKeyF), Regrid: regrid, Mem: mem, Held: arb.Held}
+		actx := &activity.Ctx{M: m, GR: gr, P: p, Led: led, Grid: grid, Cap: &cap, Snap: s, SwapKey: hid.GetASCIICode(*swapKey), InvKey: hid.GetASCIICode(*invKeyF), Regrid: regrid, Mem: mem,
+			Seen: sh.Eye.Latest(), Held: arb.Held}
 		if janitorOn {
 			actx.Screen = gk.Stable()
 		}
