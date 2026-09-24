@@ -170,7 +170,7 @@ func Gate(r screen.Reading, n HolderNeeds) GateResult {
 	case !n.CursorJunk:
 		g.CursorHold, g.Why = true, "foreign cursor item not known junk: HELD — never dropped; the bag is shut, awaiting its parker"
 	default:
-		g.Drop, g.Why = true, "foreign cursor item (known junk, field): drop at feet"
+		g.Drop, g.Why = true, "foreign cursor item (junk or not a keeper, field): drop at feet"
 	}
 	return g
 }

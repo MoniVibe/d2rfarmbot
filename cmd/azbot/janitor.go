@@ -21,6 +21,7 @@ import (
 	"github.com/hectorgimenez/koolo/internal/azbot/arbiter"
 	"github.com/hectorgimenez/koolo/internal/azbot/exec"
 	"github.com/hectorgimenez/koolo/internal/azbot/motor"
+	"github.com/hectorgimenez/koolo/internal/azbot/loot"
 	"github.com/hectorgimenez/koolo/internal/azbot/percept"
 	"github.com/hectorgimenez/koolo/internal/azbot/screen"
 	"github.com/hectorgimenez/koolo/internal/azbot/trace"
@@ -77,7 +78,10 @@ func (g *gatekeeper) needs(who string, s *percept.Snapshot, roster *activity.Ros
 		n.Claims |= g.ses.Claims()
 	}
 	n.Town = s.Valid && s.Me.InTown
-	n.CursorJunk = s.Valid && s.Me.CursorItem && g.junk.cursorJunk(g.gr)
+	// OWNER (2026-09-24, R23: "it was stuck because it picked a mana potion"):
+	// in the field a foreign cursor item is dropped unless the loot policy keeps
+	// it (runes, gems, charms, uniques...). Town still never drops (exec rule).
+	n.CursorJunk = s.Valid && s.Me.CursorItem && (g.junk.cursorJunk(g.gr) || !cursorKeeper(g.gr))
 	return n
 }
 
@@ -323,4 +327,18 @@ func (g *gatekeeper) settle(p *percept.Perceptor) int {
 		time.Sleep(150 * time.Millisecond)
 	}
 	return n
+}
+
+// cursorKeeper: the cursor item is one the loot policy keeps (tier S/A or a
+// lifeline). Unknown or unreadable counts as a keeper (never drop blind).
+func cursorKeeper(gr *game.MemoryReader) bool {
+	cur := gr.GetData().Inventory.ByLocation(item.LocationCursor)
+	if len(cur) == 0 {
+		return true
+	}
+	c := loot.Active()
+	if c == nil {
+		return true
+	}
+	return c.Keep(int(cur[0].ID), int(cur[0].Quality))
 }
