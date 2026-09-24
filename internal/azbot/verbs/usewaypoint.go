@@ -10,6 +10,7 @@ package verbs
 
 import (
 	"fmt"
+	"github.com/hectorgimenez/koolo/internal/azbot/screen"
 	"image/png"
 	"os"
 	"time"
@@ -151,7 +152,7 @@ func (uw UseWaypoint) Do(m *motor.Motor, gr *game.MemoryReader, p *percept.Perce
 		opened := false
 		clickedEver := false
 		for try := 0; try < 3 && !opened; try++ {
-			if try > 0 && !gr.GetData().OpenMenus.Waypoint {
+			if try > 0 && !wpOpen(gr) {
 				// A prior blind click may have opened the WRONG panel (an NPC
 				// under the projection). Ground-click clears any stray menu so
 				// the retry starts clean; harmless if nothing is open.
@@ -208,7 +209,7 @@ func (uw UseWaypoint) Do(m *motor.Motor, gr *game.MemoryReader, p *percept.Perce
 				for time.Now().Before(dl) && time.Now().Before(hard) {
 					time.Sleep(150 * time.Millisecond)
 					dd2 := gr.GetData()
-					if dd2.OpenMenus.Waypoint {
+					if wpOpen(gr) {
 						opened = true
 						break
 					}
@@ -331,7 +332,7 @@ func (uw UseWaypoint) Do(m *motor.Motor, gr *game.MemoryReader, p *percept.Perce
 		}
 		dest = cand
 		for _, dyOff := range []int{0, 12, -12} {
-			if !gr.GetData().OpenMenus.Waypoint {
+			if !wpOpen(gr) {
 				// Evaporated: one quiet re-open (the pad is at her feet), then verify.
 				time.Sleep(400 * time.Millisecond) // let any queued clicks land first
 				reopened := false
@@ -347,7 +348,7 @@ func (uw UseWaypoint) Do(m *motor.Motor, gr *game.MemoryReader, p *percept.Perce
 						dl := time.Now().Add(2500 * time.Millisecond)
 						for time.Now().Before(dl) {
 							time.Sleep(150 * time.Millisecond)
-							if gr.GetData().OpenMenus.Waypoint {
+							if wpOpen(gr) {
 								reopened = true
 								break
 							}
@@ -360,7 +361,7 @@ func (uw UseWaypoint) Do(m *motor.Motor, gr *game.MemoryReader, p *percept.Perce
 				time.Sleep(250 * time.Millisecond)
 			}
 			ry := rowY(addr.Row) + dyOff
-			if !gr.GetData().OpenMenus.Waypoint {
+			if !wpOpen(gr) {
 				continue // evaporated before the click: never click the void
 			}
 			// One photo per session under a VERIFIED-standing panel — the honest
@@ -416,4 +417,17 @@ func (uw UseWaypoint) Do(m *motor.Motor, gr *game.MemoryReader, p *percept.Perce
 	led.Append(o)
 	_ = p
 	return o
+}
+
+// wpOpen: the waypoint panel stands — the memory flag OR the panel by sight.
+// R42 (owner: "looks like it has trouble with the wp"): the screen oracle saw
+// the WAYPOINT panel every attempt while OpenMenus.Waypoint read false (the
+// memory UI flags are not ground truth on this build, relay R2), so every
+// ride was judged "pad clicked but the panel never opened".
+func wpOpen(gr *game.MemoryReader) bool {
+	if gr.GetData().OpenMenus.Waypoint {
+		return true
+	}
+	img := gr.Screenshot()
+	return img != nil && screen.WaypointSight(img).Seen
 }
