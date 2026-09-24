@@ -82,6 +82,7 @@ type Equip struct {
 	life    svcLife[eqPhase]
 	lastN   int
 	fails   int
+	parks   int         // park clicks this episode (R25 cap)
 	strikes map[int]int // per-item silent refusals — three strikes refuse the item (P-4.4)
 	door    bool        // Door: the tome key is pressed, the cast is next
 	stage   dressStage
@@ -184,7 +185,7 @@ func (eq *Equip) Needs(s *percept.Snapshot) Needs {
 
 func (eq *Equip) Begin(ctx *Ctx, resumed bool) {
 	eq.life.begin(resumed)
-	eq.door, eq.stage, eq.doorTry = false, dressPick, 0
+	eq.door, eq.stage, eq.doorTry, eq.parks = false, dressPick, 0, 0
 	if !resumed {
 		eq.lastN, eq.fails, eq.snapDue = -1, 0, false
 		return
@@ -447,6 +448,16 @@ func (eq *Equip) dress(ctx *Ctx, s *percept.Snapshot) Status {
 			}
 			l.to(eqDoor, fmt.Sprintf("bag not seen under the cursor item: door %d", eq.doorTry+1))
 			return l.running()
+		}
+		// R25 (owner: "it tries dropping it where the tp tome is, and it just loops"):
+		// the park click can land on an occupied cell and the item never leaves the
+		// cursor. Three park clicks per episode, then Equip steps back for 60s and
+		// the gate (junk: drop; keeper: open the bag and park) takes the item.
+		if eq.parks++; eq.parks > 3 {
+			equipCursorCool = time.Now().Add(60 * time.Second)
+			ev := "3 park clicks and the item still rides the cursor — Equip steps back 60s; the gate takes it"
+			ctx.Led.Append(verbs.Outcome{Verb: "equip", Holder: eq.Name(), Result: verbs.ResDeaf, Evidence: ev})
+			return l.finish(ctx, phase.Abandoned, phase.Deaf, ev)
 		}
 		act, ok := ParkCursor(ctx, nil)
 		ctx.Led.Append(verbs.Outcome{Verb: "equip", Holder: eq.Name(), Result: verbs.ResDone, Evidence: act})
