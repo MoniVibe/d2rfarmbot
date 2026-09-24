@@ -2,6 +2,8 @@ package activity
 
 import (
 	"image"
+
+	"github.com/hectorgimenez/d2go/pkg/data"
 	"image/color"
 	"testing"
 )
@@ -51,5 +53,15 @@ func TestStashFreeBlockFindsRoomBySight(t *testing.T) {
 	cx, cy := stashBlockPx(5, 4, 2, 3, 1)
 	if cx != 444 || cy != 367 {
 		t.Fatalf("block center wrong: (%d,%d)", cx, cy)
+	}
+}
+
+func TestFootprintIsModAware(t *testing.T) {
+	// R26: the TP tome (mod row 533) is 1x2; d2go's vanilla row 533 is not.
+	if w, h := footprint(data.Item{ID: 533}); w != 1 || h != 2 {
+		t.Fatalf("TP tome footprint: want 1x2, got %dx%d", w, h)
+	}
+	if w, h := footprint(data.Item{ID: 620}); w != 1 || h != 3 {
+		t.Fatalf("grand charm footprint: want 1x3, got %dx%d", w, h)
 	}
 }

@@ -8,6 +8,7 @@ import (
 	"github.com/hectorgimenez/d2go/pkg/data"
 	"github.com/hectorgimenez/d2go/pkg/data/item"
 	"github.com/hectorgimenez/koolo/internal/azbot/arbiter"
+	"github.com/hectorgimenez/koolo/internal/azbot/loot"
 	"github.com/hectorgimenez/koolo/internal/azbot/percept"
 	"github.com/hectorgimenez/koolo/internal/azbot/phase"
 	"github.com/hectorgimenez/koolo/internal/azbot/screen"
@@ -228,7 +229,14 @@ func parkRegion(occ *[bagCols][bagRows]bool, w, h int) (gx, gy int, ok bool) {
 }
 
 // footprint is an item's bag footprint (unknown sizes count 1x1).
+// footprint: an item's cell size, MOD-AWARE. R26 (owner: "it just moves it
+// around"): it.Desc() is d2go's vanilla table, and the mod shifts misc rows by
+// 15 — the TP tome (533) read as a 1x1 "Jawbone", so the park saw the tome's
+// lower cell as free and clicked the potion onto it: a swap, forever.
 func footprint(it data.Item) (w, h int) {
+	if c := loot.Classify(int(it.ID)); c.W > 0 && c.H > 0 && c.VanillaID >= 0 {
+		return c.W, c.H
+	}
 	w, h = it.Desc().InventoryWidth, it.Desc().InventoryHeight
 	if w <= 0 {
 		w = 1
