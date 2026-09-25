@@ -240,6 +240,7 @@ type Advance struct {
 	wpTouched      map[area.ID]time.Time
 	wpNoted        area.ID                // the area whose waypoint objective was last announced
 	staffNoted     bool                   // the Horadric Staff was seen held (the artifact legs are over)
+	townNoted      bool                   // the leaving-town diagnostic was logged this visit
 	hopClickAt     time.Time              // the last portal-hop click (a 2s beat)
 	hopNoted       string                 // the portal-hop objective last announced
 	journalTried   map[data.Position]bool // map guesses for the journal already stood at
@@ -391,9 +392,19 @@ func (a *Advance) Demand(s *percept.Snapshot) *arbiter.Demand {
 	// anywhere — seed-independent, unlike the hand-piloted road): bid unless the town
 	// errands are waiting. Town is safe, so the HP floor drops (no regen in town; a
 	// 58%-HP amazon once idled at the well forever waiting to feel better).
+	if !s.Me.InTown {
+		a.townNoted = false
+	}
 	if s.Me.InTown {
 		if ServicesPending(s) || s.Me.HPPct < 30 {
 			return nil
+		}
+		// R59 left town with the TP tome at 0 and no "scrolls" docket line: say
+		// what the docket saw each time the march takes the town (once per visit).
+		if !a.townNoted {
+			a.townNoted = true
+			townLog(fmt.Sprintf("leaving town: tp=%d id=%d gold=%d scrollsWork=%v cooled=%v free=%d",
+				s.Me.TPScrolls, s.Me.IDScrolls, s.Me.Gold, scrollWorks.Load(), servicesCooled(), s.Me.InvFree))
 		}
 		// A waypoint panel that stood but did not transition is a control-plane
 		// failure, not permission to walk out through Blood Moor. Keep Advance's
@@ -2327,4 +2338,12 @@ func padLitLive(obs []data.Object) (lit, seen bool) {
 		}
 	}
 	return false, false
+}
+
+// townLog: a Demand-time diagnostic line through the loot brain's log sink (the
+// executive wires it at startup; nil = silent).
+func townLog(msg string) {
+	theLoot.mu.Lock()
+	defer theLoot.mu.Unlock()
+	theLoot.say("town", "why", msg)
 }
