@@ -496,7 +496,18 @@ func (a *Advance) nextTomb(pick area.ID) area.ID {
 func (a *Advance) tombStep(ctx *Ctx) (Verdict, bool) {
 	s := ctx.Snap
 	n := len(a.Itinerary)
-	if n == 0 || !isTomb(s.Me.Area) || a.Itinerary[n-1].Area != s.Me.Area {
+	if n == 0 || !isTomb(s.Me.Area) {
+		a.tombAt = time.Time{}
+		return 0, false
+	}
+	// Any tomb he stands in counts: a live Orifice here settles the search even
+	// when the leg named another tomb (R68 walked into the true tomb 70 on its
+	// way to 66 — owner: "this is the right tomb though").
+	if ob, ok := findLive(ctx.GR.GetData().Objects, object.HoradricOrifice); ok && isTomb(a.Itinerary[n-1].Area) && a.Itinerary[n-1].Area != s.Me.Area {
+		a.Itinerary[n-1].Area = s.Me.Area
+		noteSocket(s.Me.Area, ob)
+	}
+	if a.Itinerary[n-1].Area != s.Me.Area {
 		a.tombAt = time.Time{}
 		return 0, false
 	}
