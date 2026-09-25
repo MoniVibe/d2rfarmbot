@@ -102,11 +102,18 @@ func (c *Config) Plan(it Item, sit Situation) Plan {
 		p.Act, p.Why = Take, "sell-grade (tier B) into a roomy bag"
 		return p
 	}
-	if p.Need <= sit.Free {
+	// The SHAPE must fit, not only the count (R56: seven scattered cells read
+	// as room for a 1x3; ~120 deaf pickups). With the bag's layout known, a
+	// free W x H block is the test; without it (Bag empty), the count.
+	shapeOK := len(sit.Bag) == 0 || p.Need == 0 || FitsShape(sit.Bag, v.Class.W, v.Class.H)
+	if p.Need <= sit.Free && shapeOK {
 		p.Act, p.Why = Take, fmt.Sprintf("tier %s fits (%d/%d cells free)", v.Tier, sit.Free, p.Need)
 		return p
 	}
 	full := fmt.Sprintf("bag full (%d free, needs %d)", sit.Free, p.Need)
+	if !shapeOK {
+		full = fmt.Sprintf("no free %dx%d block (%d cells free, scattered)", v.Class.W, v.Class.H, sit.Free)
+	}
 	if v.Tier == TierA {
 		if sit.Urgent {
 			p.Why = full + "; march urgent: tier A waits for no one"

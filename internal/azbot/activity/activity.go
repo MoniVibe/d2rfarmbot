@@ -2124,9 +2124,16 @@ type Loot struct {
 	target   data.UnitID
 	failures map[data.UnitID]int
 	ban      map[data.UnitID]time.Time
+	strikes  map[data.UnitID]int // bans served per unit (the second is long)
+	// streak: when the current run of loot Steps began and the last Step ran —
+	// the march-first budget (lootStreakMax) reads it.
+	streakAt, lastStep time.Time
+	restUntil          time.Time
 }
 
-func NewLoot() *Loot { return &Loot{failures: map[data.UnitID]int{}, ban: map[data.UnitID]time.Time{}} }
+func NewLoot() *Loot {
+	return &Loot{failures: map[data.UnitID]int{}, ban: map[data.UnitID]time.Time{}, strikes: map[data.UnitID]int{}}
+}
 
 func (l *Loot) Name() string { return "loot" }
 
@@ -2189,6 +2196,17 @@ func (l *Loot) pick(s *percept.Snapshot) (percept.ItemRef, float64, bool) {
 		if w <= 0 || chebyshev(s.Me.Pos, it.Pos) > 30 {
 			continue
 		}
+		// MARCH FIRST (owner, 2026-09-25: "the first priority should be
+		// advancing, taking wps, finishing quests, only then it should worry
+		// about inventory stuff, unless it's a quest item"): while the march is
+		// lawful, only a quest item is worth a detour — anything else must lie
+		// roadside, and a resting loot (its streak budget spent) takes nothing
+		// but quest items.
+		if !lootQuestItem(it) && progressUrgent() {
+			if time.Now().Before(l.restUntil) || chebyshev(s.Me.Pos, it.Pos) > lootRoadside {
+				continue
+			}
+		}
 		// GUARDED TREASURE (the cabin death): danger is assessed around the ITEM,
 		// not just around her. A bauble with a welcoming committee is not loot.
 		guards := 0
@@ -2241,6 +2259,20 @@ func (l *Loot) Demand(s *percept.Snapshot) *arbiter.Demand {
 
 func (l *Loot) Step(ctx *Ctx) Verdict {
 	s := ctx.Snap
+	// The streak budget: loot that has held lootStreakMax without a break while
+	// the march waits rests for lootRest (quest items excepted, in pick).
+	now := time.Now()
+	if l.lastStep.IsZero() || now.Sub(l.lastStep) > 5*time.Second {
+		l.streakAt = now
+	}
+	l.lastStep = now
+	if progressUrgent() && now.Sub(l.streakAt) > lootStreakMax {
+		l.restUntil, l.streakAt = now.Add(lootRest), now
+		ctx.Led.Append(verbs.Outcome{Verb: "loot", Holder: l.Name(), Result: verbs.ResRefused,
+			Evidence: fmt.Sprintf("march first: loot held %s — resting %s (quest items excepted)", lootStreakMax, lootRest)})
+		l.target = 0
+		return Done
+	}
 	// Demand and Step use the same ten-tile reachable-hostile gate. This prevents
 	// grant/done churn and never walks toward a drop while a monster is still in the
 	// progress corridor.
@@ -2301,7 +2333,17 @@ func (l *Loot) Step(ctx *Ctx) Verdict {
 	if o.Result != verbs.ResDone {
 		l.failures[it.ID]++
 		if l.failures[it.ID] >= 3 {
-			l.ban[it.ID] = time.Now().Add(60 * time.Second)
+			// R56: a 60s ban re-armed the same deaf pickup ~40 times per unit. The
+			// second strike on a unit bans it for 15 minutes.
+			if l.strikes == nil {
+				l.strikes = map[data.UnitID]int{}
+			}
+			l.strikes[it.ID]++
+			ban := 60 * time.Second
+			if l.strikes[it.ID] >= 2 {
+				ban = 15 * time.Minute
+			}
+			l.ban[it.ID] = time.Now().Add(ban)
 			delete(l.failures, it.ID)
 		}
 	}

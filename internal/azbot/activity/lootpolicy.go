@@ -487,3 +487,17 @@ func (m *lootMind) weakUnique(s *percept.Snapshot, it percept.ItemRef) (bool, st
 	}
 	return m.cfg.WeakUnique(it.Unique, loot.Classify(it.Class), s.Me.Level, s.Me.HasBow, owned, nil)
 }
+
+// March-first loot limits (owner, 2026-09-25).
+const (
+	lootRoadside  = 8                // tiles: while the march waits, only drops this close
+	lootStreakMax = 25 * time.Second // loot's longest unbroken hold while the march waits
+	lootRest      = 60 * time.Second // then it rests (quest items excepted)
+)
+
+// lootQuestItem: a quest artifact (the staff, the cube, the amulet...) — the
+// one detour the march always pays for.
+func lootQuestItem(it percept.ItemRef) bool {
+	k := loot.Classify(it.Class).Kind
+	return k == loot.KindQuest || k == loot.KindCube
+}

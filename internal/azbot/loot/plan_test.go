@@ -114,3 +114,24 @@ func TestStrongUniquesOnly(t *testing.T) {
 		t.Fatalf("a bag copy of a stashed unique sells, got %v", d)
 	}
 }
+
+// R56: scattered free cells are not room for a 1x3.
+func TestFitsShape(t *testing.T) {
+	// column x=0 filled at rows 0..6 with 1x1 potions (602), leaving (0,7) free;
+	// every other column filled by 1x1s except one cell each at row 7.
+	var bag []Carried
+	for x := 0; x < BagW; x++ {
+		for y := 0; y < BagH-1; y++ {
+			bag = append(bag, Carried{Item: Item{ID: 602}, GX: x, GY: y})
+		}
+	}
+	if !FitsShape(bag, 1, 1) {
+		t.Fatal("a free row of 1x1 cells fits a 1x1")
+	}
+	if FitsShape(bag, 1, 3) {
+		t.Fatal("ten free cells in one row do not fit a 1x3")
+	}
+	if !FitsShape(bag, 3, 1) {
+		t.Fatal("a free row fits a 3x1")
+	}
+}

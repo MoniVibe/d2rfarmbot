@@ -290,3 +290,37 @@ var questGear = map[string]bool{
 	"leg": true, // Wirt's Leg
 	"hfh": true, // Hell Forge Hammer
 }
+
+// FitsShape: a free w x h block exists in the 10x8 bag given what it carries
+// (R56: "fits 7/3 cells free" — seven scattered cells, no free 1x3 column; a
+// grand charm and a wrist blade were clicked ~40 times each, every click deaf).
+func FitsShape(bag []Carried, w, h int) bool {
+	var occ [BagW][BagH]bool
+	for _, it := range bag {
+		cl := Classify(it.Item.ID)
+		for x := it.GX; x < it.GX+cl.W; x++ {
+			for y := it.GY; y < it.GY+cl.H; y++ {
+				if x >= 0 && y >= 0 && x < BagW && y < BagH {
+					occ[x][y] = true
+				}
+			}
+		}
+	}
+	for x := 0; x+w <= BagW; x++ {
+		for y := 0; y+h <= BagH; y++ {
+			free := true
+			for dx := 0; dx < w && free; dx++ {
+				for dy := 0; dy < h; dy++ {
+					if occ[x+dx][y+dy] {
+						free = false
+						break
+					}
+				}
+			}
+			if free {
+				return true
+			}
+		}
+	}
+	return false
+}
