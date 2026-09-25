@@ -6,6 +6,7 @@ import (
 	"fmt"
 
 	"github.com/hectorgimenez/d2go/pkg/data/item"
+	"github.com/hectorgimenez/d2go/pkg/data/quest"
 	"github.com/hectorgimenez/d2go/pkg/data/stat"
 	"github.com/hectorgimenez/d2go/pkg/memory"
 	"github.com/hectorgimenez/koolo/internal/azbot/gamedata"
@@ -56,6 +57,10 @@ func main() {
 			c := loot.Classify(int(it.ID))
 			fmt.Printf("%s page=%d unique#%d %s base=%s(%s %s) req=%d ident=%v\n", loc, it.Location.Page, it.UniqueSetID, u.Name, u.Code, c.Code, c.Kind, u.LevelReq, it.Identified)
 		}
+	}
+	for _, q := range []quest.Quest{quest.Act2RadamentsLair, quest.Act2TheHoradricStaff, quest.Act2TaintedSun,
+		quest.Act2ArcaneSanctuary, quest.Act2TheSummoner, quest.Act2TheSevenTombs, quest.Act3LamEsensTome} {
+		fmt.Printf("quest %d completed=%v states=%v\n", q, d.Quests[q].Completed(), d.Quests[q])
 	}
 	for _, it := range d.Inventory.Belt.Items {
 		fmt.Printf("belt slot %d row %d %s\n", it.Position.X, it.ID, inventory.PotionOf(int(it.ID)))

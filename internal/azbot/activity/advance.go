@@ -238,6 +238,7 @@ type Advance struct {
 	wpFailN     int
 	wpTouched   map[area.ID]time.Time
 	wpNoted     area.ID // the area whose waypoint objective was last announced
+	staffNoted  bool    // the Horadric Staff was seen held (the artifact legs are over)
 	// P-5.3a THE CROSSING DRIVE: between the door facts the area read is
 	// NOISE — while driving, geometry is the only truth.
 	driving   bool

@@ -55,6 +55,15 @@ func questItemHeld(d data.Data, code string) bool {
 	if db == nil {
 		return false
 	}
+	// The shaft and the amulet become the Horadric Staff in the cube (owner,
+	// 2026-09-25: "i got the staff and made the thing") — the assembled staff
+	// completes both legs. (The quest log is not readable on this build: every
+	// d2go quest byte reads 0, so artifacts and places are the only truth.)
+	if code == "msf" || code == "vip" {
+		if questItemHeld(d, "hst") {
+			return true
+		}
+	}
 	for _, loc := range []item.LocationType{item.LocationInventory, item.LocationStash, item.LocationSharedStash, item.LocationCube, item.LocationEquipped} {
 		for _, it := range d.Inventory.ByLocation(loc) {
 			if row := db.Item(int(it.ID)); row != nil && row.Code == code {
@@ -93,6 +102,7 @@ func questState(d data.Data, ar area.ID) (q questLeg, chest data.Object, seen, p
 // or walk to it for Imbibe's click).
 func (a *Advance) questHold(ctx *Ctx) bool {
 	s := ctx.Snap
+	a.noteStaffAssembled(ctx)
 	if s.Me.InTown {
 		return false
 	}
@@ -302,4 +312,25 @@ func TakeRelogRequest() string {
 	w := relogReq.why
 	relogReq.why = ""
 	return w
+}
+
+// noteStaffAssembled: the Horadric Staff in hand ends the three artifact legs
+// for good (the staff itself disappears into the Orifice later, and the quest
+// log is unreadable here — without the ledger the legs would re-arm then).
+func (a *Advance) noteStaffAssembled(ctx *Ctx) {
+	if a.staffNoted || ctx.GR == nil {
+		return
+	}
+	d := ctx.GR.GetData()
+	if !questItemHeld(d.Data, "hst") {
+		return
+	}
+	a.staffNoted = true
+	for ar := range questLegs {
+		if !a.questForeverDone(ctx, ar) {
+			a.markQuestForever(ctx, ar, true, true)
+		}
+	}
+	ctx.Led.Append(verbs.Outcome{Verb: "quest", Holder: a.Name(), Result: verbs.ResDone,
+		Evidence: "the Horadric Staff is held: cube, shaft and amulet legs ended for good — next the Palace, the Sanctuary and the Tombs"})
 }
