@@ -100,13 +100,13 @@ func TestPressed(t *testing.T) {
 	s := townSnap()
 	s.Me.InTown, s.Me.HPPct = false, 100
 	at := func(dx int) percept.EnemyRef { return percept.EnemyRef{Pos: data.Position{X: s.Me.Pos.X + dx, Y: s.Me.Pos.Y}} }
-	s.Enemies = []percept.EnemyRef{at(2), at(3)}
+	s.Enemies = []percept.EnemyRef{at(2), at(3), at(7)}
 	if pressed(s) {
-		t.Fatal("two nearby at full health: leap past")
+		t.Fatal("three nearby at full health: leap past")
 	}
-	s.Enemies = append(s.Enemies, at(4))
+	s.Enemies = append(s.Enemies, at(8))
 	if !pressed(s) {
-		t.Fatal("three within 4: boxed in, fight")
+		t.Fatal("four within 8: a pack threatens, leap in")
 	}
 	s.Enemies, s.Me.HPPct = nil, 50
 	if !pressed(s) {

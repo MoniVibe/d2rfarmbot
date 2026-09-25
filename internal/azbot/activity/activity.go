@@ -2577,8 +2577,8 @@ func DemandString(d *arbiter.Demand) string {
 // Evasive-march pressure (owner, 2026-09-25).
 const (
 	pressedHP    = 65 // below this, stand and fight
-	pressedCrowd = 3  // this many within pressedRange boxes him in
-	pressedRange = 4
+	pressedCrowd = 4  // this many within pressedRange: leap into them (owner, R86: "it should leap attack when many mobs threaten it")
+	pressedRange = 8
 )
 
 // pressed: wounded, or boxed in — the only reasons the march stops to fight.

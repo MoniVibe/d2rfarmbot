@@ -79,9 +79,16 @@ func (m *Model) BeltPlan() (Move, bool) {
 			emptyCols++
 		}
 	}
-	// 1. Healing first: fill an HP column with room, or claim an empty column.
+	mpWaiting := false
+	for _, it := range other {
+		if PotionOf(it.ID) == PotMP {
+			mpWaiting = true
+		}
+	}
+	// 1. Healing first: fill an HP column with room, or claim an empty column —
+	//    but a 3rd+ red column never takes an empty column blues are waiting for.
 	if len(hp) > 0 {
-		if c := m.landing(PotHP); c >= 0 {
+		if c := m.landing(PotHP); c >= 0 && !(m.ColumnCount(c) == 0 && m.hpColumns() >= MinHPCols && mpWaiting && m.columnsOf(PotMP) < MinMPCols) {
 			it := hp[0]
 			return Move{Kind: MoveFill, Unit: it.Unit, GX: it.GX, GY: it.GY, Why: "healing to the belt"}, true
 		}
@@ -98,6 +105,29 @@ func (m *Model) BeltPlan() (Move, bool) {
 				bottom := m.column(best)[0]
 				return Move{Kind: MoveEvict, Unit: bottom.Unit, Column: best, Why: "a column for healing (fewer than 2 hold hp)"}, true
 			}
+		}
+	}
+	// 2b. MANA FOR THE LEAP (R86: a Leap-only barbarian died in Flayer Dungeon 2
+	//     with 5 red columns-worth and 1 blue — mana at 0, no leap, plain swings):
+	//     fewer than MinMPCols blue columns while blues wait in the bag and the
+	//     reds hold more than their MinHPCols — empty the lightest surplus red
+	//     column so the blues can land.
+	var mp []Item
+	for _, it := range other {
+		if PotionOf(it.ID) == PotMP {
+			mp = append(mp, it)
+		}
+	}
+	if len(mp) > 0 && m.columnsOf(PotMP) < MinMPCols && m.landing(PotMP) < 0 && m.hpColumns() > MinHPCols {
+		best, bestN := -1, 1<<30
+		for c := 0; c < 4; c++ {
+			if m.ColumnKind(c) == PotHP && m.ColumnCount(c) < bestN {
+				best, bestN = c, m.ColumnCount(c)
+			}
+		}
+		if best >= 0 {
+			bottom := m.column(best)[0]
+			return Move{Kind: MoveEvict, Unit: bottom.Unit, Column: best, Why: "a column for mana (the leap starves on one)"}, true
 		}
 	}
 	// 3. Others fill what is left — but never an empty column that healing still
@@ -118,4 +148,18 @@ func (m *Model) BeltPlan() (Move, bool) {
 		return Move{Kind: MoveFill, Unit: it.Unit, GX: it.GX, GY: it.GY, Why: p.String() + " to the belt"}, true
 	}
 	return Move{}, false
+}
+
+// MinMPCols: blue columns a Leap-only spec keeps when blues are carried.
+const MinMPCols = 2
+
+// columnsOf: belt columns holding potion kind p.
+func (m *Model) columnsOf(p Potion) int {
+	n := 0
+	for c := 0; c < 4; c++ {
+		if m.ColumnKind(c) == p {
+			n++
+		}
+	}
+	return n
 }

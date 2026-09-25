@@ -61,3 +61,16 @@ func TestFullGoodBeltNeedsNothing(t *testing.T) {
 		t.Fatalf("a full belt with two healing columns: nothing to do, got %+v", mv)
 	}
 }
+
+// R86: a belt of reds with blues in the bag gives a surplus red column to mana.
+func TestBeltMakesRoomForMana(t *testing.T) {
+	m := &Model{BeltRows: 2}
+	for c := 0; c < 4; c++ {
+		m.Belt = append(m.Belt, BeltSlot{Unit: uint32(10 + c), ID: 602, Index: c}, BeltSlot{Unit: uint32(20 + c), ID: 602, Index: 4 + c})
+	}
+	m.Bag = []Item{{Unit: 99, ID: 608, GX: 0, GY: 0}}
+	mv, ok := m.BeltPlan()
+	if !ok || mv.Kind != MoveEvict {
+		t.Fatalf("four red columns, a blue in the bag: evict a red column, got %+v %v", mv, ok)
+	}
+}
