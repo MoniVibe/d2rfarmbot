@@ -817,6 +817,13 @@ func (a *Advance) Step(ctx *Ctx) Verdict {
 					ctx.Mem.GetJSON(LitKey(charName, a.Itinerary[i].Area), &lit)
 				}
 				if lit && a.Itinerary[i].Area != s.Me.Area {
+					// OFF-ROUTE PAD (R48: the Harem is next and opens from Lut
+					// Gholein itself; the staging ride took him to Lost City and
+					// the march turned around). The on-ramp must lie on the road:
+					// its first hop from here matches the target's.
+					if th, ph := nextHop(dd, s.Me.Area, next.Area), nextHop(dd, s.Me.Area, a.Itinerary[i].Area); th != 0 && ph != 0 && th != ph {
+						break
+					}
 					wants = append(wants, a.Itinerary[i].Area)
 					break
 				}
