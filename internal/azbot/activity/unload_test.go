@@ -94,3 +94,22 @@ func TestUnloadNeedsTPCharges(t *testing.T) {
 		t.Fatal("charges and calm: go home")
 	}
 }
+
+// Evasive march: only a wounded or boxed-in barbarian stops to fight.
+func TestPressed(t *testing.T) {
+	s := townSnap()
+	s.Me.InTown, s.Me.HPPct = false, 100
+	at := func(dx int) percept.EnemyRef { return percept.EnemyRef{Pos: data.Position{X: s.Me.Pos.X + dx, Y: s.Me.Pos.Y}} }
+	s.Enemies = []percept.EnemyRef{at(2), at(3)}
+	if pressed(s) {
+		t.Fatal("two nearby at full health: leap past")
+	}
+	s.Enemies = append(s.Enemies, at(4))
+	if !pressed(s) {
+		t.Fatal("three within 4: boxed in, fight")
+	}
+	s.Enemies, s.Me.HPPct = nil, 50
+	if !pressed(s) {
+		t.Fatal("wounded: fight")
+	}
+}

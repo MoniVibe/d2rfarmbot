@@ -38,7 +38,9 @@ func marchOpts(ctx *Ctx, who string, hold time.Duration) moveto.Opts {
 	if brawlerMode && ctx.Snap != nil && !ctx.Snap.Me.InTown && ctx.Cap != nil && ctx.Cap.Contact != nil && ctx.Snap.Me.MPPct > 10 {
 		key = ctx.Cap.Contact.Key // FIELD ONLY: a Double Swing near Charsi is not a greeting (04:36)
 	}
-	return moveto.Opts{Holder: who, Purpose: moveto.Travel, Click: true, CombatKey: key, MaxHold: hold}
+	// Field travel may leap (owner, 2026-09-25: "traverse using leap attack").
+	leap := ctx.Snap != nil && !ctx.Snap.Me.InTown
+	return moveto.Opts{Holder: who, Purpose: moveto.Travel, Click: true, CombatKey: key, MaxHold: hold, AllowLeap: leap}
 }
 
 // stalled: the planner's verdict was NoPath or Stalled.

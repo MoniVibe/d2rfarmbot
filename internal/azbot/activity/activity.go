@@ -1364,6 +1364,14 @@ func (f *Fight) Demand(s *percept.Snapshot) *arbiter.Demand {
 	if s.Me.WeaponKind == "none" && s.Me.CorpseFound {
 		return nil
 	}
+	// EVASIVE MARCH (owner, 2026-09-25, after doing the Sanctuary by hand: "we
+	// want bot to traverse using leap attack and ignore mobs unless he is
+	// pressed to kill them — it was kind of easy doing it"): while the march is
+	// lawful, only a pressed barbarian fights — wounded, or boxed in. Everything
+	// else is leapt past.
+	if time.Now().Before(marchLawfulUntil) && !pressed(s) {
+		return nil
+	}
 	// THE CONTACT LAW (2026-09-23, the owner: "it hugs walls sometimes with higher
 	// priority than attacking enemies"): whatever the exp oracle, the corridor,
 	// or the wall stamp say, an enemy within contactRange is fought NOW. The
@@ -2561,4 +2569,25 @@ func DemandString(d *arbiter.Demand) string {
 		return "nil"
 	}
 	return fmt.Sprintf("%s/%s u=%.2f", d.Class.String(), d.Who, d.Urgency)
+}
+
+// Evasive-march pressure (owner, 2026-09-25).
+const (
+	pressedHP    = 65 // below this, stand and fight
+	pressedCrowd = 3  // this many within pressedRange boxes him in
+	pressedRange = 4
+)
+
+// pressed: wounded, or boxed in — the only reasons the march stops to fight.
+func pressed(s *percept.Snapshot) bool {
+	if s.Me.HPPct < pressedHP {
+		return true
+	}
+	n := 0
+	for _, e := range s.Enemies {
+		if !e.Walled && chebyshev(s.Me.Pos, e.Pos) <= pressedRange {
+			n++
+		}
+	}
+	return n >= pressedCrowd
 }
