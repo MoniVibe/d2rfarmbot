@@ -332,6 +332,7 @@ type Perceptor struct {
 	// truer denominator.
 	lifeMu             sync.Mutex // the Sentinel reads HP on its own goroutine
 	lifePeak, lifeBase int
+	manaPeak, manaBase int // the mana twin of the life peak (MaxMana omits gear: 209% read)
 }
 
 // hpPct is life over the larger of the MaxLife stat and the peak life seen
@@ -426,7 +427,7 @@ func (p *Perceptor) Capture() *Snapshot {
 		Area:  d.PlayerUnit.Area,
 		Mode:  d.PlayerUnit.Mode,
 		HPPct: p.hpPct(d.PlayerUnit),
-		MPPct: d.PlayerUnit.MPPercent(),
+		MPPct: p.mpPct(d.PlayerUnit),
 		MaxMana: func() int {
 			// THE FIXED-POINT LIE (11:39: maxmana=0 while the orb held 33 —
 			// the owner: "the bot is still not aware as much as we'd like").
@@ -1045,3 +1046,33 @@ func (p *Perceptor) Last() *Snapshot { return p.last.Load() }
 
 // potionReserve: bottles per family the bag keeps beside a full belt.
 var potionReserve = map[inventory.Potion]int{inventory.PotHP: 4, inventory.PotMP: 2, inventory.PotRV: 2}
+
+// mpPct: the mana percent against the true pool. MaxMana on this build omits the
+// gear's +mana — the pool read 209% (R76, owner: "mana potions exist for that
+// reason" — the drink-at-25% reflex and the leap's mana gate never fired). The
+// denominator is the larger of MaxMana and the highest mana ever held (a full
+// pool reveals the real maximum), re-based when MaxMana itself changes.
+func (p *Perceptor) mpPct(pu data.PlayerUnit) int {
+	p.lifeMu.Lock()
+	defer p.lifeMu.Unlock()
+	mana, _ := pu.FindStat(stat.Mana, 0)
+	maxMana, _ := pu.FindStat(stat.MaxMana, 0)
+	if maxMana.Value != p.manaBase {
+		p.manaBase, p.manaPeak = maxMana.Value, 0
+	}
+	if mana.Value > p.manaPeak {
+		p.manaPeak = mana.Value
+	}
+	den := maxMana.Value
+	if p.manaPeak > den {
+		den = p.manaPeak
+	}
+	if den <= 0 {
+		return 0
+	}
+	pct := mana.Value * 100 / den
+	if pct > 100 {
+		pct = 100
+	}
+	return pct
+}

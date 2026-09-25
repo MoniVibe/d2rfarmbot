@@ -38,7 +38,7 @@ type Config struct {
 	KillVK      int    // virtual key of the kill-switch (default VK_PAUSE 0x13)
 	BeltKeys    []byte // belt column keys, left to right
 	DrinkAtHP   int    // drink at or below this HP%
-	DrinkAtMana int    // drink a blue at or below this mana% (0 = default 25)
+	DrinkAtMana int    // drink a blue at or below this mana% (0 = default 35)
 	DrinkCD     time.Duration
 }
 
@@ -67,7 +67,7 @@ func New(log *slog.Logger, p *percept.Perceptor, m *motor.Motor, mem *memory.Sto
 		cfg.DrinkCD = 1500 * time.Millisecond
 	}
 	if cfg.DrinkAtMana == 0 {
-		cfg.DrinkAtMana = 25
+		cfg.DrinkAtMana = 35 // leap-first: one Leap needs ~30% of a 41-point pool
 	}
 	return &Sentinel{log: log, p: p, m: m, mem: mem, cfg: cfg, Dead: make(chan struct{}, 1)}
 }
