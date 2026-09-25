@@ -20,6 +20,7 @@ package activity
 import (
 	"fmt"
 	"math"
+	"sort"
 	"time"
 
 	"github.com/hectorgimenez/d2go/pkg/data"
@@ -944,6 +945,10 @@ func (a *Advance) Step(ctx *Ctx) Verdict {
 		if ad, ok := dd.Areas[s.Me.Area]; ok {
 			mapPads = append(append([]data.Object{}, dd.Objects...), ad.Objects...)
 		}
+		// A LIVE pad (unit id set) outranks the map's preset (owner, 2026-09-25:
+		// "it didnt take spider wp, despite being near it" — the objective walked to
+		// the map's pad 450 tiles north; the presets lie in the randomized areas).
+		sort.SliceStable(mapPads, func(i, j int) bool { return mapPads[i].ID != 0 && mapPads[j].ID == 0 })
 		litHere := false
 		if ctx.Mem != nil {
 			ctx.Mem.GetJSON(LitKey(ctx.GR.GetData().PlayerUnit.Name, s.Me.Area), &litHere)
