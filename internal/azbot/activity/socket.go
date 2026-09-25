@@ -155,9 +155,14 @@ func (k *Socket) demand(s *percept.Snapshot, now time.Time) *arbiter.Demand {
 	if _, _, ok := k.artifact(s); !ok {
 		return nil
 	}
-	for _, e := range s.Enemies {
-		if !e.Walled && chebyshev(s.Me.Pos, e.Pos) <= 10 {
-			return nil // the panel opens only in a calm moment: Fight clears first
+	// The calm gate binds only AT the socket (R70: applied on the whole walk, every
+	// monster on a 176-tile route cancelled the errand within a second). On the
+	// way, Fight preempts by class as it does any march.
+	if ob, ok := liveSocket(s.Me.Area); ok && chebyshev(s.Me.Pos, ob.Position) <= 8 {
+		for _, e := range s.Enemies {
+			if !e.Walled && chebyshev(s.Me.Pos, e.Pos) <= 10 {
+				return nil // the panel opens only in a calm moment: Fight clears first
+			}
 		}
 	}
 	return &arbiter.Demand{Who: k.Name(), Class: arbiter.ClassLoot, Urgency: 0.96,
