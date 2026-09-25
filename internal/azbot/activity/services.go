@@ -272,6 +272,17 @@ func (e *errand) step(ctx *Ctx, who string) errandStep {
 		return errandStep{open: true}
 	}
 
+	// NO RING AT ALL (R78: the map named no Hratli in Kurast Docks, the ring was
+	// empty and Repair gave up in 0.2s): circle the town from here — two rings at
+	// 40 and 80 tiles — until the NPC streams in.
+	if !found && len(e.ring) == 0 && s.Me.InTown {
+		for _, r := range []int{40, 80} {
+			for _, d := range [][2]int{{1, 0}, {1, 1}, {0, 1}, {-1, 1}, {-1, 0}, {-1, -1}, {0, -1}, {1, -1}} {
+				e.ring = append(e.ring, data.Position{X: s.Me.Pos.X + d[0]*r, Y: s.Me.Pos.Y + d[1]*r})
+			}
+		}
+		e.ringIdx = 0
+	}
 	switch e.ph.Phase() {
 	case erSeek: // walk the ring until the NPC loads
 		if found {
