@@ -104,6 +104,7 @@ type Socket struct {
 	tries  int
 	coolAt time.Time
 	done   map[area.ID]bool
+	placed time.Time // the slot click (Place judges 700ms later by the bag)
 }
 
 var (
@@ -255,21 +256,27 @@ func (k *Socket) Step(ctx *Ctx) Status {
 		}
 		return l.wait(200 * time.Millisecond)
 	case skPlace:
-		if !s.Me.CursorItem {
-			if inBag(ctx, k.unit) {
-				l.to(skLift, "the artifact fell back into the bag")
-				return l.running()
-			}
-			snapPNG(ctx, "logs/socket_placed.png")
-			l.to(skPress, "artifact in the slot")
-			return l.running()
-		}
-		if time.Since(k.clickT) > 900*time.Millisecond {
+		// One slot click, then judge by the BAG, not the cursor flag (R73: the
+		// staff went into the slot — the owner saw it — but CursorItem kept reading
+		// true and the phase timed out before Transmute).
+		if k.placed.IsZero() {
 			cx, cy := anvilPx(ctx, anvilSlotX, anvilSlotY)
 			ctx.M.RealMenuClick(cx, cy)
-			k.clickT = time.Now()
+			k.placed = time.Now()
+			return l.wait(700 * time.Millisecond)
 		}
-		return l.wait(200 * time.Millisecond)
+		if time.Since(k.placed) < 700*time.Millisecond {
+			return l.wait(100 * time.Millisecond)
+		}
+		k.placed = time.Time{}
+		if inBag(ctx, k.unit) {
+			l.to(skLift, "the artifact fell back into the bag")
+			return l.running()
+		}
+		snapPNG(ctx, "logs/socket_placed.png")
+		k.clickT = time.Time{}
+		l.to(skPress, "artifact in the slot: press Transmute")
+		return l.running()
 	case skPress:
 		if time.Since(k.clickT) < 700*time.Millisecond {
 			return l.wait(100 * time.Millisecond)
@@ -280,7 +287,7 @@ func (k *Socket) Step(ctx *Ctx) Status {
 		k.done[s.Me.Area] = true
 		socketDone.Store(true)
 		ctx.Led.Append(verbs.Outcome{Verb: "quest", Holder: k.Name(), Result: verbs.ResDone,
-			Evidence: fmt.Sprintf("socket: %s placed in obj %d and the button pressed at (%d,%d)", k.item, int(ob.Name), bx, by)})
+			Evidence: fmt.Sprintf("socket: %s placed in obj %d and Transmute pressed at (%d,%d)", k.item, int(ob.Name), bx, by)})
 		snapPNG(ctx, "logs/socket_pressed.png")
 		return l.finish(ctx, phase.Done, phase.Completed, "artifact socketed")
 	}
