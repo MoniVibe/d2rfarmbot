@@ -257,6 +257,13 @@ func (e *errand) step(ctx *Ctx, who string) errandStep {
 			if e.ringIdx >= len(e.ring) {
 				e.ringIdx = 0
 			}
+		} else if near, ok := npcNeighbour[e.npcID]; ok && len(e.ring) == 0 {
+			// The map lacks this NPC but names a neighbour (owner, 2026-09-25:
+			// "hratli is near meshif"): seek beside the neighbour first.
+			if np, ok := d.AreaData.NPCs.FindOne(near); ok && len(np.Positions) > 0 {
+				e.ring = append(e.ring[:0], np.Positions...)
+				e.ringIdx = 0
+			}
 		}
 	}
 
@@ -1687,4 +1694,10 @@ func (rp *Repair) Step(ctx *Ctx) Status {
 	rp.lastDur = s.Me.MinDurPct
 	ctx.M.RealMenuClick(repairBtnX, repairBtnY) // trade panels honor only real input (a posted UIClick never repaired)
 	return e.wait(500 * time.Millisecond)
+}
+
+// npcNeighbour: where to look for a town NPC the map oracle does not place — a
+// neighbour it does (owner, 2026-09-25: "hratli is near meshif").
+var npcNeighbour = map[npc.ID]npc.ID{
+	npc.Hratli: npc.Meshif2, // Kurast Docks: the smith stands by the boat
 }
