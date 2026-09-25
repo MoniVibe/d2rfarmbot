@@ -310,6 +310,7 @@ func NewWorld() {
 	cainIDWorks.Store(true)
 	stashWorks.Store(true)
 	scrollWorks.Store(true)
+	resetSanctuaryClock() // a new game resets the Sanctuary particle clock
 	spendWorks.Store(true)
 	skillSpendWorks.Store(true)
 	refusedEquips = map[int]bool{}

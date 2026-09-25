@@ -374,6 +374,7 @@ func (a *Advance) place(ar area.ID) int {
 }
 
 func (a *Advance) Demand(s *percept.Snapshot) *arbiter.Demand {
+	sanctuaryClock(s, time.Now())
 	if !s.Valid || len(a.Itinerary) < 2 {
 		return nil
 	}

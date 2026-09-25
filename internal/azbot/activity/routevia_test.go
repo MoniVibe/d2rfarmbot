@@ -2,10 +2,12 @@ package activity
 
 import (
 	"testing"
+	"time"
 
 	"github.com/hectorgimenez/d2go/pkg/data"
 	"github.com/hectorgimenez/d2go/pkg/data/area"
 	"github.com/hectorgimenez/d2go/pkg/data/object"
+	"github.com/hectorgimenez/koolo/internal/azbot/percept"
 )
 
 // R51: object-door legs route through the level that holds the door.
@@ -42,5 +44,25 @@ func TestFindLiveNeedsUnit(t *testing.T) {
 func TestRouteViaFeedsPortalHop(t *testing.T) {
 	if got := routeVia(area.PalaceCellarLevel3, area.CanyonOfTheMagi); got != area.ArcaneSanctuary {
 		t.Fatalf("Canyon from Cellar 3 goes via the Sanctuary, got %d", got)
+	}
+}
+
+// The Sanctuary clock asks for one relog after the budget, and NewWorld resets it.
+func TestSanctuaryClock(t *testing.T) {
+	resetSanctuaryClock()
+	defer resetSanctuaryClock()
+	TakeRelogRequest()
+	s := &percept.Snapshot{Valid: true}
+	s.Me.Area = area.ArcaneSanctuary
+	t0 := time.Now()
+	for d := time.Duration(0); d <= sanctuaryBudget+2*time.Second; d += time.Second {
+		sanctuaryClock(s, t0.Add(d))
+	}
+	if TakeRelogRequest() == "" {
+		t.Fatal("past the budget: a relog is requested")
+	}
+	sanctuaryClock(s, t0.Add(sanctuaryBudget+3*time.Second))
+	if TakeRelogRequest() != "" {
+		t.Fatal("once per game")
 	}
 }

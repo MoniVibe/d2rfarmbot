@@ -2,6 +2,7 @@ package activity
 
 import (
 	"fmt"
+	"sync"
 	"time"
 
 	"github.com/hectorgimenez/d2go/pkg/data"
@@ -10,6 +11,7 @@ import (
 	"github.com/hectorgimenez/d2go/pkg/data/object"
 	"github.com/hectorgimenez/koolo/internal/azbot/coverage"
 	"github.com/hectorgimenez/koolo/internal/azbot/moveto"
+	"github.com/hectorgimenez/koolo/internal/azbot/percept"
 	"github.com/hectorgimenez/koolo/internal/azbot/verbs"
 	"github.com/hectorgimenez/koolo/internal/game"
 )
@@ -312,4 +314,50 @@ func wingEnd(g *game.Grid, c data.Position, d [2]int) data.Position {
 		}
 	}
 	return best
+}
+
+// ---------------------------------------------------------------- the Sanctuary clock
+//
+// Three D2R crashes (2026-09-25 06:03, 12:43, 13:13), all in the Arcane
+// Sanctuary: the game's own log fills with "particle limit for an animated mesh
+// particle effect exceeded (limit 128)" from seconds after entry, the count
+// climbs all game (town trips do not reset it) to ~260-290, then the renderer
+// dies. A NEW GAME should start it over (owner: "do it, we will try"): after
+// sanctuaryBudget of accumulated time in the Sanctuary this game, request a
+// relog; the lit Sanctuary pad brings him straight back.
+
+const sanctuaryBudget = 15 * time.Minute
+
+var sanctuary struct {
+	sync.Mutex
+	spent  time.Duration
+	lastAt time.Time
+	asked  bool
+}
+
+// sanctuaryClock accumulates Sanctuary time per game (called every tick).
+func sanctuaryClock(s *percept.Snapshot, now time.Time) {
+	sanctuary.Lock()
+	defer sanctuary.Unlock()
+	if !s.Valid || s.Me.Area != area.ArcaneSanctuary {
+		sanctuary.lastAt = time.Time{}
+		return
+	}
+	if !sanctuary.lastAt.IsZero() {
+		if d := now.Sub(sanctuary.lastAt); d < 5*time.Second {
+			sanctuary.spent += d
+		}
+	}
+	sanctuary.lastAt = now
+	if sanctuary.spent >= sanctuaryBudget && !sanctuary.asked {
+		sanctuary.asked = true
+		RequestRelog(fmt.Sprintf("%s in the Arcane Sanctuary this game — a new game resets the particle build-up that crashed D2R three times", sanctuaryBudget))
+	}
+}
+
+// resetSanctuaryClock: a new game (NewWorld) starts the count over.
+func resetSanctuaryClock() {
+	sanctuary.Lock()
+	sanctuary.spent, sanctuary.lastAt, sanctuary.asked = 0, time.Time{}, false
+	sanctuary.Unlock()
 }
