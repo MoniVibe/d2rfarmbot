@@ -91,7 +91,9 @@ func questState(d data.Data, ar area.ID) (q questLeg, chest data.Object, seen, p
 		return q, chest, false, false
 	}
 	for _, ob := range d.Objects {
-		if ob.Name == q.chest {
+		// Only a LIVE chest counts (R84: the map's placeholder — unit 0, never
+		// Selectable — read as "spent" and ended the Eye and Brain legs falsely).
+		if ob.Name == q.chest && ob.ID != 0 {
 			chest, seen = ob, true
 			break
 		}
