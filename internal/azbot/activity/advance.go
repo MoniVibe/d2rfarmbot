@@ -241,6 +241,7 @@ type Advance struct {
 	wpNoted        area.ID                // the area whose waypoint objective was last announced
 	staffNoted     bool                   // the Horadric Staff was seen held (the artifact legs are over)
 	townNoted      bool                   // the leaving-town diagnostic was logged this visit
+	tombTried      bool                   // the true-tomb pick ran (R66: it never did in the Canyon)
 	hopClickAt     time.Time              // the last portal-hop click (a 2s beat)
 	hopNoted       string                 // the portal-hop objective last announced
 	journalTried   map[data.Position]bool // map guesses for the journal already stood at
@@ -377,6 +378,12 @@ func (a *Advance) place(ar area.ID) int {
 
 func (a *Advance) Demand(s *percept.Snapshot) *arbiter.Demand {
 	sanctuaryClock(s, time.Now())
+	// R66: in the Canyon the itinerary ended there, Advance never bid, and the
+	// true-tomb pick (in Step) never ran. One bid lets Step append the tomb leg.
+	if s.Valid && !a.tombTried && (s.Me.Area == area.CanyonOfTheMagi || isTomb(s.Me.Area)) {
+		return &arbiter.Demand{Who: a.Name(), Class: arbiter.ClassTravel, Urgency: 0.4,
+			Commit: arbiter.Commitment{MinHold: time.Second}}
+	}
 	if !s.Valid || len(a.Itinerary) < 2 {
 		return nil
 	}

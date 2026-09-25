@@ -182,6 +182,7 @@ func (a *Advance) noteRealTomb(ctx *Ctx) {
 	if s.Me.Area != area.CanyonOfTheMagi && !isTomb(s.Me.Area) {
 		return
 	}
+	a.tombTried = true
 	if len(a.Itinerary) == 0 || isTomb(a.Itinerary[len(a.Itinerary)-1].Area) {
 		return
 	}
@@ -198,6 +199,8 @@ func (a *Advance) noteRealTomb(ctx *Ctx) {
 			return
 		}
 	}
+	ctx.Led.Append(verbs.Outcome{Verb: "quest", Holder: a.Name(), Result: verbs.ResRefused,
+		Evidence: "no tomb on the map holds the Horadric Orifice — the true tomb is unknown"})
 }
 
 func isTomb(ar area.ID) bool {
