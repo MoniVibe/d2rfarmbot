@@ -140,3 +140,27 @@ func isTomb(ar area.ID) bool {
 	}
 	return false
 }
+
+// routeVia: the level-warp waypoint on the way to a leg whose door is an
+// object (R51: the Sanctuary was the leg from Palace Cellar 1 and nextHop, which
+// knows only warps, found no road — 30 minutes pinned). The Canyon is reached
+// through the Sanctuary, the Sanctuary through Palace Cellar 3, a tomb through
+// the Canyon.
+func routeVia(cur, to area.ID) area.ID {
+	if cur == to {
+		return to
+	}
+	for i := 0; i < 3; i++ {
+		switch {
+		case isTomb(to) && cur != area.CanyonOfTheMagi && !isTomb(cur):
+			to = area.CanyonOfTheMagi
+		case to == area.CanyonOfTheMagi && cur != area.ArcaneSanctuary:
+			to = area.ArcaneSanctuary
+		case to == area.ArcaneSanctuary && cur != area.PalaceCellarLevel3:
+			to = area.PalaceCellarLevel3
+		default:
+			return to
+		}
+	}
+	return to
+}

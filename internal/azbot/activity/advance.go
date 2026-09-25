@@ -1006,7 +1006,7 @@ func (a *Advance) Step(ctx *Ctx) Verdict {
 		return v
 	}
 	d := ctx.GR.GetData()
-	hop := nextHop(d, s.Me.Area, next.Area)
+	hop := nextHop(d, s.Me.Area, routeVia(s.Me.Area, next.Area))
 	if hop == 0 {
 		return Abandoned // no topological route — honest refusal
 	}
