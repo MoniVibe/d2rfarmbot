@@ -158,6 +158,9 @@ type ItemRef struct {
 	// numbering — what the loot value model (package loot) classifies. Names
 	// are scrambled on this mod; the row is not.
 	Class int
+	// Unique: the unique row (uniqueitems.txt) for a unique, else -1 — the
+	// strong-unique rule reads it on the ground.
+	Unique int
 }
 
 // BagItem is one item in the bag: identity, grid cell, and what the loot
@@ -234,6 +237,10 @@ type Snapshot struct {
 	Unid     []InvItem    // unidentified magic+ items, grid slots (Identify's list)
 	Upgrades []InvItem    // identified upgrades for worn slots (Equip's list)
 	Bag      []BagItem    // everything in the bag (the loot policy's view)
+	// StoredUniques: unique rows he already owns OUTSIDE the bag — the stash
+	// tabs memory shows and what he wears (owner, 2026-09-25: "not fill it with
+	// low level uniques or duplicates"). A second copy is not a keeper.
+	StoredUniques map[int]bool
 	// RiteNearby: a fresh (Selectable) shrine or well within 25 — Imbibe's
 	// cheap demand signal (P-5R); the Step re-verifies before moving.
 	RiteNearby bool
@@ -473,8 +480,12 @@ func (p *Perceptor) Capture() *Snapshot {
 		s.Enemies = append(s.Enemies, EnemyRef{ID: m.UnitID, Pos: m.Position, Mode: uint32(m.Mode), NPC: m.Name, Reviver: rev})
 	}
 	for _, it := range d.Inventory.ByLocation(item.LocationGround) {
+		uq := -1
+		if it.Quality == item.QualityUnique {
+			uq = int(it.UniqueSetID)
+		}
 		s.Items = append(s.Items, ItemRef{ID: it.UnitID, Pos: it.Position, Name: string(it.Name), Quality: int(it.Quality),
-			Potion: PotionKind(it, true), Class: int(it.ID)})
+			Potion: PotionKind(it, true), Class: int(it.ID), Unique: uq})
 	}
 	// P-5R roadside rites: a cheap nearby-rite flag for the Imbibe demand —
 	// the Step re-verifies against the live object list before a single step.
@@ -697,6 +708,15 @@ func (p *Perceptor) Capture() *Snapshot {
 	planner := policy.NewPlanner(loot.BagCells - occupied)
 	planner.Level = s.Me.Level
 	planner.UsesBow = s.Me.HasBow
+	s.StoredUniques = map[int]bool{}
+	for _, loc := range []item.LocationType{item.LocationStash, item.LocationSharedStash, item.LocationEquipped} {
+		for _, it := range d.Inventory.ByLocation(loc) {
+			if it.Quality == item.QualityUnique && it.UniqueSetID >= 0 {
+				s.StoredUniques[int(it.UniqueSetID)] = true
+			}
+		}
+	}
+	planner.Owned = func(row int) bool { return s.StoredUniques[row] }
 	for _, it := range bag {
 		id := int(it.ID)
 		up := isUpgrade(it)

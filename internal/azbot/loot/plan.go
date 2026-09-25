@@ -1,6 +1,10 @@
 package loot
 
-import "github.com/hectorgimenez/koolo/internal/azbot/gamedata"
+import (
+	"fmt"
+
+	"github.com/hectorgimenez/koolo/internal/azbot/gamedata"
+)
 
 // ---------------------------------------------------------------- the bag plan
 //
@@ -28,9 +32,6 @@ func (d Disposition) String() string {
 // CharmBagCells: charm cells the bag keeps working; charms past it are stashed.
 const CharmBagCells = 12
 
-// OutlevelGap: a unique whose level requirement sits this far below his level sells.
-const OutlevelGap = 12
-
 // TightFree: below this many free cells every charm may go to the stash.
 const TightFree = 10
 
@@ -47,6 +48,44 @@ type Planner struct {
 	// UniqueReq resolves a unique row to (its base code, its level requirement);
 	// ok=false when unknown. Wired to gamedata by the caller; nil = rule off.
 	UniqueReq func(row int) (code string, req int, ok bool)
+	// Owned: the unique row is already owned outside the bag (stash, worn).
+	Owned func(row int) bool
+}
+
+// WeakUnique judges one unique row against his level and what he owns: weak =
+// not worth a cell. Quest artifacts are never weak; jewelry, charms and jewels
+// are small and often strong at any level — weak only as duplicates. A
+// weapon/armor row is weak past Space.UniqueLevelGap below his level, and only
+// when the table row's base code matches the item (a mismatched table can never
+// condemn the wrong thing). req nil = the mod table (modUniqueReq).
+func (c *Config) WeakUnique(row int, cl Class, level int, usesBow bool, owned func(int) bool,
+	req func(int) (string, int, bool)) (bool, string) {
+	switch cl.Kind {
+	case KindQuest, KindCube:
+		return false, ""
+	}
+	if row <= 0 {
+		return false, ""
+	}
+	if req == nil {
+		req = modUniqueReq
+	}
+	code, lreq, known := req(row)
+	matched := known && code == cl.Code
+	if owned != nil && owned(row) && (matched || !known) {
+		return true, "duplicate unique (already owned)"
+	}
+	switch cl.Kind {
+	case KindAmmo:
+		if !usesBow {
+			return true, "unique quiver, no bow"
+		}
+	case KindGear:
+		if gap := c.Space.UniqueLevelGap; matched && level > 0 && gap > 0 && lreq+gap < level {
+			return true, fmt.Sprintf("weak unique (req %d, level %d)", lreq, level)
+		}
+	}
+	return false, ""
 }
 
 // NewPlanner starts a plan for one bag reading.
@@ -93,22 +132,22 @@ func (p *Planner) Dispose(it Carried) (Disposition, string) {
 		}
 		return DispStash, "charm past the bag budget"
 	}
-	// UNIQUES SELL SOMETIMES (owner, 2026-09-25: "it needs to sell uniques
-	// sometimes, it gets filled up"): a second copy of a unique already kept,
-	// or one outlevelled by more than OutlevelGap, is sold. Charms and jewelry
-	// keep their own rules. The table row must match the item's base code, so a
-	// mismatched table can never sell the wrong thing.
-	if it.Item.Quality == QUnique && it.Identified && it.Unique > 0 && cl.Kind == KindGear && !it.Upgrade {
+	// ONLY STRONG UNIQUES STAY (owner, 2026-09-25: "it needs to sell uniques
+	// sometimes" and "not fill it with low level uniques or duplicates, gather
+	// only strong uniques"): a copy of one he already owns (stash, worn, or an
+	// earlier bag copy), an outlevelled weapon/armor piece, or a quiver with no
+	// bow is sold. The first bag copy registers only once judged a keeper.
+	if it.Item.Quality == QUnique && it.Identified && it.Unique > 0 && !it.Upgrade {
 		if p.uniques == nil {
 			p.uniques = map[int]bool{}
 		}
-		if p.uniques[it.Unique] {
-			return DispSell, "duplicate unique"
+		owned := func(row int) bool { return p.uniques[row] || (p.Owned != nil && p.Owned(row)) }
+		req := p.UniqueReq
+		if req == nil { // the rule is off: duplicates only
+			req = func(int) (string, int, bool) { return "", 0, false }
 		}
-		if p.UniqueReq != nil && p.Level > 0 {
-			if code, req, ok := p.UniqueReq(it.Unique); ok && code == cl.Code && req+OutlevelGap < p.Level {
-				return DispSell, "outlevelled unique"
-			}
+		if weak, why := p.c.WeakUnique(it.Unique, cl, p.Level, p.UsesBow, owned, req); weak {
+			return DispSell, why
 		}
 		p.uniques[it.Unique] = true
 	}

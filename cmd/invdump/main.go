@@ -47,6 +47,16 @@ func main() {
 		}
 		fmt.Printf("bag (%d,%d) row %-4d %-4s %-8v %dx%d q=%d ident=%v%s\n", it.Position.X, it.Position.Y, it.ID, c.Code, c.Kind, c.W, c.H, it.Quality, it.Identified, uq)
 	}
+	for _, loc := range []item.LocationType{item.LocationStash, item.LocationSharedStash, item.LocationEquipped} {
+		for _, it := range d.Inventory.ByLocation(loc) {
+			if it.Quality != item.QualityUnique || db == nil || int(it.UniqueSetID) < 0 || int(it.UniqueSetID) >= len(db.Uniques) {
+				continue
+			}
+			u := db.Uniques[it.UniqueSetID]
+			c := loot.Classify(int(it.ID))
+			fmt.Printf("%s page=%d unique#%d %s base=%s(%s %s) req=%d ident=%v\n", loc, it.Location.Page, it.UniqueSetID, u.Name, u.Code, c.Code, c.Kind, u.LevelReq, it.Identified)
+		}
+	}
 	for _, it := range d.Inventory.Belt.Items {
 		fmt.Printf("belt slot %d row %d %s\n", it.Position.X, it.ID, inventory.PotionOf(int(it.ID)))
 	}

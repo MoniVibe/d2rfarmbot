@@ -72,6 +72,10 @@ type Space struct {
 	// SellRaresPct: once the bag is this full (percent of cells), identified
 	// rare gear that is not an upgrade becomes merchandise for the Fence.
 	SellRaresPct int
+	// UniqueLevelGap: a weapon/armor unique whose level requirement sits more
+	// than this below his level is weak — left on the ground, sold if carried
+	// (owner, 2026-09-25: "gather only strong uniques").
+	UniqueLevelGap int
 }
 
 // NameRule tags items whose table name contains Sub (lower case).
@@ -109,7 +113,7 @@ func Default() *Config {
 		},
 		IDs:   map[int]Tier{},
 		Codes: map[string]Tier{},
-		Space: Space{SwapForA: false, SwapForS: true, TownTripForS: true, SellRaresPct: 70},
+		Space: Space{SwapForA: false, SwapForS: true, TownTripForS: true, SellRaresPct: 70, UniqueLevelGap: 8},
 		// A census every three minutes: often enough to read a run by, rare
 		// enough not to drown the log.
 		CensusEvery: 3 * time.Minute,
@@ -133,6 +137,7 @@ type rawSpace struct {
 	SwapForS     *bool `yaml:"swap_for_s"`
 	TownTripForS *bool `yaml:"town_trip_for_s"`
 	SellRaresPct *int  `yaml:"sell_rares_pct"`
+	UniqueGap    *int  `yaml:"unique_level_gap"`
 }
 
 // defaultSlots maps the YAML tier keys onto Defaults fields.
@@ -215,6 +220,12 @@ func Parse(b []byte) (*Config, error) {
 				return nil, fmt.Errorf("loot config: space.sell_rares_pct %d: want 0..100", *s.SellRaresPct)
 			}
 			c.Space.SellRaresPct = *s.SellRaresPct
+		}
+		if s.UniqueGap != nil {
+			if *s.UniqueGap < 0 || *s.UniqueGap > 99 {
+				return nil, fmt.Errorf("loot config: space.unique_level_gap %d: want 0..99", *s.UniqueGap)
+			}
+			c.Space.UniqueLevelGap = *s.UniqueGap
 		}
 	}
 	if raw.CensusEvery != "" {

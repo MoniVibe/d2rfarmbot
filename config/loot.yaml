@@ -72,5 +72,7 @@ space:
   swap_for_s: true        # a tier S drop may replace a worse carried item
   town_trip_for_s: true   # a tier S drop may send her to town and back (needs a proven TP binding)
   sell_rares_pct: 70      # bag this full (%): identified rares that are not upgrades go to the Fence
+  unique_level_gap: 8     # a weapon/armor unique whose level req is more than this below his level is weak: left on the ground, sold if carried.
+                          # Duplicates of uniques he owns (stash, worn, bag) and unique quivers without a bow are weak too. Rings/amulets/charms/jewels: duplicates only.
 
 census_every: 3m          # how often the "loot census" line is logged

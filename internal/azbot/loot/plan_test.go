@@ -1,6 +1,9 @@
 package loot
 
-import "testing"
+import (
+	"strings"
+	"testing"
+)
 
 func TestBagPlanDispositions(t *testing.T) {
 	c := Default()
@@ -50,16 +53,64 @@ func TestUniquesSellWhenDuplicateOrOutlevelled(t *testing.T) {
 	if c := Classify(44); c.Code != "tax" {
 		t.Skipf("row 44 is %s, not tax", c.Code)
 	}
-	if d, why := p.Dispose(u(5)); d != DispSell || why != "outlevelled unique" {
+	if d, why := p.Dispose(u(5)); d != DispSell || !strings.HasPrefix(why, "weak unique") {
 		t.Fatalf("req 3 at level 30: sell, got %v %s", d, why)
 	}
 	if d, _ := p.Dispose(u(9)); d != DispStash {
 		t.Fatalf("req 25 at level 30: keep (stash), got %v", d)
 	}
-	if d, why := p.Dispose(u(9)); d != DispSell || why != "duplicate unique" {
+	if d, why := p.Dispose(u(9)); d != DispSell || !strings.HasPrefix(why, "duplicate unique") {
 		t.Fatalf("second copy: sell, got %v %s", d, why)
 	}
 	if d, _ := p.Dispose(Carried{Unique: 5, Item: Item{ID: 44, Quality: QUnique}, Identified: true, Upgrade: true}); d != DispWear {
 		t.Fatal("an upgrade is worn, never sold")
+	}
+}
+
+// Owner 2026-09-25: "not fill it with low level uniques or duplicates" — a row
+// already in the stash sells; req 22 at level 30 (inside the gap) is kept; a
+// unique quiver without a bow sells; jewelry is kept at any level.
+func TestStrongUniquesOnly(t *testing.T) {
+	c := Default()
+	req := func(row int) (string, int, bool) {
+		switch row {
+		case 5:
+			return "tax", 22, true
+		case 7:
+			return "tax", 25, true
+		case 11:
+			return "rin", 3, true
+		case 12:
+			return "aqv", 15, true
+		}
+		return "", 0, false
+	}
+	tax := Classify(44)
+	if tax.Code != "tax" {
+		t.Skipf("row 44 is %s, not tax", tax.Code)
+	}
+	stash := func(row int) bool { return row == 7 }
+	if weak, _ := c.WeakUnique(5, tax, 30, false, stash, req); weak {
+		t.Fatal("req 22 at level 30 is within the gap: strong")
+	}
+	if weak, why := c.WeakUnique(7, tax, 30, false, stash, req); !weak || !strings.HasPrefix(why, "duplicate") {
+		t.Fatalf("already in the stash: weak duplicate, got %v %s", weak, why)
+	}
+	if weak, _ := c.WeakUnique(11, Class{Code: "rin", Kind: KindJewelry}, 30, false, stash, req); weak {
+		t.Fatal("a low ring is still kept (jewelry: duplicates only)")
+	}
+	if weak, _ := c.WeakUnique(12, Class{Code: "aqv", Kind: KindAmmo}, 30, false, stash, req); !weak {
+		t.Fatal("a unique quiver with no bow is weak")
+	}
+	if weak, _ := c.WeakUnique(12, Class{Code: "aqv", Kind: KindAmmo}, 30, true, stash, req); weak {
+		t.Fatal("with a bow, the quiver is kept")
+	}
+	if weak, _ := c.WeakUnique(7, Class{Code: "vip", Kind: KindQuest}, 30, false, func(int) bool { return true }, req); weak {
+		t.Fatal("quest artifacts are never weak")
+	}
+	p := c.NewPlanner(40)
+	p.Level, p.UniqueReq, p.Owned = 30, req, stash
+	if d, _ := p.Dispose(Carried{Unique: 7, Item: Item{ID: 44, Quality: QUnique}, Identified: true}); d != DispSell {
+		t.Fatalf("a bag copy of a stashed unique sells, got %v", d)
 	}
 }

@@ -153,6 +153,13 @@ func (m *lootMind) planFor(s *percept.Snapshot, it percept.ItemRef) loot.Plan {
 	var p loot.Plan
 	if m.dropped[it.ID] {
 		p = loot.Plan{Verdict: m.cfg.Evaluate(refItem(it)), Why: "she dropped it to make room"}
+	} else if weak, why := m.weakUnique(s, it); weak {
+		// ONLY STRONG UNIQUES (owner, 2026-09-25): a duplicate of one he owns,
+		// an outlevelled weapon/armor piece or a quiver with no bow stays on the
+		// ground — R45's bag rode 14 unique quivers, sold and re-looted each trip.
+		v := m.cfg.Evaluate(refItem(it))
+		v.Tier, v.Why = loot.TierC, why
+		p = loot.Plan{Act: loot.Skip, Verdict: v, Why: why}
 	} else {
 		p = m.cfg.Plan(refItem(it), m.situation(s))
 	}
@@ -459,4 +466,24 @@ const lootProductiveFor = 12 * time.Second
 func LootProductive(now time.Time) bool {
 	at := lootLanded.Load()
 	return at != 0 && now.Sub(time.Unix(0, at)) < lootProductiveFor
+}
+
+// weakUnique: the strong-unique rule for a ground unique — owned = the stash
+// tabs memory shows, what he wears, and the bag.
+func (m *lootMind) weakUnique(s *percept.Snapshot, it percept.ItemRef) (bool, string) {
+	if it.Quality != loot.QUnique || it.Unique <= 0 {
+		return false, ""
+	}
+	owned := func(row int) bool {
+		if s.StoredUniques[row] {
+			return true
+		}
+		for _, b := range s.Bag {
+			if int(b.Unique) == row {
+				return true
+			}
+		}
+		return false
+	}
+	return m.cfg.WeakUnique(it.Unique, loot.Classify(it.Class), s.Me.Level, s.Me.HasBow, owned, nil)
 }
