@@ -62,6 +62,7 @@ type lootMind struct {
 	lastTier  map[data.UnitID]loot.Tier // for the census when a pickup lands
 	stashSaid time.Time                 // the last "stash routine missing" line
 	area      area.ID                   // the field area the per-unit maps belong to
+	carried   map[data.UnitID]bool      // units ever seen in the bag: on the ground they were dropped on purpose
 }
 
 var theLoot = &lootMind{}
@@ -184,8 +185,21 @@ func (m *lootMind) observe(s *percept.Snapshot) {
 		m.area = s.Me.Area
 		m.said, m.lastTier, m.dropped = map[data.UnitID]string{}, map[data.UnitID]loot.Tier{}, map[data.UnitID]bool{}
 	}
+	// ONCE CARRIED, NEVER RE-LOOTED (owner, 2026-09-25: he dropped the mana-
+	// draining charms; "it picked them up, had to sell them"): a unit that was in
+	// the bag and now lies on the ground was dropped on purpose — by him or by the
+	// bot's own shed/swap — and stays there. Unit ids survive the drop.
+	if m.carried == nil {
+		m.carried = map[data.UnitID]bool{}
+	}
+	for _, b := range s.Bag {
+		m.carried[b.Unit] = true
+	}
 	var best *roomPlan
 	for _, it := range s.Items {
+		if m.carried[it.ID] {
+			m.dropped[it.ID] = true
+		}
 		m.noteRow(refItem(it), s.Me.Area, "ground", now)
 		if chebyshev(s.Me.Pos, it.Pos) > 30 {
 			continue
