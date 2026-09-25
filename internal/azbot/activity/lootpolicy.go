@@ -501,3 +501,13 @@ func lootQuestItem(it percept.ItemRef) bool {
 	k := loot.Classify(it.Class).Kind
 	return k == loot.KindQuest || k == loot.KindCube
 }
+
+// shed: a unit the Shed errand dropped on purpose — never looted again.
+func (m *lootMind) shed(u data.UnitID) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if m.dropped == nil {
+		m.dropped = map[data.UnitID]bool{}
+	}
+	m.dropped[u] = true
+}
