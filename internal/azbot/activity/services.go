@@ -52,6 +52,7 @@ type errand struct {
 	act1NPC       npc.ID          // captured from the constructor on first use
 	act2NPC       npc.ID          // service counterpart in Lut Gholein; zero means no alternate
 	act3NPC       npc.ID          // service counterpart in Kurast Docks; zero means no alternate
+	circled       bool            // the town circles were appended to this ring
 	ring          []data.Position // search waypoints until the NPC loads
 	ringIdx       int
 	clickAt       time.Time
@@ -147,6 +148,7 @@ func (e *errand) reset() {
 // resetTrip forgets the trip's counters (not the phase).
 func (e *errand) resetTrip() {
 	e.ringIdx, e.tries, e.menuTry, e.blocked, e.hoverFails, e.parks = 0, 0, 0, 0, 0, 0
+	e.circled = false
 	e.tradeSelected = false
 }
 
@@ -288,6 +290,13 @@ func (e *errand) step(ctx *Ctx, who string) errandStep {
 	if !found && len(e.ring) == 0 && s.Me.InTown {
 		e.ring = townCircles(ctx.Grid, s.Me.Pos)
 		e.ringIdx = 0
+	}
+	// R81: the map DID place Hratli — 870 tiles off, behind a wall — so the ring
+	// was that one dead point. In town the walkable circles always follow what
+	// the map says (once per ring).
+	if !found && s.Me.InTown && !e.circled && len(e.ring) > 0 {
+		e.ring = append(e.ring, townCircles(ctx.Grid, s.Me.Pos)...)
+		e.circled = true
 	}
 	switch e.ph.Phase() {
 	case erSeek: // walk the ring until the NPC loads
