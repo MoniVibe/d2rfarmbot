@@ -104,6 +104,9 @@ func (a *Advance) questHold(ctx *Ctx) bool {
 	s := ctx.Snap
 	a.noteStaffAssembled(ctx)
 	a.noteRealTomb(ctx)
+	if v, ok := a.tombStep(ctx); ok && v == Running {
+		return true
+	}
 	if s.Me.InTown {
 		return false
 	}

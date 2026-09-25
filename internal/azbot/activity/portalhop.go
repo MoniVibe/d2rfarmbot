@@ -193,6 +193,11 @@ func (a *Advance) noteRealTomb(ctx *Ctx) {
 			continue
 		}
 		if _, has := findObject(ad.Objects, object.HoradricOrifice); has {
+			a.loadTombs(ctx)
+			t = a.nextTomb(t)
+			if t == 0 {
+				break
+			}
 			a.Itinerary = append(a.Itinerary, Leg{Area: t, MinLevel: 30})
 			ctx.Led.Append(verbs.Outcome{Verb: "quest", Holder: a.Name(), Result: verbs.ResDone,
 				Evidence: fmt.Sprintf("the true tomb is area %d (the Horadric Orifice is on its map) — it is the next leg", int(t))})
@@ -430,4 +435,105 @@ func (a *Advance) saveArcaneSearch(ctx *Ctx) {
 	prov := memory.Provenance{Source: "measured", Evidence: "Sanctuary searched: no Summoner, no journal"}
 	ctx.Mem.PutJSON(wingKey(seed), memory.ScopeForever, prov, wings)
 	ctx.Mem.PutJSON(guessKey(seed), memory.ScopeForever, prov, guesses)
+}
+
+// ---------------------------------------------------------------- the tomb search
+//
+// Owner (2026-09-25): "its the wrong tomb". The map's presets do not match this
+// game in the randomized areas (the journal, the Summoner, now the Orifice), so
+// the map's tomb is only the first guess: in a tomb, sweep for a LIVE Orifice;
+// none within tombBudget → the tomb is wrong for this seed (persisted), and the
+// next unrefuted tomb becomes the leg. A live Orifice settles the search and
+// hands the socket to the Socket errand.
+
+const tombBudget = 5 * time.Minute
+
+func tombWrongKey(seed uint) string { return fmt.Sprintf("tombs.wrong.%d", seed) }
+
+func (a *Advance) loadTombs(ctx *Ctx) {
+	seed := uint(ctx.GR.MapSeed())
+	if a.tombSeed == seed {
+		return
+	}
+	a.tombSeed, a.tombWrong = seed, map[area.ID]bool{}
+	var wrong []int
+	if ctx.Mem != nil && ctx.Mem.GetJSON(tombWrongKey(seed), &wrong) {
+		for _, t := range wrong {
+			a.tombWrong[area.ID(t)] = true
+		}
+	}
+}
+
+func (a *Advance) markTombWrong(ctx *Ctx, t area.ID) {
+	a.tombWrong[t] = true
+	if ctx.Mem == nil {
+		return
+	}
+	var wrong []int
+	for w := range a.tombWrong {
+		wrong = append(wrong, int(w))
+	}
+	ctx.Mem.PutJSON(tombWrongKey(uint(ctx.GR.MapSeed())), memory.ScopeForever,
+		memory.Provenance{Source: "measured", Evidence: "swept the tomb: no live Horadric Orifice"}, wrong)
+}
+
+// nextTomb: the map's pick if not refuted, else the first unrefuted tomb.
+func (a *Advance) nextTomb(pick area.ID) area.ID {
+	if pick != 0 && !a.tombWrong[pick] {
+		return pick
+	}
+	for _, t := range talRashaTombs {
+		if !a.tombWrong[t] {
+			return t
+		}
+	}
+	return 0
+}
+
+// tombStep runs while he stands in the leg's tomb: a live Orifice settles it;
+// otherwise sweep, and past tombBudget refute the tomb and retarget. ok=false:
+// not in the leg's tomb.
+func (a *Advance) tombStep(ctx *Ctx) (Verdict, bool) {
+	s := ctx.Snap
+	n := len(a.Itinerary)
+	if n == 0 || !isTomb(s.Me.Area) || a.Itinerary[n-1].Area != s.Me.Area {
+		a.tombAt = time.Time{}
+		return 0, false
+	}
+	a.loadTombs(ctx)
+	if ob, ok := findLive(ctx.GR.GetData().Objects, object.HoradricOrifice); ok {
+		noteSocket(s.Me.Area, ob)
+		if socketDone.Load() && a.Itinerary[n-1].Area != area.DurielsLair {
+			a.Itinerary = append(a.Itinerary, Leg{Area: area.DurielsLair, MinLevel: 30})
+			ctx.Led.Append(verbs.Outcome{Verb: "quest", Holder: a.Name(), Result: verbs.ResDone,
+				Evidence: "the staff is socketed — next leg: Duriel's lair"})
+			a.tombSettled = false
+			return Running, true
+		}
+		if !a.tombSettled {
+			a.tombSettled = true
+			ctx.Led.Append(verbs.Outcome{Verb: "quest", Holder: a.Name(), Result: verbs.ResDone,
+				Evidence: fmt.Sprintf("the Horadric Orifice is live in area %d at (%d,%d) — the socket errand takes it", int(s.Me.Area), ob.Position.X, ob.Position.Y)})
+		}
+		return Done, true
+	}
+	if a.tombAt.IsZero() {
+		a.tombAt = time.Now()
+	}
+	if time.Since(a.tombAt) > tombBudget {
+		a.markTombWrong(ctx, s.Me.Area)
+		next := a.nextTomb(0)
+		ctx.Led.Append(verbs.Outcome{Verb: "quest", Holder: a.Name(), Result: verbs.ResRefused,
+			Evidence: fmt.Sprintf("no live Orifice in area %d after %s — wrong tomb; next %d", int(s.Me.Area), tombBudget, int(next))})
+		a.tombAt = time.Time{}
+		if next == 0 {
+			return Abandoned, true
+		}
+		a.Itinerary[n-1].Area = next
+		return Running, true
+	}
+	if st, ok := a.cov.step(ctx, coverage.Bias{}, a.Name()); ok && st == coverage.Exploring {
+		return Running, true
+	}
+	return Running, true
 }

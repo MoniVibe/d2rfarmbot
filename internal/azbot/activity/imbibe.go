@@ -139,29 +139,11 @@ func (im *Imbibe) Step(ctx *Ctx) Verdict {
 	}
 	// Hover-confirmed click — the corpse/waypoint recipe: aim the projection,
 	// believe only a hover that names THIS object, then one click.
-	ctx.M.MoveStop()
-	dd := ctx.GR.GetData()
-	me := dd.PlayerUnit.Position
-	bx := int(float32((ob.Position.X-me.X)-(ob.Position.Y-me.Y))*19.8) + ctx.GR.GameAreaSizeX/2
-	by := int(float32((ob.Position.X-me.X)+(ob.Position.Y-me.Y))*9.9) + ctx.GR.GameAreaSizeY/2
-	for dy := -40; dy <= 12; dy += 8 {
-		for _, dx := range []int{0, -10, 10, -20, 20} {
-			cx, cy := bx+dx, by+dy
-			if !verbs.ClickableLogical(ctx.GR, cx, cy) {
-				continue
-			}
-			ctx.M.AimPhysical(cx, cy)
-			time.Sleep(45 * time.Millisecond)
-			hd := ctx.GR.GetData().HoverData
-			if !hd.IsHovered || hd.UnitID != ob.ID {
-				continue
-			}
-			ctx.M.BareClick(cx, cy)
-			im.clickAt, im.clickFor = time.Now(), ob.ID
-			ctx.Led.Append(verbs.Outcome{Verb: "imbibe", Holder: im.Name(), Result: verbs.ResDone,
-				Evidence: fmt.Sprintf("rite clicked: obj=%d type=%d at (%d,%d)", int(ob.Name), int(ob.Shrine.ShrineType), ob.Position.X, ob.Position.Y)})
-			return Running
-		}
+	if clickObject(ctx, ob) {
+		im.clickAt, im.clickFor = time.Now(), ob.ID
+		ctx.Led.Append(verbs.Outcome{Verb: "imbibe", Holder: im.Name(), Result: verbs.ResDone,
+			Evidence: fmt.Sprintf("rite clicked: obj=%d type=%d at (%d,%d)", int(ob.Name), int(ob.Shrine.ShrineType), ob.Position.X, ob.Position.Y)})
+		return Running
 	}
 	im.tries++
 	if im.tries >= 3 {
@@ -169,4 +151,30 @@ func (im *Imbibe) Step(ctx *Ctx) Verdict {
 		im.ban[ob.ID] = time.Now().Add(5 * time.Minute) // hover never confirmed: buried rite
 	}
 	return Running
+}
+
+// clickObject: the hover-confirmed click on a live object — aim the projection,
+// believe only a hover that names THIS unit, then one click (shared by Imbibe's
+// rites and the Socket errand).
+func clickObject(ctx *Ctx, ob data.Object) bool {
+	ctx.M.MoveStop()
+	d := ctx.GR.GetData()
+	me := d.PlayerUnit.Position
+	bx := int(float32((ob.Position.X-me.X)-(ob.Position.Y-me.Y))*19.8) + ctx.GR.GameAreaSizeX/2
+	by := int(float32((ob.Position.X-me.X)+(ob.Position.Y-me.Y))*9.9) + ctx.GR.GameAreaSizeY/2
+	for dy := -60; dy <= 12; dy += 8 {
+		for _, dx := range []int{0, -10, 10, -20, 20} {
+			cx, cy := bx+dx, by+dy
+			if !verbs.ClickableLogical(ctx.GR, cx, cy) {
+				continue
+			}
+			ctx.M.AimPhysical(cx, cy)
+			time.Sleep(45 * time.Millisecond)
+			if hd := ctx.GR.GetData().HoverData; hd.IsHovered && hd.UnitID == ob.ID {
+				ctx.M.BareClick(cx, cy)
+				return true
+			}
+		}
+	}
+	return false
 }
