@@ -103,6 +103,7 @@ func questState(d data.Data, ar area.ID) (q questLeg, chest data.Object, seen, p
 func (a *Advance) questHold(ctx *Ctx) bool {
 	s := ctx.Snap
 	a.noteStaffAssembled(ctx)
+	a.noteRealTomb(ctx)
 	if s.Me.InTown {
 		return false
 	}

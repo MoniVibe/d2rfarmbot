@@ -150,7 +150,7 @@ func Act2Itinerary() []Leg {
 		{area.ClawViperTempleLevel1, 28}, {area.ClawViperTempleLevel2, 29},
 		{area.HaremLevel1, 29}, {area.HaremLevel2, 29},
 		{area.PalaceCellarLevel1, 29}, {area.PalaceCellarLevel2, 30}, {area.PalaceCellarLevel3, 30},
-		{area.ArcaneSanctuary, 30}, {area.CanyonOfTheMagi, 31},
+		{area.ArcaneSanctuary, 30}, {area.CanyonOfTheMagi, 30},
 	}
 }
 
@@ -239,6 +239,8 @@ type Advance struct {
 	wpTouched   map[area.ID]time.Time
 	wpNoted     area.ID // the area whose waypoint objective was last announced
 	staffNoted  bool    // the Horadric Staff was seen held (the artifact legs are over)
+	hopClickAt  time.Time // the last portal-hop click (a 2s beat)
+	hopNoted    string    // the portal-hop objective last announced
 	// P-5.3a THE CROSSING DRIVE: between the door facts the area read is
 	// NOISE — while driving, geometry is the only truth.
 	driving   bool
@@ -996,6 +998,13 @@ func (a *Advance) Step(ctx *Ctx) Verdict {
 		}
 	}
 
+	// PORTAL HOPS (owner, 2026-09-25: "harem, arcane sanctuary, tomb thing,
+	// duriel"): two Act 2 roads are objects, not level warps — the Sanctuary's
+	// portal in Palace Cellar 3, and the red portal Horazon's Journal opens
+	// once the Summoner is dead (Imbibe reads the journal; Fight kills him).
+	if v, ok := a.portalHop(ctx, next.Area); ok {
+		return v
+	}
 	d := ctx.GR.GetData()
 	hop := nextHop(d, s.Me.Area, next.Area)
 	if hop == 0 {
