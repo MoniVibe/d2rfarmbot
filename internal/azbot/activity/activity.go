@@ -1021,6 +1021,7 @@ func (b *Breakout) Step(ctx *Ctx) Verdict {
 	if !s.Valid {
 		return Running
 	}
+	noteHotLanding(s.Me.Area)
 	if s.Me.InTown {
 		b.engaged = false
 		b.castTries = 0 // the poverty spiral ends where the shopping starts

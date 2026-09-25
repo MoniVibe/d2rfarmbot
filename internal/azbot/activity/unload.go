@@ -216,3 +216,30 @@ func (u *Unload) rideHome(ctx *Ctx) Verdict {
 	verbs.UseWaypoint{Want: []area.ID{town}}.Do(ctx.M, ctx.GR, ctx.P, ctx.Led, u.Name())
 	return Running
 }
+
+// ---------------------------------------------------------------- hot landings
+//
+// R85/R88: every waypoint ride to the Flayer Jungle landed in the same pack, a
+// breakout sent him home, and the next ride landed him there again. An area he
+// had to break out of is not a waypoint destination for hotFor: he walks in
+// from elsewhere instead.
+
+const hotFor = 15 * time.Minute
+
+var hot = struct {
+	sync.Mutex
+	at map[area.ID]time.Time
+}{at: map[area.ID]time.Time{}}
+
+func noteHotLanding(ar area.ID) {
+	hot.Lock()
+	hot.at[ar] = time.Now()
+	hot.Unlock()
+}
+
+func hotLanding(ar area.ID) bool {
+	hot.Lock()
+	defer hot.Unlock()
+	t, ok := hot.at[ar]
+	return ok && time.Since(t) < hotFor
+}

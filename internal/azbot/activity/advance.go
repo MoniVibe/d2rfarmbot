@@ -837,7 +837,7 @@ func (a *Advance) Step(ctx *Ctx) Verdict {
 					if ctx.Mem != nil {
 						ctx.Mem.GetJSON(LitKey(charName, a.Itinerary[i].Area), &lit)
 					}
-					if lit {
+					if lit && !hotLanding(a.Itinerary[i].Area) {
 						wants = append(wants, a.Itinerary[i].Area)
 					} else {
 						probe = append(probe, a.Itinerary[i].Area)
@@ -862,6 +862,9 @@ func (a *Advance) Step(ctx *Ctx) Verdict {
 					// its first hop from here matches the target's.
 					if th, ph := nextHop(dd, s.Me.Area, next.Area), nextHop(dd, s.Me.Area, a.Itinerary[i].Area); th != 0 && ph != 0 && th != ph {
 						break
+					}
+					if hotLanding(a.Itinerary[i].Area) {
+						break // that pad just threw him out: walk
 					}
 					wants = append(wants, a.Itinerary[i].Area)
 					break
