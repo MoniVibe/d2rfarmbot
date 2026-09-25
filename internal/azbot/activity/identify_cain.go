@@ -48,7 +48,7 @@ var (
 )
 
 func NewCainIdentify() *CainIdentify {
-	c := &CainIdentify{e: errand{npcID: npc.DeckardCain5, act2NPC: npc.DeckardCain2}}
+	c := &CainIdentify{e: errand{npcID: npc.DeckardCain5, act2NPC: npc.DeckardCain2, act3NPC: npc.DeckardCain3}}
 	c.e.initLife(c.Name())
 	return c
 }

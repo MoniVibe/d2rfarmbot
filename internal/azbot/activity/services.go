@@ -51,6 +51,7 @@ type errand struct {
 	npcID         npc.ID
 	act1NPC       npc.ID          // captured from the constructor on first use
 	act2NPC       npc.ID          // service counterpart in Lut Gholein; zero means no alternate
+	act3NPC       npc.ID          // service counterpart in Kurast Docks; zero means no alternate
 	ring          []data.Position // search waypoints until the NPC loads
 	ringIdx       int
 	clickAt       time.Time
@@ -170,6 +171,9 @@ func (e *errand) useNPCForArea(ar area.ID) {
 	want := e.act1NPC
 	if e.act2NPC != 0 && ar.Act() == 2 {
 		want = e.act2NPC
+	}
+	if e.act3NPC != 0 && ar.Act() == 3 {
+		want = e.act3NPC
 	}
 	if e.npcID != want {
 		e.npcID = want
@@ -766,7 +770,7 @@ func tomeCount(ctx *Ctx, tomeID int) int {
 }
 
 func NewRestock() *Restock {
-	r := &Restock{e: errand{npcID: npc.Akara, act2NPC: npc.Drognan, trade: true,
+	r := &Restock{e: errand{npcID: npc.Akara, act2NPC: npc.Drognan, act3NPC: npc.Ormus, trade: true,
 		ring: []data.Position{{X: 6023, Y: 4933}, {X: 6070, Y: 4960}, {X: 6100, Y: 4990}, {X: 6050, Y: 5010}, {X: 6110, Y: 4930}}}}
 	r.e.initLife(r.Name())
 	return r
@@ -1119,7 +1123,7 @@ var (
 )
 
 func NewFence() *Fence {
-	fc := &Fence{tomes0: -1, e: errand{npcID: npc.Akara, act2NPC: npc.Drognan, trade: true,
+	fc := &Fence{tomes0: -1, e: errand{npcID: npc.Akara, act2NPC: npc.Drognan, act3NPC: npc.Ormus, trade: true,
 		ring: []data.Position{{X: 6023, Y: 4933}, {X: 6070, Y: 4960}, {X: 6100, Y: 4990}, {X: 6050, Y: 5010}, {X: 6110, Y: 4930}}}}
 	fc.e.initLife(fc.Name())
 	return fc
@@ -1473,7 +1477,7 @@ var (
 )
 
 func NewHeal() *Heal {
-	h := &Heal{e: errand{npcID: npc.Akara, act2NPC: npc.Fara,
+	h := &Heal{e: errand{npcID: npc.Akara, act2NPC: npc.Fara, act3NPC: npc.Ormus,
 		ring: []data.Position{{X: 6023, Y: 4933}, {X: 6070, Y: 4960}, {X: 6100, Y: 4990}, {X: 6050, Y: 5010}, {X: 6110, Y: 4930}}}}
 	h.e.initLife(h.Name())
 	return h
@@ -1588,7 +1592,7 @@ var (
 )
 
 func NewRepair() *Repair {
-	rp := &Repair{lastDur: -1, e: errand{npcID: npc.Charsi, act2NPC: npc.Fara, trade: true,
+	rp := &Repair{lastDur: -1, e: errand{npcID: npc.Charsi, act2NPC: npc.Fara, act3NPC: npc.Hratli, trade: true,
 		ring: []data.Position{{X: 6020, Y: 4952}, {X: 5992, Y: 4941}, {X: 5963, Y: 5001}, {X: 5962, Y: 4956}, {X: 5952, Y: 4944}}}}
 	rp.e.initLife(rp.Name())
 	return rp

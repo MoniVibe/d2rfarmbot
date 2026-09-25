@@ -45,7 +45,9 @@ func bagFull(s *percept.Snapshot) bool {
 // trip home for the smith (owner: "inventory should know that half its items are
 // broken").
 func gearFailing(s *percept.Snapshot) bool {
-	return s.Valid && (s.Me.BrokenGear > 0 || s.Me.MinDurPct < inventory.FieldRepairPct) && s.Me.Gold >= 10
+	// R77: with the town errands cooled (the smith unreachable), the trip home
+	// repeats forever — no repair, back out, home again.
+	return s.Valid && (s.Me.BrokenGear > 0 || s.Me.MinDurPct < inventory.FieldRepairPct) && s.Me.Gold >= 10 && !servicesCooled()
 }
 
 func (u *Unload) Demand(s *percept.Snapshot) *arbiter.Demand {
