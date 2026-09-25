@@ -11,6 +11,7 @@ import (
 	"github.com/hectorgimenez/koolo/internal/azbot/coverage"
 	"github.com/hectorgimenez/koolo/internal/azbot/moveto"
 	"github.com/hectorgimenez/koolo/internal/azbot/verbs"
+	"github.com/hectorgimenez/koolo/internal/game"
 )
 
 // portalHop is Advance's road for the legs whose way in is an OBJECT: the
@@ -275,7 +276,7 @@ func (a *Advance) walkWings(ctx *Ctx) (Verdict, bool) {
 	dirs := [4][2]int{{0, -1}, {1, 0}, {0, 1}, {-1, 0}}
 	for a.wingIdx < len(dirs) {
 		d := dirs[a.wingIdx]
-		end := data.Position{X: a.wingCenter.X + d[0]*wingReach, Y: a.wingCenter.Y + d[1]*wingReach}
+		end := wingEnd(ctx.Grid, a.wingCenter, d)
 		if a.wingAt.IsZero() {
 			a.wingAt = time.Now()
 			ctx.Led.Append(verbs.Outcome{Verb: "quest", Holder: a.Name(), Result: verbs.ResDone,
@@ -290,4 +291,25 @@ func (a *Advance) walkWings(ctx *Ctx) (Verdict, bool) {
 		return Running, true
 	}
 	return 0, false
+}
+
+// wingEnd: the farthest walkable cell from the pad along a wing's axis (within a
+// narrow band either side of it) — R61: a fixed point 160 tiles out sat off the
+// map (NoPath in 1s), and the west wing's end proved ~430 tiles from the pad.
+// No grid: the old fixed reach.
+func wingEnd(g *game.Grid, c data.Position, d [2]int) data.Position {
+	best := data.Position{X: c.X + d[0]*wingReach, Y: c.Y + d[1]*wingReach}
+	if g == nil {
+		return best
+	}
+	bestT := 0
+	for t := 10; t < 700; t++ {
+		for off := -12; off <= 12; off++ {
+			p := data.Position{X: c.X + d[0]*t + d[1]*off, Y: c.Y + d[1]*t + d[0]*off}
+			if g.IsWalkable(p) && t > bestT {
+				best, bestT = p, t
+			}
+		}
+	}
+	return best
 }
