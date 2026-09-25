@@ -242,10 +242,11 @@ type Advance struct {
 	wpHoldUntil    time.Time // failed town ride quarantines the gate march until a retry is due
 	wpFailN        int
 	wpTouched      map[area.ID]time.Time
-	wpNoted        area.ID // the area whose waypoint objective was last announced
-	staffNoted     bool    // the Horadric Staff was seen held (the artifact legs are over)
-	townNoted      bool    // the leaving-town diagnostic was logged this visit
-	tombTried      bool    // the true-tomb pick ran (R66: it never did in the Canyon)
+	wpNoted        area.ID          // the area whose waypoint objective was last announced
+	staffNoted     bool             // the Horadric Staff was seen held (the artifact legs are over)
+	townNoted      bool             // the leaving-town diagnostic was logged this visit
+	tombTried      bool             // the true-tomb pick ran (R66: it never did in the Canyon)
+	wpDead         map[area.ID]bool // areas whose map pad preset proved empty (persisted per seed)
 	tombSeed       uint
 	tombWrong      map[area.ID]bool       // tombs swept without a live Orifice (persisted per seed)
 	tombAt         time.Time              // when the current tomb sweep began
@@ -989,6 +990,9 @@ func (a *Advance) Step(ctx *Ctx) Verdict {
 			if litHere {
 				break // in the ledger — no ritual needed, ever again
 			}
+			if ob.IsWaypoint() && ob.ID == 0 && a.padPresetDead(ctx, s.Me.Area) {
+				continue // this map preset proved empty (R83: three walks to a padless spot)
+			}
 			if ob.IsWaypoint() && chebyshev(s.Me.Pos, ob.Position) <= reach {
 				// Radius 40→70, budget 30s→60s (the owner, 13:14: "it also
 				// didn't take the stony waypoint, had enough time to do that"
@@ -1016,6 +1020,9 @@ func (a *Advance) Step(ctx *Ctx) Verdict {
 						return Running
 					}
 					break
+				}
+				if _, seen := padLitLive(dd.Objects); ob.ID == 0 && !seen {
+					a.markPadPresetDead(ctx, s.Me.Area) // stood at the preset: no live pad
 				}
 				a.wpTouched[s.Me.Area] = time.Now()
 				a.wpWalkAt = time.Time{}
@@ -2386,4 +2393,36 @@ func Act3Itinerary() []Leg {
 		{area.SewersLevel1Act3, 31}, {area.SewersLevel2Act3, 31},
 		{area.UpperKurast, 31}, {area.KurastCauseway, 32}, {area.Travincal, 32},
 	}
+}
+
+// padDeadKey: the map's waypoint preset for an area proved empty on a seed.
+func padDeadKey(seed uint, ar area.ID) string { return fmt.Sprintf("wpdead.%d.%d", seed, int(ar)) }
+
+// padPresetDead: he stood at this area's pad preset and no live pad was there
+// (R83: the Spider Forest preset, walked to three times). Persisted per seed.
+func (a *Advance) padPresetDead(ctx *Ctx, ar area.ID) bool {
+	if a.wpDead[ar] {
+		return true
+	}
+	dead := false
+	if ctx.Mem != nil && ctx.Mem.GetJSON(padDeadKey(uint(ctx.GR.MapSeed()), ar), &dead) && dead {
+		if a.wpDead == nil {
+			a.wpDead = map[area.ID]bool{}
+		}
+		a.wpDead[ar] = true
+	}
+	return dead
+}
+
+func (a *Advance) markPadPresetDead(ctx *Ctx, ar area.ID) {
+	if a.wpDead == nil {
+		a.wpDead = map[area.ID]bool{}
+	}
+	a.wpDead[ar] = true
+	if ctx.Mem != nil {
+		ctx.Mem.PutJSON(padDeadKey(uint(ctx.GR.MapSeed()), ar), memory.ScopeForever,
+			memory.Provenance{Source: "measured", Evidence: "stood at the map's pad: no live waypoint"}, true)
+	}
+	ctx.Led.Append(verbs.Outcome{Verb: "waypoint", Holder: a.Name(), Result: verbs.ResRefused,
+		Evidence: fmt.Sprintf("area %d: the map's pad spot is empty on this seed — only a live pad counts now", int(ar))})
 }
