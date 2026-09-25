@@ -377,7 +377,7 @@ func (g *gatekeeper) invObserve(now time.Time, s *percept.Snapshot, who string) 
 		obs.VendorOpen = r.Sight&screen.Shop != 0
 	}
 	switch who {
-	case "stash", "fence", "belt", "equip", "identify", "restock", "repair", "discard", "spend":
+	case "stash", "fence", "belt", "equip", "identify", "restock", "repair", "discard", "spend", "socket", "shed":
 		obs.Planned = true // an inventory errand holds: its panel is its work
 	}
 	ph, st, rx, why := activity.InvTracker.Observe(obs)

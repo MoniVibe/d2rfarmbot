@@ -88,7 +88,9 @@ func (p skPhase) String() string {
 
 func skClaims(p skPhase) screen.Panel {
 	if p >= skOpen && p < skClose {
-		return claimsBag
+		// The socket's own panel (the anvil) reads as an unknown left panel: it is
+		// ours, not foreign (owner: "the loop stuck guard thing messes with you").
+		return claimsBag | screen.LeftPanel | screen.SubPanel
 	}
 	return 0
 }
@@ -229,6 +231,7 @@ func (k *Socket) Step(ctx *Ctx) Status {
 				k.tries++
 				ctx.Led.Append(verbs.Outcome{Verb: "quest", Holder: k.Name(), Result: verbs.ResDone,
 					Evidence: fmt.Sprintf("socket: clicked obj %d (try %d)", int(ob.Name), k.tries)})
+				snapPNG(ctx, "logs/socket_open.png")
 			}
 			k.clickT = time.Now()
 		}
