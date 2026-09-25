@@ -163,6 +163,9 @@ func (cm ClickMove) Do(m *motor.Motor, gr *game.MemoryReader, p *percept.Percept
 	// with no verb logged — old corpse/escape portals stand near doors, and a
 	// march click that lands on their sprite is a ride home the log can't
 	// even see). A hovered PORTAL is never a bonus: dodge it under any key.
+	// Nor is a hovered ITEM (unit type 4 — owner, 2026-09-25: "it picks up junkier
+	// stuff now": R60 marched plain swords, a spear and bottles into the bag —
+	// every walk click that landed on a drop was a pickup Loot never chose).
 	isPortalHover := func(id data.UnitID) bool {
 		for i := range d.Objects {
 			if d.Objects[i].ID == id {
@@ -171,7 +174,7 @@ func (cm ClickMove) Do(m *motor.Motor, gr *game.MemoryReader, p *percept.Percept
 		}
 		return false
 	}
-	if hd := gr.GetData().HoverData; hd.IsHovered && (cm.CombatKey == 0 || isPortalHover(hd.UnitID)) {
+	if hd := gr.GetData().HoverData; hd.IsHovered && (cm.CombatKey == 0 || isPortalHover(hd.UnitID) || hd.UnitType == 4) {
 		// A unit under the click point turns the move into an attack/talk/ride —
 		// nudge the aim and re-check once; if still owned, refuse honestly.
 		// The nudge goes DOWN (toward the feet) — unless down is the HUD.
@@ -182,7 +185,7 @@ func (cm ClickMove) Do(m *motor.Motor, gr *game.MemoryReader, p *percept.Percept
 		}
 		m.AimPhysical(bx, by)
 		time.Sleep(45 * time.Millisecond)
-		if hd2 := gr.GetData().HoverData; hd2.IsHovered && (cm.CombatKey == 0 || isPortalHover(hd2.UnitID)) {
+		if hd2 := gr.GetData().HoverData; hd2.IsHovered && (cm.CombatKey == 0 || isPortalHover(hd2.UnitID) || hd2.UnitType == 4) {
 			o.Result = ResRefused
 			o.Evidence = "every aim point hovered a unit/portal — a click would strike or ride, not walk"
 			led.Append(o)
