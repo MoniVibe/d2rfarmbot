@@ -6,6 +6,7 @@ import (
 
 	"github.com/hectorgimenez/d2go/pkg/data"
 	"github.com/hectorgimenez/d2go/pkg/data/item"
+	"github.com/hectorgimenez/koolo/internal/azbot/loot"
 	"github.com/hectorgimenez/koolo/internal/azbot/verbs"
 	"github.com/hectorgimenez/koolo/internal/game"
 )
@@ -107,6 +108,16 @@ type buyTx struct {
 	cx, cy       int
 	gold0, have0 int
 	at           time.Time
+	// count overrides "owned" for the judgment (a scroll lands in its tome,
+	// not the bag: the tome's quantity is the count). nil = ownedCount.
+	count func(ctx *Ctx) int
+}
+
+func (t *buyTx) owned(ctx *Ctx) int {
+	if t.count != nil {
+		return t.count(ctx)
+	}
+	return ownedCount(ctx, int(t.target.ID))
 }
 
 // active: a purchase is in flight (resume it before deciding anything new).
@@ -146,7 +157,7 @@ func (t *buyTx) step(ctx *Ctx, holder, what string, want func(data.Item) bool) (
 	case 1:
 		snapPNG(ctx, "logs/buy_tab.png")
 		t.gold0 = ctx.GR.GetData().PlayerUnit.TotalPlayerGold()
-		t.have0 = ownedCount(ctx, int(t.target.ID))
+		t.have0 = t.owned(ctx)
 		if !ctx.M.RealMenuRightClick(t.cx, t.cy) {
 			t.stage = 0
 			return buyNoConfirm, true, 0
@@ -155,7 +166,7 @@ func (t *buyTx) step(ctx *Ctx, holder, what string, want func(data.Item) bool) (
 		return 0, false, 100 * time.Millisecond
 	}
 	gold1 := ctx.GR.GetData().PlayerUnit.TotalPlayerGold()
-	have1 := ownedCount(ctx, int(t.target.ID))
+	have1 := t.owned(ctx)
 	if have1 <= t.have0 && time.Since(t.at) < time.Second {
 		return 0, false, 100 * time.Millisecond
 	}
@@ -183,4 +194,52 @@ func judgeBuy(have0, have1, gold0, gold1 int) buyVerdict {
 		return buyWrong
 	}
 	return buyDeaf
+}
+
+// buyScrollStock — the tome refill, READ from the stock like the potions (owner,
+// 2026-09-25: "its out of tp" — the old probe clicked six Akara-shop cells in
+// Lut Gholein, none raised the tome, and the scroll belief retired with the
+// tome empty). The scroll row comes from the mod's code (tsc/isc), the tab and
+// cell from its Location, and the verdict from the TOME's quantity.
+func (r *Restock) buyScrollStock(ctx *Ctx, tomeID int) (done bool, wait time.Duration) {
+	if !r.sbuy.active() {
+		code := "isc"
+		if tomeID == 533 {
+			code = "tsc"
+		}
+		r.sbuyTome = tomeID
+		r.sbuy.count = func(c *Ctx) int { return tomeCount(c, tomeID) }
+		want := func(it data.Item) bool { return loot.Classify(int(it.ID)).Code == code }
+		v, done, w := r.sbuy.step(ctx, r.Name(), code+" scroll", want)
+		if !done {
+			return false, w
+		}
+		r.judgeScroll(ctx, v)
+		return true, 0
+	}
+	v, done, w := r.sbuy.step(ctx, r.Name(), "", nil)
+	if !done {
+		return false, w
+	}
+	r.judgeScroll(ctx, v)
+	return true, 0
+}
+
+// judgeScroll: two dead buys in a row (or a payment without the scroll) retire
+// the scroll belief for this world, as before.
+func (r *Restock) judgeScroll(ctx *Ctx, v buyVerdict) {
+	_, frozen := r.scrollCursors(r.sbuyTome)
+	switch v {
+	case buyOK:
+		*frozen = 0
+		r.scrBought++
+	case buyWrong:
+		scrollWorks.Store(false)
+	default:
+		if *frozen++; *frozen >= 2 {
+			scrollWorks.Store(false)
+			ctx.Led.Append(verbs.Outcome{Verb: "buy", Holder: r.Name(), Result: verbs.ResDeaf,
+				Evidence: fmt.Sprintf("tome %d: two dead scroll buys from the stock — scroll belief retired", r.sbuyTome)})
+		}
+	}
 }

@@ -700,6 +700,8 @@ type Restock struct {
 	buy      buyTx    // the verified potion purchase in flight
 	kind     string   // its kind: "health" | "mana"
 	scr      scrollTx // the scroll purchase in flight
+	sbuy     buyTx    // the verified scroll purchase in flight (stock-read)
+	sbuyTome int
 }
 
 var (
@@ -840,7 +842,7 @@ func (r *Restock) Begin(ctx *Ctx, resumed bool) {
 	r.e.begin(resumed)
 	// A purchase in flight is never resumed blind: the next decision reads
 	// the live counts again.
-	r.buy, r.scr = buyTx{}, scrollTx{}
+	r.buy, r.scr, r.sbuy = buyTx{}, scrollTx{}, buyTx{}
 	if resumed {
 		r.e.resume(ctx)
 		return
@@ -857,7 +859,7 @@ func (r *Restock) End(ctx *Ctx, v phase.Verdict, why phase.Reason) {
 	r.e.end(ctx, v, why)
 	r.e.resetTrip()
 	r.resetCounters()
-	r.buy, r.scr = buyTx{}, scrollTx{}
+	r.buy, r.scr, r.sbuy = buyTx{}, scrollTx{}, buyTx{}
 	coolOnEnd(v, why, &r.nextAt)
 }
 
@@ -875,8 +877,8 @@ func (r *Restock) Step(ctx *Ctx) Status {
 		}
 		return r.afterPotion(ctx, v)
 	}
-	if r.scr.active() {
-		if done, w := r.buyScroll(ctx, 0, ""); !done {
+	if r.sbuy.active() {
+		if done, w := r.buyScrollStock(ctx, 0); !done {
 			return e.wait(w)
 		}
 		return r.afterScroll(ctx)
@@ -942,7 +944,8 @@ func (r *Restock) Step(ctx *Ctx) Status {
 	if scrollGap(s.Me.TPScrolls, s.Me.Gold) > 0 {
 		tome, key = 533, "shop.akara.cell.tpscroll"
 	}
-	if done, w := r.buyScroll(ctx, tome, key); !done {
+	if done, w := r.buyScrollStock(ctx, tome); !done {
+		_ = key
 		return e.wait(w)
 	}
 	return r.afterScroll(ctx)
