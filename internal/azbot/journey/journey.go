@@ -121,6 +121,7 @@ type Journey struct {
 	f       *nav.Follower
 	obs     []nav.Obstacle
 	replan  bool // obstacles changed: route again on the next Step
+	path    []data.Position // the route last planned (learned walls read the step ahead)
 	snapped bool // the goal was walled; the route ends at the nearest walkable cell
 	led     *verbs.Ledger
 
@@ -238,6 +239,9 @@ func New(gr *game.MemoryReader, grid *game.Grid, goal data.Position, holder stri
 			return
 		}
 		res := verbs.ResDone
+		if to == nav.Stuck {
+			j.learnStuck(time.Now())
+		}
 		if to == nav.Stuck || to == nav.Failed {
 			res = verbs.ResBlocked
 		}
@@ -272,7 +276,7 @@ func (j *Journey) State() nav.State { return j.f.State() }
 
 func (j *Journey) plan(me data.Position, now time.Time) (bool, string) {
 	g := j.grid
-	opt := nav.Options{Obstacles: j.obs, MaxExpand: j.Budget}
+	opt := nav.Options{Obstacles: append(append([]nav.Obstacle{}, j.obs...), j.learnedWalls(now)...), MaxExpand: j.Budget}
 	pl := g.Plan(me, j.Goal, opt)
 	if !pl.Found && j.src != nil && j.Budget == 0 && hasPriorWalls(j.src) {
 		// Every route crosses a trusted prior's wall: plan again with those walls
@@ -289,6 +293,7 @@ func (j *Journey) plan(me data.Position, now time.Time) (bool, string) {
 	}
 	j.snapped = pl.Snapped
 	path := g.Simplify(pl.Path, j.obs)
+	j.path = path
 	j.f.SetPath(path, me, now)
 	if OnPlan != nil {
 		OnPlan(path)
