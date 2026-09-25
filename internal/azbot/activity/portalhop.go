@@ -10,6 +10,7 @@ import (
 	"github.com/hectorgimenez/d2go/pkg/data/npc"
 	"github.com/hectorgimenez/d2go/pkg/data/object"
 	"github.com/hectorgimenez/koolo/internal/azbot/coverage"
+	"github.com/hectorgimenez/koolo/internal/azbot/memory"
 	"github.com/hectorgimenez/koolo/internal/azbot/moveto"
 	"github.com/hectorgimenez/koolo/internal/azbot/percept"
 	"github.com/hectorgimenez/koolo/internal/azbot/verbs"
@@ -44,6 +45,7 @@ func (a *Advance) portalHop(ctx *Ctx, to area.ID) (Verdict, bool) {
 // "arrived" 5 tiles short for 20 minutes with no journal object anywhere.
 func (a *Advance) seekJournal(ctx *Ctx) Verdict {
 	s := ctx.Snap
+	a.loadArcaneSearch(ctx)
 	dd := ctx.GR.GetData()
 	if ob, ok := findLive(dd.Objects, object.YetAnotherTome); ok {
 		a.notePortalHop(ctx, "Horazon's Journal (live)", true, ob.Position)
@@ -72,6 +74,7 @@ func (a *Advance) seekJournal(ctx *Ctx) Verdict {
 		}
 		if chebyshev(s.Me.Pos, g) <= 7 || (a.journalWalkFor == g && time.Since(a.journalWalkAt) > 90*time.Second) {
 			a.journalTried[g] = true // stood there (or could not): no journal — next guess
+			a.saveArcaneSearch(ctx)
 			ctx.Led.Append(verbs.Outcome{Verb: "quest", Holder: a.Name(), Result: verbs.ResRefused,
 				Evidence: fmt.Sprintf("no live journal at the map's guess (%d,%d) — next", g.X, g.Y)})
 			continue
@@ -246,6 +249,10 @@ func findLive(obs []data.Object, name object.Name) (data.Object, bool) {
 // snaps to the nearest walkable cell; R52's west wing end sat ~75 tiles out).
 const wingReach = 160
 
+// wingBudget: one wing's walk (R62: 90s cut the ~430-tile wings short, and
+// two unreached wings were counted searched).
+const wingBudget = 4 * time.Minute
+
 // walkWings: the next unwalked wing end from the Sanctuary's central pad.
 // A wing is done when he arrives, or 90s pass, or the route fails; the
 // Summoner seen live ends the search (Fight takes him; the journal follows).
@@ -277,6 +284,10 @@ func (a *Advance) walkWings(ctx *Ctx) (Verdict, bool) {
 	}
 	dirs := [4][2]int{{0, -1}, {1, 0}, {0, 1}, {-1, 0}}
 	for a.wingIdx < len(dirs) {
+		if a.wingDone[a.wingIdx] {
+			a.wingIdx++
+			continue
+		}
 		d := dirs[a.wingIdx]
 		end := wingEnd(ctx.Grid, a.wingCenter, d)
 		if a.wingAt.IsZero() {
@@ -285,7 +296,12 @@ func (a *Advance) walkWings(ctx *Ctx) (Verdict, bool) {
 				Evidence: fmt.Sprintf("searching Sanctuary wing %d/4 toward (%d,%d)", a.wingIdx+1, end.X, end.Y)})
 		}
 		st := moveTo(ctx, end, marchOpts(ctx, a.Name(), 1200*time.Millisecond))
-		if time.Since(a.wingAt) > 90*time.Second || stalled(st) || st.State == moveto.Arrived {
+		if time.Since(a.wingAt) > wingBudget || stalled(st) || st.State == moveto.Arrived {
+			if a.wingDone == nil {
+				a.wingDone = map[int]bool{}
+			}
+			a.wingDone[a.wingIdx] = true
+			a.saveArcaneSearch(ctx)
 			a.wingIdx++
 			a.wingAt = time.Time{}
 			continue
@@ -360,4 +376,53 @@ func resetSanctuaryClock() {
 	sanctuary.Lock()
 	sanctuary.spent, sanctuary.lastAt, sanctuary.asked = 0, time.Time{}, false
 	sanctuary.Unlock()
+}
+
+// The Sanctuary search remembers itself per map seed (owner, 2026-09-25: "it
+// tries the same wings though, it should go the other ones" — the layout is
+// the seed's and survives restarts and relogs; the search did not).
+func wingKey(seed uint) string  { return fmt.Sprintf("arcane.wings.%d", seed) }
+func guessKey(seed uint) string { return fmt.Sprintf("arcane.guesses.%d", seed) }
+
+// loadArcaneSearch restores the searched wings and dead guesses once per seed.
+func (a *Advance) loadArcaneSearch(ctx *Ctx) {
+	seed := uint(ctx.GR.MapSeed())
+	if a.arcaneSeed == seed || ctx.Mem == nil {
+		return
+	}
+	a.arcaneSeed = seed
+	var wings []int
+	if ctx.Mem.GetJSON(wingKey(seed), &wings) {
+		a.wingDone = map[int]bool{}
+		for _, w := range wings {
+			a.wingDone[w] = true
+		}
+	}
+	var guesses []data.Position
+	if ctx.Mem.GetJSON(guessKey(seed), &guesses) {
+		if a.journalTried == nil {
+			a.journalTried = map[data.Position]bool{}
+		}
+		for _, g := range guesses {
+			a.journalTried[g] = true
+		}
+	}
+}
+
+func (a *Advance) saveArcaneSearch(ctx *Ctx) {
+	if ctx.Mem == nil {
+		return
+	}
+	seed := uint(ctx.GR.MapSeed())
+	var wings []int
+	for w := range a.wingDone {
+		wings = append(wings, w)
+	}
+	var guesses []data.Position
+	for g := range a.journalTried {
+		guesses = append(guesses, g)
+	}
+	prov := memory.Provenance{Source: "measured", Evidence: "Sanctuary searched: no Summoner, no journal"}
+	ctx.Mem.PutJSON(wingKey(seed), memory.ScopeForever, prov, wings)
+	ctx.Mem.PutJSON(guessKey(seed), memory.ScopeForever, prov, guesses)
 }

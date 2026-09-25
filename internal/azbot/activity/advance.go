@@ -249,6 +249,8 @@ type Advance struct {
 	wingCenter     data.Position // the Sanctuary pad the wing search radiates from
 	wingIdx        int
 	wingAt         time.Time
+	wingDone       map[int]bool // wings searched on this seed (persisted)
+	arcaneSeed     uint
 	// P-5.3a THE CROSSING DRIVE: between the door facts the area read is
 	// NOISE — while driving, geometry is the only truth.
 	driving   bool
