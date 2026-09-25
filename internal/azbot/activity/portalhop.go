@@ -6,6 +6,7 @@ import (
 
 	"github.com/hectorgimenez/d2go/pkg/data"
 	"github.com/hectorgimenez/d2go/pkg/data/area"
+	"github.com/hectorgimenez/d2go/pkg/data/npc"
 	"github.com/hectorgimenez/d2go/pkg/data/object"
 	"github.com/hectorgimenez/koolo/internal/azbot/coverage"
 	"github.com/hectorgimenez/koolo/internal/azbot/verbs"
@@ -27,9 +28,62 @@ func (a *Advance) portalHop(ctx *Ctx, to area.ID) (Verdict, bool) {
 		}
 		// Otherwise walk to the journal: the Summoner guards it (Fight preempts
 		// the march), and Imbibe reads it (a quest object, 60-tile reach).
-		return a.approachObject(ctx, object.YetAnotherTome, "Horazon's Journal (the Summoner)"), true
+		return a.seekJournal(ctx), true
 	}
 	return 0, false
+}
+
+// seekJournal: the live journal first; else the map's guesses in turn (the
+// journal preset, then the Summoner's), each dropped once he stands at it with
+// no live journal in sight; then a coverage sweep until the rooms stream it.
+// R52: the journal preset sat in the void beside the west platform — he stood
+// "arrived" 5 tiles short for 20 minutes with no journal object anywhere.
+func (a *Advance) seekJournal(ctx *Ctx) Verdict {
+	s := ctx.Snap
+	dd := ctx.GR.GetData()
+	if ob, ok := findObject(dd.Objects, object.YetAnotherTome); ok {
+		a.notePortalHop(ctx, "Horazon's Journal (live)", true, ob.Position)
+		if chebyshev(s.Me.Pos, ob.Position) > 4 {
+			moveTo(ctx, ob.Position, marchOpts(ctx, a.Name(), 1200*time.Millisecond))
+		}
+		return Running
+	}
+	var guesses []data.Position
+	if ad, ok := dd.Areas[s.Me.Area]; ok {
+		if ob, ok := findObject(ad.Objects, object.YetAnotherTome); ok {
+			guesses = append(guesses, ob.Position)
+		}
+		for _, n := range ad.NPCs {
+			if n.ID == npc.Summoner {
+				guesses = append(guesses, n.Positions...)
+			}
+		}
+	}
+	if a.journalTried == nil {
+		a.journalTried = map[data.Position]bool{}
+	}
+	for _, g := range guesses {
+		if a.journalTried[g] {
+			continue
+		}
+		if chebyshev(s.Me.Pos, g) <= 7 || (a.journalWalkFor == g && time.Since(a.journalWalkAt) > 90*time.Second) {
+			a.journalTried[g] = true // stood there (or could not): no journal — next guess
+			ctx.Led.Append(verbs.Outcome{Verb: "quest", Holder: a.Name(), Result: verbs.ResRefused,
+				Evidence: fmt.Sprintf("no live journal at the map's guess (%d,%d) — next", g.X, g.Y)})
+			continue
+		}
+		if a.journalWalkFor != g {
+			a.journalWalkFor, a.journalWalkAt = g, time.Now()
+			a.notePortalHop(ctx, fmt.Sprintf("the journal guess (%d,%d)", g.X, g.Y), true, g)
+		}
+		moveTo(ctx, g, marchOpts(ctx, a.Name(), 1200*time.Millisecond))
+		return Running
+	}
+	a.notePortalHop(ctx, "Horazon's Journal (sweeping the Sanctuary)", false, data.Position{})
+	if st, ok := a.cov.step(ctx, coverage.Bias{}, a.Name()); ok && st == coverage.Exploring {
+		return Running
+	}
+	return Abandoned
 }
 
 func findObject(obs []data.Object, name object.Name) (data.Object, bool) {

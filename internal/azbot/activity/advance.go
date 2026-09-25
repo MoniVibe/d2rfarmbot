@@ -232,15 +232,18 @@ type Advance struct {
 	// P-10 waypoint state: wpAt cools failed/spent ride attempts; wpWalkAt
 	// bounds the walk-to-the-pad detour so an unreachable pad cannot own the
 	// march forever; wpTouched cools the field TOUCH ritual per area.
-	wpAt        time.Time
-	wpWalkAt    time.Time
-	wpHoldUntil time.Time // failed town ride quarantines the gate march until a retry is due
-	wpFailN     int
-	wpTouched   map[area.ID]time.Time
-	wpNoted     area.ID // the area whose waypoint objective was last announced
-	staffNoted  bool    // the Horadric Staff was seen held (the artifact legs are over)
-	hopClickAt  time.Time // the last portal-hop click (a 2s beat)
-	hopNoted    string    // the portal-hop objective last announced
+	wpAt           time.Time
+	wpWalkAt       time.Time
+	wpHoldUntil    time.Time // failed town ride quarantines the gate march until a retry is due
+	wpFailN        int
+	wpTouched      map[area.ID]time.Time
+	wpNoted        area.ID                // the area whose waypoint objective was last announced
+	staffNoted     bool                   // the Horadric Staff was seen held (the artifact legs are over)
+	hopClickAt     time.Time              // the last portal-hop click (a 2s beat)
+	hopNoted       string                 // the portal-hop objective last announced
+	journalTried   map[data.Position]bool // map guesses for the journal already stood at
+	journalWalkFor data.Position
+	journalWalkAt  time.Time
 	// P-5.3a THE CROSSING DRIVE: between the door facts the area read is
 	// NOISE — while driving, geometry is the only truth.
 	driving   bool
