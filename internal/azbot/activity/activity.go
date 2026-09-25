@@ -988,7 +988,10 @@ func (b *Breakout) Demand(s *percept.Snapshot) *arbiter.Demand {
 	// runway — four nuisances under a scratch kept her porting out of
 	// winnable fights all morning (the 57-HP sortie loop, 11:06).
 	critical := s.Me.HPPct < 24
-	surrounded := near >= 6 && TimeToDie(s) < 12
+	// R85: the Flayer Jungle landing tripped this at 93-99% HP (a pack plus a
+	// jumpy time-to-die) and every breakout rode home — a loop. A healthy leaper
+	// fights its way out; the eject needs real blood loss too.
+	surrounded := near >= 6 && TimeToDie(s) < 12 && s.Me.HPPct < 70
 	trapped := s.Me.HPPct < 45 && s.Me.HealPots == 0 && near >= 3
 	// COMMITMENT: an engaged escape keeps bidding while its portal stands — one
 	// potion tick dropping 'surrounded' must not strand a half-used exit.
