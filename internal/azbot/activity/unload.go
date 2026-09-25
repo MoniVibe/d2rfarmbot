@@ -49,6 +49,14 @@ func (u *Unload) Demand(s *percept.Snapshot) *arbiter.Demand {
 	if !townPortalBound && !liveDoor(s) {
 		return nil // no portal road
 	}
+	// R50 (Palace Cellar 3, 25 min): the TP tome was EMPTY (Quantity omitted =
+	// 0) and Unload re-bid the dead cast ritual every 8 s — three casts, abandon,
+	// re-grant — ignoring Withdraw's own cool-off. No charges and no standing
+	// portal = no road home by portal; the march goes on with a full bag (the
+	// swap still makes room for a keeper) until a waypoint or a town visit.
+	if !liveDoor(s) && (s.Me.TPScrolls == 0 || time.Now().Before(u.w.coolAt)) {
+		return nil
+	}
 	for _, e := range s.Enemies {
 		if !e.Walled && chebyshev(s.Me.Pos, e.Pos) <= 12 {
 			return nil // the portal cast is a calm-field ritual: Fight clears the pocket first

@@ -13,6 +13,7 @@ func TestUnloadGoesHomeWhenFullAndCalm(t *testing.T) {
 	s := townSnap()
 	s.Me.InTown = false
 	s.Me.InvFree, s.Me.JunkCount = 3, 5
+	s.Me.TPScrolls = 5
 	if d := u.Demand(s); d == nil {
 		t.Fatal("full bag with junk in a calm field: Unload must bid")
 	}
@@ -70,5 +71,26 @@ func TestUnloadWaitsForTreasureBounded(t *testing.T) {
 	noteTreasure(t0.Add(90*time.Second), true) // a new streak after the gap
 	if !treasurePending(t0.Add(91 * time.Second)) {
 		t.Fatal("a fresh sighting after the gap holds again")
+	}
+}
+
+// R50: an empty TP tome is no road home.
+func TestUnloadNeedsTPCharges(t *testing.T) {
+	u := NewUnload()
+	s := townSnap()
+	s.Me.InTown = false
+	s.Me.InvFree, s.Me.JunkCount = 3, 5
+	s.Me.TPScrolls = 0
+	if u.Demand(s) != nil {
+		t.Fatal("empty tome, no portal standing: Unload must not bid")
+	}
+	s.Me.TPScrolls = 5
+	u.w.coolAt = time.Now().Add(time.Minute)
+	if u.Demand(s) != nil {
+		t.Fatal("inside Withdraw's cool-off after three dead casts: no bid")
+	}
+	u.w.coolAt = time.Time{}
+	if u.Demand(s) == nil {
+		t.Fatal("charges and calm: go home")
 	}
 }
