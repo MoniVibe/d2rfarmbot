@@ -154,8 +154,15 @@ func (k *Socket) demand(s *percept.Snapshot, now time.Time) *arbiter.Demand {
 	if !s.Valid || s.Me.InTown || s.Me.HPPct < 40 || now.Before(k.coolAt) {
 		return nil
 	}
-	if _, _, ok := k.artifact(s); !ok {
+	// The artifact is ours on the cursor too (R72: lifted onto the cursor it left
+	// the bag, the bid lapsed mid-socket and the stuck guard took the cursor).
+	onCursor := k.unit != 0 && s.Me.CursorItem && s.Me.CursorUnit == k.unit
+	if _, _, ok := k.artifact(s); !ok && !onCursor {
 		return nil
+	}
+	if onCursor {
+		return &arbiter.Demand{Who: k.Name(), Class: arbiter.ClassLoot, Urgency: 0.97,
+			Commit: arbiter.Commitment{MinHold: 5 * time.Second}}
 	}
 	// The calm gate binds only AT the socket (R70: applied on the whole walk, every
 	// monster on a 176-tile route cancelled the errand within a second). On the
