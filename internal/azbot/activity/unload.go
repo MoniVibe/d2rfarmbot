@@ -1,12 +1,17 @@
 package activity
 
 import (
+	"fmt"
 	"sync"
 	"time"
 
+	"github.com/hectorgimenez/d2go/pkg/data"
+	"github.com/hectorgimenez/d2go/pkg/data/area"
 	"github.com/hectorgimenez/koolo/internal/azbot/arbiter"
+	"github.com/hectorgimenez/koolo/internal/azbot/gamedata"
 	"github.com/hectorgimenez/koolo/internal/azbot/inventory"
 	"github.com/hectorgimenez/koolo/internal/azbot/percept"
+	"github.com/hectorgimenez/koolo/internal/azbot/verbs"
 )
 
 // ---------------------------------------------------------------- Unload (ClassRecover)
@@ -21,7 +26,11 @@ import (
 // unloadFree: fewer free cells than this (a 2x4 piece) = the bag is full.
 const unloadFree = 8
 
-type Unload struct{ w Withdraw }
+type Unload struct {
+	w     Withdraw
+	byPad bool      // this bid rides the waypoint home (no TP road)
+	wpAt  time.Time // the last pad ride attempt
+}
 
 func NewUnload() *Unload { return &Unload{} }
 
@@ -46,7 +55,7 @@ func (u *Unload) Demand(s *percept.Snapshot) *arbiter.Demand {
 	if treasurePending(time.Now()) {
 		return nil // Loot has a keeper in reach: pick it up first (bounded)
 	}
-	if !townPortalBound && !liveDoor(s) {
+	if !townPortalBound && !liveDoor(s) && !wpHomeReady(s) {
 		return nil // no portal road
 	}
 	// R50 (Palace Cellar 3, 25 min): the TP tome was EMPTY (Quantity omitted =
@@ -54,8 +63,12 @@ func (u *Unload) Demand(s *percept.Snapshot) *arbiter.Demand {
 	// re-grant — ignoring Withdraw's own cool-off. No charges and no standing
 	// portal = no road home by portal; the march goes on with a full bag (the
 	// swap still makes room for a keeper) until a waypoint or a town visit.
+	u.byPad = false
 	if !liveDoor(s) && (s.Me.TPScrolls == 0 || time.Now().Before(u.w.coolAt)) {
-		return nil
+		if !wpHomeReady(s) {
+			return nil
+		}
+		u.byPad = true // no portal: the lit pad is the road home
 	}
 	for _, e := range s.Enemies {
 		if !e.Walled && chebyshev(s.Me.Pos, e.Pos) <= 12 {
@@ -66,7 +79,12 @@ func (u *Unload) Demand(s *percept.Snapshot) *arbiter.Demand {
 		Commit: arbiter.Commitment{MinHold: 3 * time.Second}}
 }
 
-func (u *Unload) Step(ctx *Ctx) Verdict { return u.w.ride(ctx, u.Name()) }
+func (u *Unload) Step(ctx *Ctx) Verdict {
+	if u.byPad {
+		return u.rideHome(ctx)
+	}
+	return u.w.ride(ctx, u.Name())
+}
 
 // ---------------------------------------------------------------- treasure in reach
 //
@@ -123,4 +141,76 @@ func (l *Loot) treasureInReach(s *percept.Snapshot, now time.Time) bool {
 		}
 	}
 	return false
+}
+
+// ---------------------------------------------------------------- the road home by waypoint
+//
+// Owner (2026-09-25): "can we let it know it can return home from the wp and
+// sell stuff or stash? it runs pretty full". With no TP charges (R50/R55 ran
+// the tome dry) the lit pad of this area is the road home: walk to it and ride
+// to the act's town; the town services clear the bag and Advance's town ride
+// brings him back to the deepest lit leg.
+
+var padsLit = struct {
+	sync.Mutex
+	m map[area.ID]data.Position
+}{m: map[area.ID]data.Position{}}
+
+// notePadLit: Advance saw this area's pad lit (live Opened, or the ledger).
+func notePadLit(ar area.ID, at data.Position) {
+	padsLit.Lock()
+	padsLit.m[ar] = at
+	padsLit.Unlock()
+}
+
+func padLitAt(ar area.ID) (data.Position, bool) {
+	padsLit.Lock()
+	defer padsLit.Unlock()
+	p, ok := padsLit.m[ar]
+	return p, ok
+}
+
+// actTown: the town of an area's act (gamedata levels.txt), 0 when unknown.
+func actTown(ar area.ID) area.ID {
+	db := gamedata.Get()
+	if db == nil {
+		return 0
+	}
+	lv := db.Level(int(ar))
+	if lv == nil {
+		return 0
+	}
+	towns := []area.ID{area.RogueEncampment, area.LutGholein, area.KurastDocks, area.ThePandemoniumFortress, area.Harrogath}
+	if lv.Act < 0 || lv.Act >= len(towns) {
+		return 0
+	}
+	return towns[lv.Act]
+}
+
+// wpHomeReady: no portal road, but a lit pad here and a known town.
+func wpHomeReady(s *percept.Snapshot) bool {
+	_, ok := padLitAt(s.Me.Area)
+	return ok && actTown(s.Me.Area) != 0
+}
+
+// rideHome walks to the lit pad and rides to town.
+func (u *Unload) rideHome(ctx *Ctx) Verdict {
+	s := ctx.Snap
+	pad, ok := padLitAt(s.Me.Area)
+	town := actTown(s.Me.Area)
+	if !ok || town == 0 {
+		return Abandoned
+	}
+	if chebyshev(s.Me.Pos, pad) > 5 {
+		moveTo(ctx, pad, marchOpts(ctx, u.Name(), 1200*time.Millisecond))
+		return Running
+	}
+	if time.Since(u.wpAt) < 6*time.Second {
+		return Running
+	}
+	u.wpAt = time.Now()
+	ctx.Led.Append(verbs.Outcome{Verb: "waypoint", Holder: u.Name(), Result: verbs.ResDone,
+		Evidence: fmt.Sprintf("going home by waypoint: area %d -> town %d (no TP charges)", int(s.Me.Area), int(town))})
+	verbs.UseWaypoint{Want: []area.ID{town}}.Do(ctx.M, ctx.GR, ctx.P, ctx.Led, u.Name())
+	return Running
 }

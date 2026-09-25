@@ -9,6 +9,7 @@ import (
 	"github.com/hectorgimenez/d2go/pkg/data/npc"
 	"github.com/hectorgimenez/d2go/pkg/data/object"
 	"github.com/hectorgimenez/koolo/internal/azbot/coverage"
+	"github.com/hectorgimenez/koolo/internal/azbot/moveto"
 	"github.com/hectorgimenez/koolo/internal/azbot/verbs"
 )
 
@@ -78,6 +79,13 @@ func (a *Advance) seekJournal(ctx *Ctx) Verdict {
 		}
 		moveTo(ctx, g, marchOpts(ctx, a.Name(), 1200*time.Millisecond))
 		return Running
+	}
+	// THE WINGS (owner, 2026-09-25: "it went to the wrong arcane wing"): the map's
+	// guesses do not match this game's Sanctuary. The Summoner stands at the far
+	// end of one of four wings off the central pad: walk each wing's end in turn
+	// (N, E, S, W from the pad) until the journal or he streams in.
+	if v, ok := a.walkWings(ctx); ok {
+		return v
 	}
 	a.notePortalHop(ctx, "Horazon's Journal (sweeping the Sanctuary)", false, data.Position{})
 	if st, ok := a.cov.step(ctx, coverage.Bias{}, a.Name()); ok && st == coverage.Exploring {
@@ -229,4 +237,57 @@ func findLive(obs []data.Object, name object.Name) (data.Object, bool) {
 		}
 	}
 	return data.Object{}, false
+}
+
+// wingReach: how far past the central pad a wing's end is sought (the planner
+// snaps to the nearest walkable cell; R52's west wing end sat ~75 tiles out).
+const wingReach = 160
+
+// walkWings: the next unwalked wing end from the Sanctuary's central pad.
+// A wing is done when he arrives, or 90s pass, or the route fails; the
+// Summoner seen live ends the search (Fight takes him; the journal follows).
+func (a *Advance) walkWings(ctx *Ctx) (Verdict, bool) {
+	s := ctx.Snap
+	dd := ctx.GR.GetData()
+	for _, m := range dd.Monsters {
+		if m.Name == npc.Summoner {
+			if chebyshev(s.Me.Pos, m.Position) > 6 {
+				a.notePortalHop(ctx, "the Summoner (seen live)", true, m.Position)
+				moveTo(ctx, m.Position, marchOpts(ctx, a.Name(), 1200*time.Millisecond))
+			}
+			return Running, true
+		}
+	}
+	if a.wingCenter == (data.Position{}) {
+		var pad data.Object
+		ok := false
+		for _, ob := range dd.Objects {
+			if ob.IsWaypoint() {
+				pad, ok = ob, true
+				break
+			}
+		}
+		if !ok {
+			return 0, false
+		}
+		a.wingCenter = pad.Position
+	}
+	dirs := [4][2]int{{0, -1}, {1, 0}, {0, 1}, {-1, 0}}
+	for a.wingIdx < len(dirs) {
+		d := dirs[a.wingIdx]
+		end := data.Position{X: a.wingCenter.X + d[0]*wingReach, Y: a.wingCenter.Y + d[1]*wingReach}
+		if a.wingAt.IsZero() {
+			a.wingAt = time.Now()
+			ctx.Led.Append(verbs.Outcome{Verb: "quest", Holder: a.Name(), Result: verbs.ResDone,
+				Evidence: fmt.Sprintf("searching Sanctuary wing %d/4 toward (%d,%d)", a.wingIdx+1, end.X, end.Y)})
+		}
+		st := moveTo(ctx, end, marchOpts(ctx, a.Name(), 1200*time.Millisecond))
+		if time.Since(a.wingAt) > 90*time.Second || stalled(st) || st.State == moveto.Arrived {
+			a.wingIdx++
+			a.wingAt = time.Time{}
+			continue
+		}
+		return Running, true
+	}
+	return 0, false
 }

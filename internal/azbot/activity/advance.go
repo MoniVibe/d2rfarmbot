@@ -245,6 +245,9 @@ type Advance struct {
 	journalTried   map[data.Position]bool // map guesses for the journal already stood at
 	journalWalkFor data.Position
 	journalWalkAt  time.Time
+	wingCenter     data.Position // the Sanctuary pad the wing search radiates from
+	wingIdx        int
+	wingAt         time.Time
 	// P-5.3a THE CROSSING DRIVE: between the door facts the area read is
 	// NOISE — while driving, geometry is the only truth.
 	driving   bool
@@ -921,6 +924,11 @@ func (a *Advance) Step(ctx *Ctx) Verdict {
 		// take the waypoint in arcane, the level literally starts on it"): the old
 		// proximity witness ledgered the Sanctuary pad lit on arrival, unclicked.
 		// A live pad reading anything but Opened is unlit, whatever the ledger says.
+		for _, ob := range dd.Objects {
+			if ob.IsWaypoint() && ob.ID != 0 && ob.Mode == mode.ObjectModeOpened {
+				notePadLit(s.Me.Area, ob.Position) // the road home by waypoint (Unload)
+			}
+		}
 		if lit, seen := padLitLive(dd.Objects); seen && !lit && litHere {
 			litHere = false
 			if a.wpNoted != s.Me.Area {
