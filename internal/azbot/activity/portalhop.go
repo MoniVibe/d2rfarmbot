@@ -446,7 +446,9 @@ func (a *Advance) saveArcaneSearch(ctx *Ctx) {
 // next unrefuted tomb becomes the leg. A live Orifice settles the search and
 // hands the socket to the Socket errand.
 
-const tombBudget = 5 * time.Minute
+// R69: the Orifice sits in the tomb's deepest room and loads only when he is
+// near it; 5 minutes of sweep did not reach it in the true tomb.
+const tombBudget = 15 * time.Minute
 
 func tombWrongKey(seed uint) string { return fmt.Sprintf("tombs.wrong.%d", seed) }
 
@@ -531,7 +533,9 @@ func (a *Advance) tombStep(ctx *Ctx) (Verdict, bool) {
 	if a.tombAt.IsZero() {
 		a.tombAt = time.Now()
 	}
-	if time.Since(a.tombAt) > tombBudget {
+	// The last unrefuted tomb is never refuted (R69 marked the owner-confirmed
+	// true tomb wrong, leaving no candidate): it is swept until the Orifice loads.
+	if time.Since(a.tombAt) > tombBudget && a.otherTombsOpen(s.Me.Area) {
 		a.markTombWrong(ctx, s.Me.Area)
 		next := a.nextTomb(0)
 		ctx.Led.Append(verbs.Outcome{Verb: "quest", Holder: a.Name(), Result: verbs.ResRefused,
@@ -547,4 +551,14 @@ func (a *Advance) tombStep(ctx *Ctx) (Verdict, bool) {
 		return Running, true
 	}
 	return Running, true
+}
+
+// otherTombsOpen: some tomb besides here is not yet refuted.
+func (a *Advance) otherTombsOpen(here area.ID) bool {
+	for _, t := range talRashaTombs {
+		if t != here && !a.tombWrong[t] {
+			return true
+		}
+	}
+	return false
 }
