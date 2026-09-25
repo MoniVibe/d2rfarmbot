@@ -64,6 +64,13 @@ func (c *Config) WeakUnique(row int, cl Class, level int, usesBow bool, owned fu
 	case KindQuest, KindCube:
 		return false, ""
 	}
+	// ABOVE THE BASELINE (owner, 2026-09-25: "im looking only for the above unique
+	// baseline stuff"): a weapon/armor unique on a NORMAL-tier base is weak —
+	// the base is readable unidentified, the unique row is not (unique#0 on the
+	// ground), so this is the rule the ground can apply.
+	if cl.Kind == KindGear && NormalBase(cl.Code) {
+		return true, "unique on a normal base (below the baseline)"
+	}
 	if row <= 0 {
 		return false, ""
 	}
@@ -161,4 +168,14 @@ func (p *Planner) Dispose(it Carried) (Disposition, string) {
 		return DispStash, "keeper (" + v.Why + ")"
 	}
 	return DispSell, "tier " + v.Tier.String()
+}
+
+// NormalBase: the mod's row for code is its own normal-tier base (normcode ==
+// code, with an exceptional upgrade existing). Unknown tables: false.
+func NormalBase(code string) bool {
+	it := gamedata.Get().ItemByCode(code)
+	if it == nil || it.NormCode == "" || it.UberCode == "" {
+		return false
+	}
+	return it.NormCode == code && it.UberCode != code
 }

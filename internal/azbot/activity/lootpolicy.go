@@ -471,7 +471,7 @@ func LootProductive(now time.Time) bool {
 // weakUnique: the strong-unique rule for a ground unique — owned = the stash
 // tabs memory shows, what he wears, and the bag.
 func (m *lootMind) weakUnique(s *percept.Snapshot, it percept.ItemRef) (bool, string) {
-	if it.Quality != loot.QUnique || it.Unique <= 0 {
+	if it.Quality != loot.QUnique {
 		return false, ""
 	}
 	owned := func(row int) bool {

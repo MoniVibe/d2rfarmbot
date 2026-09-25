@@ -43,3 +43,22 @@ func TestClassifyFromModTables(t *testing.T) {
 		t.Fatal("cube and tome stay lifelines on the mod table")
 	}
 }
+
+// Owner 2026-09-25: only "above unique baseline" — normal-tier bases are weak.
+func TestNormalBaseFromModTables(t *testing.T) {
+	db, err := gamedata.Load(gamedata.DefaultRoot)
+	if err != nil || db.ItemByCode("hax") == nil {
+		t.Skip("mod tables not installed")
+	}
+	gamedata.Set(db)
+	defer gamedata.Set(nil)
+	if !NormalBase("hax") || NormalBase("9ha") || NormalBase("7ha") {
+		t.Fatal("hand axe is normal; hatchet (exceptional) and tomahawk (elite) are not")
+	}
+	if weak, _ := Default().WeakUnique(0, Classify(db.ItemByCode("hax").ID), 30, false, nil, nil); !weak {
+		t.Fatal("an unidentified unique on a normal base is weak on the ground")
+	}
+	if weak, _ := Default().WeakUnique(0, Classify(db.ItemByCode("9ha").ID), 30, false, nil, nil); weak {
+		t.Fatal("an exceptional base unique is taken")
+	}
+}
