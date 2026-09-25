@@ -264,6 +264,9 @@ func (e *errand) step(ctx *Ctx, who string) errandStep {
 				e.ring = append(e.ring[:0], np.Positions...)
 				e.ringIdx = 0
 			}
+			// He wanders (owner: "hratli went back to the blacksmith, south"): the
+			// neighbour is the first stop, the town circles follow.
+			e.ring = append(e.ring, townCircles(s.Me.Pos)...)
 		}
 	}
 
@@ -283,11 +286,7 @@ func (e *errand) step(ctx *Ctx, who string) errandStep {
 	// empty and Repair gave up in 0.2s): circle the town from here — two rings at
 	// 40 and 80 tiles — until the NPC streams in.
 	if !found && len(e.ring) == 0 && s.Me.InTown {
-		for _, r := range []int{40, 80} {
-			for _, d := range [][2]int{{1, 0}, {1, 1}, {0, 1}, {-1, 1}, {-1, 0}, {-1, -1}, {0, -1}, {1, -1}} {
-				e.ring = append(e.ring, data.Position{X: s.Me.Pos.X + d[0]*r, Y: s.Me.Pos.Y + d[1]*r})
-			}
-		}
+		e.ring = townCircles(s.Me.Pos)
 		e.ringIdx = 0
 	}
 	switch e.ph.Phase() {
@@ -1700,4 +1699,16 @@ func (rp *Repair) Step(ctx *Ctx) Status {
 // neighbour it does (owner, 2026-09-25: "hratli is near meshif").
 var npcNeighbour = map[npc.ID]npc.ID{
 	npc.Hratli: npc.Meshif2, // Kurast Docks: the smith stands by the boat
+}
+
+// townCircles: two rings (40 and 80 tiles, 8 points each) around a town spot —
+// the seek of last resort for an NPC the map does not place.
+func townCircles(c data.Position) []data.Position {
+	var out []data.Position
+	for _, r := range []int{40, 80} {
+		for _, d := range [][2]int{{1, 0}, {1, 1}, {0, 1}, {-1, 1}, {-1, 0}, {-1, -1}, {0, -1}, {1, -1}} {
+			out = append(out, data.Position{X: c.X + d[0]*r, Y: c.Y + d[1]*r})
+		}
+	}
+	return out
 }
