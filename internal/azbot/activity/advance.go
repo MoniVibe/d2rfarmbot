@@ -731,8 +731,9 @@ func (a *Advance) Step(ctx *Ctx) Verdict {
 		!(s.Me.WeaponKind == "none" && s.Me.CorpseFound) { // Return's own guards
 		var best percept.PortalRef
 		bd := 1 << 30
+		fwd := minInt(a.campIdx()+1, len(a.Itinerary)-1)
 		for _, pt := range s.Portals {
-			if verbs.IsDeadDoor(pt.ID) {
+			if verbs.IsDeadDoor(pt.ID) || a.portalLeadsBack(s, pt, fwd) {
 				continue
 			}
 			if dd := chebyshev(s.Me.Pos, pt.Pos); dd < bd {
@@ -745,7 +746,7 @@ func (a *Advance) Step(ctx *Ctx) Verdict {
 				return Running
 			}
 			ctx.Led.Append(verbs.Outcome{Verb: "door", Holder: a.Name(), Result: verbs.ResDone,
-				Evidence: fmt.Sprintf("portal-first: own portal id=%d at %d — entering before any waypoint", int(best.ID), bd)})
+				Evidence: fmt.Sprintf("portal-first: own portal id=%d at %d to area %d — entering before any waypoint", int(best.ID), bd, int(best.Dest))})
 			verbs.EnterPortal{Target: best.ID, TargetPos: best.Pos}.Do(ctx.M, ctx.GR, ctx.P, ctx.Led, a.Name())
 			return Running
 		}
@@ -2257,4 +2258,22 @@ func areaHasWaypoint(ar area.ID) bool {
 	}
 	lv := db.Level(int(ar))
 	return lv != nil && lv.Waypoint >= 0 && !lv.IsTown
+}
+
+// portalLeadsBack: an own portal whose destination is an itinerary leg behind
+// the next one he may lawfully march to (R47: the owner's old portal stood in
+// town to Maggot Lair 3 — the finished staff leg — while the Harem was next;
+// portal-first rode it straight back into 298 maggots). Unknown destinations,
+// and any portal while the next leg is above his level (the camp grind), keep
+// the old rule.
+func (a *Advance) portalLeadsBack(s *percept.Snapshot, pt percept.PortalRef, fwd int) bool {
+	if pt.Dest == 0 || fwd < 0 || fwd >= len(a.Itinerary) || s.Me.Level < a.Itinerary[fwd].MinLevel {
+		return false
+	}
+	for i := 0; i < fwd; i++ {
+		if a.Itinerary[i].Area == pt.Dest {
+			return true
+		}
+	}
+	return false
 }

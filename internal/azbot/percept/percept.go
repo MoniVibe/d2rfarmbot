@@ -182,6 +182,8 @@ type BagItem struct {
 type PortalRef struct {
 	ID  data.UnitID
 	Pos data.Position
+	// Dest: the area the portal leads to (0 = unknown).
+	Dest area.ID
 }
 
 // MissileRef is a projectile in flight (unit table type 3). No ownership, no velocity —
@@ -831,7 +833,7 @@ func (p *Perceptor) Capture() *Snapshot {
 	}
 	for i := range d.Objects {
 		if d.Objects[i].IsPortal() || d.Objects[i].IsRedPortal() {
-			s.Portals = append(s.Portals, PortalRef{ID: d.Objects[i].ID, Pos: d.Objects[i].Position})
+			s.Portals = append(s.Portals, PortalRef{ID: d.Objects[i].ID, Pos: d.Objects[i].Position, Dest: d.Objects[i].PortalData.DestArea})
 		}
 	}
 	if !s.Me.InTown { // town has no hostile fire; skip the read there
