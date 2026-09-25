@@ -3,7 +3,9 @@ package activity
 import (
 	"testing"
 
+	"github.com/hectorgimenez/d2go/pkg/data"
 	"github.com/hectorgimenez/d2go/pkg/data/area"
+	"github.com/hectorgimenez/d2go/pkg/data/object"
 )
 
 // R51: object-door legs route through the level that holds the door.
@@ -22,5 +24,16 @@ func TestRouteVia(t *testing.T) {
 		if got := routeVia(c.cur, c.to); got != c.want {
 			t.Errorf("routeVia(%d,%d) = %d, want %d", c.cur, c.to, got, c.want)
 		}
+	}
+}
+
+// R53: a merged map preset (unit ID 0) is not a live object.
+func TestFindLiveNeedsUnit(t *testing.T) {
+	obs := []data.Object{{Name: object.YetAnotherTome}, {Name: object.ArcaneSanctuaryPortal, ID: 7}}
+	if _, ok := findLive(obs, object.YetAnotherTome); ok {
+		t.Fatal("a preset without a unit ID is not live")
+	}
+	if ob, ok := findLive(obs, object.ArcaneSanctuaryPortal); !ok || ob.ID != 7 {
+		t.Fatal("the live portal is found")
 	}
 }

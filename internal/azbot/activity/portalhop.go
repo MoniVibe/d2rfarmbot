@@ -23,7 +23,7 @@ func (a *Advance) portalHop(ctx *Ctx, to area.ID) (Verdict, bool) {
 		return a.enterObjectPortal(ctx, object.ArcaneSanctuaryPortal, "the Arcane Sanctuary portal"), true
 	case s.Me.Area == area.ArcaneSanctuary && to == area.CanyonOfTheMagi:
 		// The red portal stands once the journal is read: enter it.
-		if _, live := findObject(ctx.GR.GetData().Objects, object.PermanentTownPortal); live {
+		if _, live := findLive(ctx.GR.GetData().Objects, object.PermanentTownPortal); live {
 			return a.enterObjectPortal(ctx, object.PermanentTownPortal, "Horazon's portal to the Canyon"), true
 		}
 		// Otherwise walk to the journal: the Summoner guards it (Fight preempts
@@ -41,7 +41,7 @@ func (a *Advance) portalHop(ctx *Ctx, to area.ID) (Verdict, bool) {
 func (a *Advance) seekJournal(ctx *Ctx) Verdict {
 	s := ctx.Snap
 	dd := ctx.GR.GetData()
-	if ob, ok := findObject(dd.Objects, object.YetAnotherTome); ok {
+	if ob, ok := findLive(dd.Objects, object.YetAnotherTome); ok {
 		a.notePortalHop(ctx, "Horazon's Journal (live)", true, ob.Position)
 		if chebyshev(s.Me.Pos, ob.Position) > 4 {
 			moveTo(ctx, ob.Position, marchOpts(ctx, a.Name(), 1200*time.Millisecond))
@@ -98,7 +98,7 @@ func findObject(obs []data.Object, name object.Name) (data.Object, bool) {
 // objectPos: the live object, else the map oracle's preset for this area.
 func (a *Advance) objectPos(ctx *Ctx, name object.Name) (data.Object, bool, bool) {
 	dd := ctx.GR.GetData()
-	if ob, ok := findObject(dd.Objects, name); ok {
+	if ob, ok := findLive(dd.Objects, name); ok {
 		return ob, true, true
 	}
 	if ad, ok := dd.Areas[ctx.Snap.Me.Area]; ok {
@@ -217,4 +217,16 @@ func routeVia(cur, to area.ID) area.ID {
 		}
 	}
 	return to
+}
+
+// findLive: an object the LIVE unit table holds. game.MemoryReader merges the
+// map oracle's presets into Objects (unit ID 0, maybe unreal positions — R53:
+// the journal preset in the void read as "live").
+func findLive(obs []data.Object, name object.Name) (data.Object, bool) {
+	for _, ob := range obs {
+		if ob.Name == name && ob.ID != 0 {
+			return ob, true
+		}
+	}
+	return data.Object{}, false
 }
