@@ -3,7 +3,10 @@ package activity
 import (
 	"testing"
 
+	"github.com/hectorgimenez/d2go/pkg/data"
 	"github.com/hectorgimenez/d2go/pkg/data/area"
+	"github.com/hectorgimenez/d2go/pkg/data/mode"
+	"github.com/hectorgimenez/d2go/pkg/data/object"
 	"github.com/hectorgimenez/koolo/internal/azbot/gamedata"
 )
 
@@ -27,5 +30,24 @@ func TestAreaHasWaypointFromLevels(t *testing.T) {
 		if areaHasWaypoint(ar) {
 			t.Errorf("area %d has no field waypoint", ar)
 		}
+	}
+}
+
+// Owner 2026-09-25: a pad is lit only when its own flame says so (mode Opened).
+func TestPadLitLive(t *testing.T) {
+	if _, seen := padLitLive(nil); seen {
+		t.Fatal("no pad: not seen")
+	}
+	idle := []data.Object{{ID: 13, Name: object.Name(156), Mode: mode.ObjectModeIdle}}
+	if lit, seen := padLitLive(idle); !seen || lit {
+		t.Fatal("an idle live pad is unlit")
+	}
+	open := []data.Object{{ID: 13, Name: object.Name(156), Mode: mode.ObjectModeOpened}}
+	if lit, _ := padLitLive(open); !lit {
+		t.Fatal("an opened pad is lit")
+	}
+	preset := []data.Object{{Name: object.Name(156), Mode: mode.ObjectModeIdle}}
+	if _, seen := padLitLive(preset); seen {
+		t.Fatal("a map preset (unit 0) is not the live pad")
 	}
 }

@@ -22,6 +22,7 @@ import (
 
 	"github.com/hectorgimenez/d2go/pkg/data"
 	"github.com/hectorgimenez/d2go/pkg/data/area"
+	"github.com/hectorgimenez/d2go/pkg/data/mode"
 	"github.com/hectorgimenez/d2go/pkg/data/item"
 	"github.com/hectorgimenez/d2go/pkg/data/npc"
 	"github.com/hectorgimenez/d2go/pkg/data/skill"
@@ -2191,13 +2192,16 @@ func main() {
 		}
 		dd := gr.GetData()
 		for _, ob := range dd.Objects {
-			if ob.IsWaypoint() && chebyshev(s.Me.Pos, ob.Position) <= 3 {
+			// Only an OPENED pad is lit: proximity does NOT activate on this game
+			// (the 03:47 Black Marsh panel photo; the owner, 2026-09-25: "waypoints
+			// are a click") — the old witness ledgered the Sanctuary pad unclicked.
+			if ob.IsWaypoint() && ob.ID != 0 && ob.Mode == mode.ObjectModeOpened && chebyshev(s.Me.Pos, ob.Position) <= 3 {
 				padSeen[s.Me.Area] = true
 				lit := false
 				mem.GetJSON(activity.LitKey(dd.PlayerUnit.Name, s.Me.Area), &lit)
 				if !lit {
 					mem.PutJSON(activity.LitKey(dd.PlayerUnit.Name, s.Me.Area), memory.ScopeForever,
-						memory.Provenance{Source: "measured", Evidence: "stood at the pad — proximity activates"}, true)
+						memory.Provenance{Source: "measured", Evidence: "stood at the pad and it reads Opened (lit)"}, true)
 					logger.Info("cartographer: PAD lit by proximity", "area", int(s.Me.Area))
 				}
 				return

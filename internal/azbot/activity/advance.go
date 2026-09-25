@@ -24,6 +24,7 @@ import (
 
 	"github.com/hectorgimenez/d2go/pkg/data"
 	"github.com/hectorgimenez/d2go/pkg/data/area"
+	"github.com/hectorgimenez/d2go/pkg/data/mode"
 	"github.com/hectorgimenez/koolo/internal/azbot/arbiter"
 	"github.com/hectorgimenez/koolo/internal/azbot/coverage"
 	"github.com/hectorgimenez/koolo/internal/azbot/gamedata"
@@ -915,6 +916,17 @@ func (a *Advance) Step(ctx *Ctx) Verdict {
 		litHere := false
 		if ctx.Mem != nil {
 			ctx.Mem.GetJSON(LitKey(ctx.GR.GetData().PlayerUnit.Name, s.Me.Area), &litHere)
+		}
+		// THE PAD'S OWN FLAME OUTRANKS THE LEDGER (owner, 2026-09-25: "it did not
+		// take the waypoint in arcane, the level literally starts on it"): the old
+		// proximity witness ledgered the Sanctuary pad lit on arrival, unclicked.
+		// A live pad reading anything but Opened is unlit, whatever the ledger says.
+		if lit, seen := padLitLive(dd.Objects); seen && !lit && litHere {
+			litHere = false
+			if a.wpNoted != s.Me.Area {
+				ctx.Led.Append(verbs.Outcome{Verb: "waypoint", Holder: a.Name(), Result: verbs.ResRefused,
+					Evidence: fmt.Sprintf("ledger said area %d lit, but the pad reads unlit — touching it", int(s.Me.Area))})
+			}
 		}
 		// WAYPOINT OBJECTIVE (the owner, 2026-09-25: "we're missing wp so we need
 		// the bot to be aware of wp taking as we progress" — Dry Hills, Halls 2,
@@ -2295,4 +2307,16 @@ func (a *Advance) portalLeadsBack(s *percept.Snapshot, pt percept.PortalRef, fwd
 		}
 	}
 	return false
+}
+
+// padLitLive reads the live pad's own state: an activated waypoint stands
+// Opened (mode 2 — measured on Lut Gholein's lit pad); an unlit one idles.
+// seen=false: no live pad (unit ID set) in the object list.
+func padLitLive(obs []data.Object) (lit, seen bool) {
+	for _, ob := range obs {
+		if ob.IsWaypoint() && ob.ID != 0 {
+			return ob.Mode == mode.ObjectModeOpened, true
+		}
+	}
+	return false, false
 }
