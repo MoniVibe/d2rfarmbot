@@ -288,7 +288,7 @@ var ManaWells = map[object.Name]bool{
 // 356 Staff of Kings). Imbibe opens them from further out and first (activity/quest.go).
 // YetAnotherTome is Horazon's Journal in the Arcane Sanctuary: read after the
 // Summoner dies, it opens the red portal to the Canyon of the Magi.
-var QuestChests = map[object.Name]bool{354: true, 355: true, 356: true, 149: true, object.YetAnotherTome: true} // 149: the Viper altar (TaintedSunShrine)
+var QuestChests = map[object.Name]bool{354: true, 355: true, 356: true, 149: true, object.YetAnotherTome: true, 405: true, 406: true, 407: true} // 149: the Viper altar; 405-407: Khalim's relic chests
 
 func IsRite(ob data.Object) bool {
 	return (ob.IsShrine() && GivingShrines[ob.Shrine.ShrineType]) ||

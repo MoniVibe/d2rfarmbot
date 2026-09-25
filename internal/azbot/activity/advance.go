@@ -159,6 +159,9 @@ func Act2Itinerary() []Leg {
 // supported now; later acts intentionally fall back to Act 1 until their quest
 // gates and area-specific route are modeled instead of being guessed.
 func CampaignItinerary(start area.ID) []Leg {
+	if start.Act() == 3 {
+		return Act3Itinerary()
+	}
 	if start.Act() == 2 {
 		return Act2Itinerary()
 	}
@@ -2360,4 +2363,22 @@ func townLog(msg string) {
 	theLoot.mu.Lock()
 	defer theLoot.mu.Unlock()
 	theLoot.say("town", "why", msg)
+}
+
+// Act3Itinerary (owner, 2026-09-25: "we can begin running act 3"): the spine
+// from Kurast Docks to Travincal, with the dead-end dungeons that hold Khalim's
+// eye (Spider Cavern), brain (Flayer Dungeon 3) and heart (Kurast Sewers 2) on
+// the road — each a quest leg (quest.go) held until its chest is opened. It stops
+// at Travincal: the Durance opens only to Khalim's Will smashing the Compelling
+// Orb (a cube transmute and an orb click, not built yet).
+func Act3Itinerary() []Leg {
+	return []Leg{
+		{area.KurastDocks, 1},
+		{area.SpiderForest, 28}, {area.SpiderCavern, 29},
+		{area.GreatMarsh, 29}, {area.FlayerJungle, 29},
+		{area.FlayerDungeonLevel1, 30}, {area.FlayerDungeonLevel2, 30}, {area.FlayerDungeonLevel3, 30},
+		{area.LowerKurast, 30}, {area.KurastBazaar, 31},
+		{area.SewersLevel1Act3, 31}, {area.SewersLevel2Act3, 31},
+		{area.UpperKurast, 31}, {area.KurastCauseway, 32}, {area.Travincal, 32},
+	}
 }

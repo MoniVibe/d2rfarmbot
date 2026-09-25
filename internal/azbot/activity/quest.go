@@ -38,6 +38,10 @@ var questLegs = map[area.ID]questLeg{
 	area.HallsOfTheDeadLevel3:  {chest: 354, item: "box", label: "Horadric Cube"},
 	area.MaggotLairLevel3:      {chest: 356, item: "msf", label: "Staff of Kings"},
 	area.ClawViperTempleLevel2: {chest: 149, item: "vip", label: "Amulet of the Viper"}, // TaintedSunShrine altar
+	// Act 3: Khalim's relics (objects.txt 405-407), each in its dungeon's chest.
+	area.SpiderCavern:        {chest: 407, item: "qey", label: "Khalim's Eye"},
+	area.FlayerDungeonLevel3: {chest: 406, item: "qbr", label: "Khalim's Brain"},
+	area.SewersLevel2Act3:    {chest: 405, item: "qhr", label: "Khalim's Heart"},
 }
 
 // questBudget: held time a quest leg may spend before the march moves on anyway.
@@ -61,6 +65,12 @@ func questItemHeld(d data.Data, code string) bool {
 	// d2go quest byte reads 0, so artifacts and places are the only truth.)
 	if code == "msf" || code == "vip" {
 		if questItemHeld(d, "hst") {
+			return true
+		}
+	}
+	// Khalim's relics become Khalim's Will (qf2) in the cube with the flail.
+	if code == "qey" || code == "qbr" || code == "qhr" {
+		if questItemHeld(d, "qf2") {
 			return true
 		}
 	}
