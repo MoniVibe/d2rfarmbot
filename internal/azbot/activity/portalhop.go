@@ -342,7 +342,9 @@ func wingEnd(g *game.Grid, c data.Position, d [2]int) data.Position {
 // sanctuaryBudget of accumulated time in the Sanctuary this game, request a
 // relog; the lit Sanctuary pad brings him straight back.
 
-const sanctuaryBudget = 15 * time.Minute
+// R64: D2R died 10 min in (the count climbs with the Sanctuary loaded, not only
+// with time) — six minutes is one wing per game, the search persists per seed.
+const sanctuaryBudget = 6 * time.Minute
 
 var sanctuary struct {
 	sync.Mutex
