@@ -24,6 +24,7 @@ func fableboi() *combat.Capability {
 }
 
 func TestMeleeStrikeLeftPrimary(t *testing.T) {
+	withLeapFirst(t, false)
 	defer func() { leftAudit = policy.LeftAudit{} }()
 	ctx := &Ctx{Cap: fableboi()}
 	s := &percept.Snapshot{Valid: true}
@@ -147,6 +148,7 @@ func TestSilentLeftStrikesBenchCarnage(t *testing.T) {
 // The leap's hard gates at the activity seam: a lone target's short gap is
 // walked, a pack is leapt, a leap cools the next one, a wall vetoes it.
 func TestMeleeStrikeLeapGates(t *testing.T) {
+	withLeapFirst(t, false)
 	defer func() { leftAudit, leapClock = policy.LeftAudit{}, policy.LeapClock{} }()
 	ctx := &Ctx{Cap: fableboi()}
 	s := &percept.Snapshot{Valid: true}

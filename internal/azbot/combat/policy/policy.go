@@ -35,8 +35,11 @@ const (
 	// LeapCooldown: after a leap, no second leap for this long — the landing
 	// is followed by swings, not by a chain of leaps after moving targets
 	// (R9: 83 of 132 leaps were chained, median 0.87s apart).
-	LeapCooldown = 2 * time.Second
+	LeapCooldownDefault = 2 * time.Second
 )
+
+// LeapCooldown is the live cooldown (a leap-first spec shortens it).
+var LeapCooldown = LeapCooldownDefault
 
 // Kind is the strike the policy chose.
 type Kind uint8

@@ -44,6 +44,10 @@ const (
 type Config struct {
 	Learn   bool    // false: deterministic priors, no exploration
 	Explore float64 // ε at zero samples (0.1 by default)
+	// LeapFirst: a feasible leap always wins (owner, 2026-09-25, Leap-only spec:
+	// "it should refrain from regular attacking and use leap attack, it damages
+	// more and does aoe").
+	LeapFirst bool
 }
 
 // Estimator is what Decide reads (a *learn.Model; nil = pure priors).
@@ -261,6 +265,8 @@ func Decide(in Inputs, est Estimator, cfg Config, rnd float64) Decision {
 	switch {
 	case !l.OK:
 		d.Why = "forced"
+	case cfg.LeapFirst:
+		pickLeap, d.Why = true, "leap-first"
 	default:
 		pickLeap = l.U > m.U
 		d.Why = "prior"

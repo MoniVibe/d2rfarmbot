@@ -33,12 +33,16 @@ import (
 // engagement end; the Scribe fsyncs within a second.
 
 // combatCfg is -combatlearn / -explore.
-var combatCfg = policy.Config{Learn: true, Explore: 0.1}
+var combatCfg = policy.Config{Learn: true, Explore: 0.1, LeapFirst: true}
+
+// Leap-only spec (owner, 2026-09-25: "strictly leap attack now"): leaps chain
+// every 0.7s instead of every 2s.
+func init() { policy.LeapCooldown = 700 * time.Millisecond }
 
 // SetCombatLearn applies -combatlearn (off: deterministic priors, no
 // exploration — telemetry is still measured and stored) and -explore.
 func SetCombatLearn(on bool, explore float64) {
-	combatCfg = policy.Config{Learn: on, Explore: explore}
+	combatCfg = policy.Config{Learn: on, Explore: explore, LeapFirst: true}
 }
 
 // strikeRand is the exploration draw (a var so tests can pin it).

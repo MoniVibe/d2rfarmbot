@@ -37,6 +37,7 @@ func TestNearestLiveEntranceRejectsIDlessOrFarUnits(t *testing.T) {
 }
 
 func TestMeleeAttackKeyPrefersLeapAttackAndFallsBackToDoubleSwing(t *testing.T) {
+	withLeapFirst(t, false)
 	leap := &combat.Binding{Key: 0x70, Skill: skill.ID(143)}
 	double := &combat.Binding{Key: 0x71, Skill: skill.ID(133)}
 	ctx := &Ctx{Cap: &combat.Capability{LeapAttack: leap, DoubleSwing: double, Combat: leap}}
