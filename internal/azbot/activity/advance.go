@@ -1017,7 +1017,7 @@ func (a *Advance) Step(ctx *Ctx) Verdict {
 	// duriel"): two Act 2 roads are objects, not level warps — the Sanctuary's
 	// portal in Palace Cellar 3, and the red portal Horazon's Journal opens
 	// once the Summoner is dead (Imbibe reads the journal; Fight kills him).
-	if v, ok := a.portalHop(ctx, next.Area); ok {
+	if v, ok := a.portalHop(ctx, routeVia(s.Me.Area, next.Area)); ok {
 		return v
 	}
 	d := ctx.GR.GetData()

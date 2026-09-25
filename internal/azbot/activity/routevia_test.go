@@ -37,3 +37,10 @@ func TestFindLiveNeedsUnit(t *testing.T) {
 		t.Fatal("the live portal is found")
 	}
 }
+
+// R57: the Canyon leg from Palace Cellar 3 hops the Sanctuary portal first.
+func TestRouteViaFeedsPortalHop(t *testing.T) {
+	if got := routeVia(area.PalaceCellarLevel3, area.CanyonOfTheMagi); got != area.ArcaneSanctuary {
+		t.Fatalf("Canyon from Cellar 3 goes via the Sanctuary, got %d", got)
+	}
+}
