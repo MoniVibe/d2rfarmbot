@@ -53,6 +53,8 @@ type errand struct {
 	act2NPC       npc.ID          // service counterpart in Lut Gholein; zero means no alternate
 	act3NPC       npc.ID          // service counterpart in Kurast Docks; zero means no alternate
 	circled       bool            // the town circles were appended to this ring
+	lastSeen      data.Position   // where the NPC last streamed in (Approach walks there when it unloads)
+	lastSeenAt    time.Time
 	ring          []data.Position // search waypoints until the NPC loads
 	ringIdx       int
 	clickAt       time.Time
@@ -318,7 +320,17 @@ func (e *errand) step(ctx *Ctx, who string) errandStep {
 			e.ringIdx++ // no route to this waypoint — try the next
 		}
 	case erApproach: // the band (4..7) — closer breaks hover, farther breaks the click
+		if found {
+			e.lastSeen, e.lastSeenAt = target.Position, time.Now()
+		}
 		if !found {
+			// R82: Hratli sat at the streaming edge — loaded, unloaded, every 0.8s,
+			// and every unload sent the errand back to Seek without a step taken.
+			// A recent sighting is walked toward; only a stale one re-seeks.
+			if !e.lastSeenAt.IsZero() && time.Since(e.lastSeenAt) < 8*time.Second {
+				e.walkTo(ctx, e.lastSeen, who)
+				return errandStep{}
+			}
 			e.to(erSeek, "npc unloaded")
 			return errandStep{}
 		}
