@@ -71,6 +71,9 @@ func (c *Config) WeakUnique(row int, cl Class, level int, usesBow bool, owned fu
 	if cl.Kind == KindGear && NormalBase(cl.Code) {
 		return true, "unique on a normal base (below the baseline)"
 	}
+	if cl.Kind == KindAmmo && !usesBow {
+		return true, "unique quiver, no bow"
+	}
 	if row <= 0 {
 		return false, ""
 	}

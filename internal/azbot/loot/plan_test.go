@@ -135,3 +135,10 @@ func TestFitsShape(t *testing.T) {
 		t.Fatal("a free row fits a 3x1")
 	}
 }
+
+// R60: an unidentified unique quiver on the ground (row 0) is still weak with no bow.
+func TestUnidentifiedQuiverWeak(t *testing.T) {
+	if weak, _ := Default().WeakUnique(0, Class{Code: "cqv", Kind: KindAmmo}, 30, false, nil, nil); !weak {
+		t.Fatal("no bow: a unique quiver is weak even unidentified")
+	}
+}
