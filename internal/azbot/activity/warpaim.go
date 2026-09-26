@@ -30,12 +30,22 @@ func warpAimOffsets(warpID int) []data.Position {
 
 // boxOffsets: the select box's center and inner quarters in projection px.
 func boxOffsets(w *gamedata.LvlWarp) []data.Position {
-	if w == nil || w.SelectDX <= 0 || w.SelectDY <= 0 {
+	if w == nil {
 		return nil
 	}
-	cx := float64(w.SelectX) + float64(w.SelectDX)/2
-	cy := float64(w.SelectY) + float64(w.SelectDY)/2
-	qx, qy := float64(w.SelectDX)/4, float64(w.SelectDY)/4
+	return boxOffsetsXY(w.SelectX, w.SelectY, w.SelectDX, w.SelectDY)
+}
+
+// boxOffsetsXY: a classic-px box (x, y, width, height from the tile) as
+// projection-px click offsets — the center, then the inner quarters. Shared
+// by the level warps (lvlwarp.txt) and the doors (objects.txt).
+func boxOffsetsXY(x, y, dx, dy int) []data.Position {
+	if dx <= 0 || dy <= 0 {
+		return nil
+	}
+	cx := float64(x) + float64(dx)/2
+	cy := float64(y) + float64(dy)/2
+	qx, qy := float64(dx)/4, float64(dy)/4
 	pts := [][2]float64{{cx, cy}, {cx - qx, cy}, {cx + qx, cy}, {cx, cy - qy}, {cx, cy + qy}}
 	out := make([]data.Position, 0, len(pts))
 	for _, p := range pts {

@@ -5,41 +5,56 @@ import (
 	"time"
 
 	"github.com/hectorgimenez/d2go/pkg/data"
+	"github.com/hectorgimenez/d2go/pkg/data/object"
 	"github.com/hectorgimenez/koolo/internal/azbot/arbiter"
 	"github.com/hectorgimenez/koolo/internal/azbot/percept"
 	"github.com/hectorgimenez/koolo/internal/azbot/verbs"
 )
 
 // ---------------------------------------------------------------- Door (ClassRecover)
-
-// OWNER (2026-09-25, R36): "stuck on a door in claw viper 1". azbot never opened
-// doors: 11 minutes held at a closed door with idle monsters behind it. Door bids
-// when a closed door stands within doorReach and he has not moved for doorStill,
-// clicks it (hover-confirmed, one aim per tick), and is judged by the door no
-// longer being selectable. Three tries on one door ban it for two minutes.
+//
+// OWNER (2026-09-25, R36): "stuck on a door in claw viper 1"; (2026-09-26):
+// "why is it having a hard time with doors though". Three faults in the first
+// cut, fixed here:
+//   - REACTIVE: it bid only after 3 s standing within 5 of a closed door, but
+//     she BUMPS a door (jitter over 2 tiles reads as moving) and the unstick
+//     watchdog took her away first. A closed door within doorNear now bids at
+//     once — the planner walks straight through doors.
+//   - HOVER-ONLY: it clicked only on a hover confirmation; unfocused the hover
+//     is dark, so it re-aimed forever and never clicked (nor ever banned).
+//     After doorDarkAims dark aims it clicks the box center blind — the posted
+//     click is background-safe.
+//   - GUESSED AIM: the stash chest's offsets. The object table has each door's
+//     selection box (classic px from the object's tile): aim at its center.
 
 const (
-	doorReach = 5
-	doorStill = 3 * time.Second
+	doorNear     = 4 // a closed door this close is in the way: open it now
+	doorReach    = 5 // the stuck rule's reach
+	doorStill    = 3 * time.Second
+	doorDarkAims = 2
 )
 
 type Door struct {
-	ring    []posAt
-	target  data.UnitID
-	tries   int
-	clickAt time.Time
-	ban     map[data.UnitID]time.Time
-	aimIdx  int
-	aimX    int
-	aimY    int
-	aimed   bool
+	ring     []posAt
+	target   data.UnitID
+	tries    int
+	dark     int
+	clickAt  time.Time
+	ban      map[data.UnitID]time.Time
+	aimIdx   int
+	aimX     int
+	aimY     int
+	aimed    bool
+	boxX     int // the current target's box center (the blind click point)
+	boxY     int
+	boxKnown bool
 }
 
 func NewDoor() *Door { return &Door{ban: map[data.UnitID]time.Time{}} }
 
 func (d *Door) Name() string { return "door" }
 
-func (d *Door) nearest(s *percept.Snapshot, now time.Time) (percept.PortalRef, bool) {
+func (d *Door) nearest(s *percept.Snapshot, now time.Time, reach int) (percept.PortalRef, bool) {
 	best, bd := percept.PortalRef{}, 1<<30
 	for _, dr := range s.Doors {
 		if until, ok := d.ban[dr.ID]; ok && now.Before(until) {
@@ -49,7 +64,20 @@ func (d *Door) nearest(s *percept.Snapshot, now time.Time) (percept.PortalRef, b
 			best, bd = dr, dd
 		}
 	}
-	return best, bd <= doorReach
+	return best, bd <= reach
+}
+
+// held: the stuck rule — no ground gained for doorStill.
+func (d *Door) held(s *percept.Snapshot, now time.Time) bool {
+	if len(d.ring) < 3 || now.Sub(d.ring[0].at) < doorStill {
+		return false
+	}
+	for _, p := range d.ring {
+		if chebyshev(p.pos, s.Me.Pos) > 2 {
+			return false
+		}
+	}
+	return true
 }
 
 func (d *Door) Demand(s *percept.Snapshot) *arbiter.Demand {
@@ -62,21 +90,27 @@ func (d *Door) Demand(s *percept.Snapshot) *arbiter.Demand {
 	for len(d.ring) > 0 && now.Sub(d.ring[0].at) > doorStill+time.Second {
 		d.ring = d.ring[1:]
 	}
-	if d.target == 0 { // a fresh bid needs held ground; a live one keeps its grant
-		if len(d.ring) < 3 || now.Sub(d.ring[0].at) < doorStill {
-			return nil
-		}
-		for _, p := range d.ring {
-			if chebyshev(p.pos, s.Me.Pos) > 2 {
-				return nil // he is moving: no door holds him
-			}
-		}
-	}
-	if _, ok := d.nearest(s, now); !ok {
+	_, near := d.nearest(s, now, doorNear)
+	_, reach := d.nearest(s, now, doorReach)
+	if !(near || (reach && (d.target != 0 || d.held(s, now)))) {
 		return nil
 	}
 	return &arbiter.Demand{Who: d.Name(), Class: arbiter.ClassRecover, Urgency: 0.935,
 		Commit: arbiter.Commitment{MinHold: 2 * time.Second}}
+}
+
+// doorAimOffsets: click offsets (projection px) inside the door's selection
+// box, center first; the stash offsets when the table has no box.
+func doorAimOffsets(obj object.Name) []data.Position {
+	desc := obj.Desc()
+	if box := boxOffsetsXY(desc.Left, desc.Top, desc.Width, desc.Height); box != nil {
+		return box
+	}
+	out := make([]data.Position, 0, len(stashAim))
+	for _, o := range stashAim {
+		out = append(out, data.Position{X: o[0], Y: o[1]})
+	}
+	return out
 }
 
 func (d *Door) Step(ctx *Ctx) Verdict {
@@ -85,43 +119,53 @@ func (d *Door) Step(ctx *Ctx) Verdict {
 		return Running
 	}
 	now := time.Now()
-	dr, ok := d.nearest(s, now)
+	dr, ok := d.nearest(s, now, doorReach)
 	if !ok {
 		d.target = 0
-		return Done
+		return Done // opened (no longer selectable) or out of reach
 	}
 	if dr.ID != d.target {
-		d.target, d.tries, d.aimed = dr.ID, 0, false
+		d.target, d.tries, d.dark, d.aimed, d.boxKnown = dr.ID, 0, 0, false, false
 	}
-	// the door opened: it is no longer selectable (dropped from s.Doors)
 	if time.Since(d.clickAt) < 900*time.Millisecond {
-		return Running
+		return Running // the click's answer: the door leaves the closed list
 	}
 	if d.tries >= 3 {
 		d.ban[dr.ID] = now.Add(2 * time.Minute)
 		ctx.Led.Append(verbs.Outcome{Verb: "door", Holder: d.Name(), Result: verbs.ResDeaf,
-			Evidence: fmt.Sprintf("door %d at (%d,%d): 3 clicks, still closed — banned 2m", int(dr.ID), dr.Pos.X, dr.Pos.Y)})
+			Evidence: fmt.Sprintf("door %d (obj %d) at (%d,%d): 3 clicks, still closed — banned 2m", int(dr.ID), int(dr.Obj), dr.Pos.X, dr.Pos.Y)})
 		d.target = 0
 		return Done
 	}
+	me := ctx.GR.GetData().PlayerUnit.Position
+	bx := int(float32((dr.Pos.X-me.X)-(dr.Pos.Y-me.Y))*19.8) + ctx.GR.GameAreaSizeX/2
+	by := int(float32((dr.Pos.X-me.X)+(dr.Pos.Y-me.Y))*9.9) + ctx.GR.GameAreaSizeY/2
+	offs := doorAimOffsets(dr.Obj)
+	d.boxX, d.boxY, d.boxKnown = bx+offs[0].X, by+offs[0].Y, true
+	click := func(x, y int, how string) {
+		ctx.M.BareClick(x, y)
+		d.clickAt, d.aimed = now, false
+		d.tries++
+		ctx.Led.Append(verbs.Outcome{Verb: "door", Holder: d.Name(), Result: verbs.ResDone,
+			Evidence: fmt.Sprintf("clicked door %d (obj %d) at (%d,%d) (try %d, %s)", int(dr.ID), int(dr.Obj), dr.Pos.X, dr.Pos.Y, d.tries, how)})
+	}
 	if d.aimed {
 		if hd := ctx.GR.GetData().HoverData; hd.IsHovered && hd.UnitID == dr.ID {
-			ctx.M.BareClick(d.aimX, d.aimY)
-			d.clickAt, d.aimed = now, false
-			d.tries++
-			ctx.Led.Append(verbs.Outcome{Verb: "door", Holder: d.Name(), Result: verbs.ResDone,
-				Evidence: fmt.Sprintf("clicked door %d at (%d,%d) (try %d)", int(dr.ID), dr.Pos.X, dr.Pos.Y, d.tries)})
+			click(d.aimX, d.aimY, "hover-confirmed")
+			return Running
+		}
+		d.dark++
+		if d.dark >= doorDarkAims && verbs.ClickableLogical(ctx.GR, d.boxX, d.boxY) {
+			d.dark = 0
+			click(d.boxX, d.boxY, "box center, hover dark")
 			return Running
 		}
 	}
 	ctx.M.MoveStop()
-	me := ctx.GR.GetData().PlayerUnit.Position
-	bx := int(float32((dr.Pos.X-me.X)-(dr.Pos.Y-me.Y))*19.8) + ctx.GR.GameAreaSizeX/2
-	by := int(float32((dr.Pos.X-me.X)+(dr.Pos.Y-me.Y))*9.9) + ctx.GR.GameAreaSizeY/2
-	for n := 0; n < len(stashAim); n++ {
-		o := stashAim[d.aimIdx%len(stashAim)]
+	for n := 0; n < len(offs); n++ {
+		o := offs[d.aimIdx%len(offs)]
 		d.aimIdx++
-		cx, cy := bx+o[0], by+o[1]
+		cx, cy := bx+o.X, by+o.Y
 		if verbs.ClickableLogical(ctx.GR, cx, cy) {
 			ctx.M.AimPhysical(cx, cy)
 			d.aimX, d.aimY, d.aimed = cx, cy, true

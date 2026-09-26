@@ -201,6 +201,8 @@ type PortalRef struct {
 	Pos data.Position
 	// Dest: the area the portal leads to (0 = unknown).
 	Dest area.ID
+	// Obj: the object row (doors: its selection box comes from the table).
+	Obj object.Name
 }
 
 // MissileRef is a projectile in flight (unit table type 3). No ownership, no velocity —
@@ -545,7 +547,7 @@ func (p *Perceptor) Capture() *Snapshot {
 		if ob.ID != 0 && ob.Selectable && ob.IsDoor() {
 			dx, dy := ob.Position.X-d.PlayerUnit.Position.X, ob.Position.Y-d.PlayerUnit.Position.Y
 			if dx >= -20 && dx <= 20 && dy >= -20 && dy <= 20 {
-				s.Doors = append(s.Doors, PortalRef{ID: ob.ID, Pos: ob.Position})
+				s.Doors = append(s.Doors, PortalRef{ID: ob.ID, Pos: ob.Position, Obj: ob.Name})
 			}
 		}
 	}
