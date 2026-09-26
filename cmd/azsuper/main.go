@@ -134,6 +134,35 @@ func startAzbot(n int) {
 
 // inWorld reports whether a character is loaded (and whether the reader
 // could attach at all).
+// inTown: the character stands in a town (the only safe moment to swap builds).
+func inTown(pid uint32) bool {
+	proc, err := memory.NewProcessForPID(pid)
+	if err != nil {
+		return false
+	}
+	defer proc.Close()
+	pu := memory.NewGameReader(proc).GetData().PlayerUnit
+	return pu.Address != 0 && pu.Area.IsTown()
+}
+
+// deployWaiting: a new build waits beside the running one.
+func deployWaiting() bool {
+	nw, err := os.Stat(filepath.Join("build", "azbot.exe.new"))
+	return err == nil && nw.Size() > 0
+}
+
+// swapBuild installs build/azbot.exe.new (azbot must not be running).
+func swapBuild() {
+	if !deployWaiting() {
+		return
+	}
+	if err := os.Rename(filepath.Join("build", "azbot.exe.new"), filepath.Join("build", "azbot.exe")); err != nil {
+		logf("deploy: swap failed: %v", err)
+		return
+	}
+	logf("deploy: installed the waiting build")
+}
+
 func inWorld(pid uint32) (world, charScreen, deathScreen, ok bool) {
 	proc, err := memory.NewProcessForPID(pid)
 	if err != nil {
@@ -208,7 +237,15 @@ func main() {
 		}
 		if world {
 			menuSince = time.Time{}
+			// AUTO-DEPLOY: a waiting build goes in at the next town visit (the
+			// owner's rule: restarts only in town) — no hand-run restart loops.
+			if az := pidOf("azbot.exe"); az != 0 && deployWaiting() && inTown(pid) {
+				logf("deploy: new build waiting and she is in town — stopping azbot pid=%d", az)
+				killPID(az)
+				time.Sleep(time.Second)
+			}
 			if pidOf("azbot.exe") == 0 {
+				swapBuild()
 				runs++
 				startAzbot(runs)
 				time.Sleep(15 * time.Second)
