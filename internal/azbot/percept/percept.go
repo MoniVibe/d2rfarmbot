@@ -125,6 +125,9 @@ type PlayerState struct {
 	CursorItem bool
 	// CursorUnit: the unit on the cursor (0 = none) — the inventory tracker's swap-loop count.
 	CursorUnit data.UnitID
+	// BossesDead: act bosses (ActBoss) seen dying or dead this tick — the act
+	// transition's evidence (the quest log reads 0 on this build).
+	BossesDead []npc.ID
 	// States: the player's live states (buffs) — the Buff activity recasts
 	// a proven self-buff whose state is missing.
 	States state.States
@@ -481,6 +484,9 @@ func (p *Perceptor) Capture() *Snapshot {
 	s.QuitMenu = d.OpenMenus.QuitMenu
 	for _, m := range d.Monsters.Enemies() {
 		if m.Mode == mode.NpcDeath || m.Mode == mode.NpcDead {
+			if ActBoss[m.Name] > 0 {
+				s.Me.BossesDead = append(s.Me.BossesDead, m.Name) // the campaign witness
+			}
 			continue
 		}
 		rev := false
@@ -1080,4 +1086,13 @@ func (p *Perceptor) mpPct(pu data.PlayerUnit) int {
 		pct = 100
 	}
 	return pct
+}
+
+// ActBoss: the boss whose death ends each act's required quest chain.
+var ActBoss = map[npc.ID]int{
+	npc.Andariel: 1,
+	npc.Duriel:   2,
+	npc.Mephisto: 3,
+	npc.Diablo:   4,
+	npc.BaalCrab: 5,
 }

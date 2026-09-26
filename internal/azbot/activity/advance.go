@@ -160,6 +160,12 @@ func Act2Itinerary() []Leg {
 // supported now; later acts intentionally fall back to Act 1 until their quest
 // gates and area-specific route are modeled instead of being guessed.
 func CampaignItinerary(start area.ID) []Leg {
+	switch start.Act() {
+	case 5:
+		return Act5Itinerary()
+	case 4:
+		return Act4Itinerary()
+	}
 	if start.Act() == 3 {
 		return Act3Itinerary()
 	}
@@ -387,6 +393,7 @@ func (a *Advance) place(ar area.ID) int {
 
 func (a *Advance) Demand(s *percept.Snapshot) *arbiter.Demand {
 	sanctuaryClock(s, time.Now())
+	a.followAct(s)
 	// R66: in the Canyon the itinerary ended there, Advance never bid, and the
 	// true-tomb pick (in Step) never ran. One bid lets Step append the tomb leg.
 	if s.Valid && (!a.tombTried && (s.Me.Area == area.CanyonOfTheMagi || isTomb(s.Me.Area)) || isTomb(s.Me.Area) && !a.tombSettled) {
@@ -2397,6 +2404,32 @@ func Act3Itinerary() []Leg {
 		{area.LowerKurast, 30}, {area.KurastBazaar, 31},
 		{area.SewersLevel1Act3, 31}, {area.SewersLevel2Act3, 31},
 		{area.UpperKurast, 31}, {area.KurastCauseway, 32}, {area.Travincal, 32},
+		// The Durance opens once Khalim's Will smashes the Compelling Orb in
+		// Travincal; Mephisto waits in level 3 (his red portal is Act 4).
+		{area.DuranceOfHateLevel1, 32}, {area.DuranceOfHateLevel2, 33}, {area.DuranceOfHateLevel3, 33},
+	}
+}
+
+// Act4Itinerary: Pandemonium to the Chaos Sanctuary (the seals and Diablo).
+// Level gates sit ~3 under the normal-difficulty monster levels.
+func Act4Itinerary() []Leg {
+	return []Leg{
+		{area.ThePandemoniumFortress, 1},
+		{area.OuterSteppes, 24}, {area.PlainsOfDespair, 25}, {area.CityOfTheDamned, 26},
+		{area.RiverOfFlame, 27}, {area.ChaosSanctuary, 28},
+	}
+}
+
+// Act5Itinerary: Harrogath to Baal. The Ancients guard the Summit's way into
+// the Worldstone Keep; the Throne's waves precede the Chamber.
+func Act5Itinerary() []Leg {
+	return []Leg{
+		{area.Harrogath, 1},
+		{area.BloodyFoothills, 25}, {area.FrigidHighlands, 26}, {area.ArreatPlateau, 27},
+		{area.CrystallinePassage, 28}, {area.GlacialTrail, 29}, {area.FrozenTundra, 29},
+		{area.TheAncientsWay, 30}, {area.ArreatSummit, 33},
+		{area.TheWorldStoneKeepLevel1, 35}, {area.TheWorldStoneKeepLevel2, 36}, {area.TheWorldStoneKeepLevel3, 37},
+		{area.ThroneOfDestruction, 38}, {area.TheWorldstoneChamber, 38},
 	}
 }
 
@@ -2430,4 +2463,28 @@ func (a *Advance) markPadPresetDead(ctx *Ctx, ar area.ID) {
 	}
 	ctx.Led.Append(verbs.Outcome{Verb: "waypoint", Holder: a.Name(), Result: verbs.ResRefused,
 		Evidence: fmt.Sprintf("area %d: the map's pad spot is empty on this seed — only a live pad counts now", int(ar))})
+}
+
+// campaignMode: the executive runs -goal campaign (the itinerary follows the
+// act); farm/rampage keep the itinerary they were built with.
+var campaignMode bool
+
+// SetCampaignMode is called by the executive at startup.
+func SetCampaignMode(on bool) { campaignMode = on }
+
+// followAct: arriving in a new act's town (a voyage, a red portal, a relog
+// into a later save) swaps in that act's itinerary and its saved frontier —
+// the itinerary used to be chosen once, at process start.
+func (a *Advance) followAct(s *percept.Snapshot) {
+	if !campaignMode || s == nil || !s.Valid || !s.Me.InTown {
+		return
+	}
+	act := s.Me.Area.Act()
+	if act == a.campaignAct || act < 1 || act > 5 {
+		return
+	}
+	a.Itinerary = CampaignItinerary(s.Me.Area)
+	a.campaignAct = act
+	a.idx, a.frontier, a.frontierRead = 0, 0, false
+	a.questCap = -1
 }

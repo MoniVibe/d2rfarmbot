@@ -2056,6 +2056,7 @@ func main() {
 	if *goal == "campaign" || *goal == "rampage" {
 		startArea := area.ID(gr.GetData().PlayerUnit.Area)
 		legs = activity.CampaignItinerary(startArea)
+		activity.SetCampaignMode(*goal == "campaign")
 		logger.Info("campaign itinerary selected", "act", startArea.Act(), "startArea", int(startArea), "legs", len(legs))
 	}
 	// One registry for live and -replay; its order breaks exact bid ties.
@@ -2487,6 +2488,7 @@ func main() {
 		recordCrossing(s)
 		padWitness(s)            // any brush with a pad lights it, whatever the holder
 		activity.ObserveBlood(s) // P-2.0: one blood truth for every Demand this cycle
+		activity.ObserveBosses(s, mem, gr.GetData().PlayerUnit.Name)
 		// Grid follows the area (the re-align, owned in one place) — and REGROWS on a
 		// clock in the field: rooms stream in as she walks, and a grid built at the
 		// border brands every unloaded room a wall. Loot/Reclaim/Fight journeys were
