@@ -206,11 +206,12 @@ func campaignLegs(start area.ID) []Leg {
 }
 
 type Advance struct {
-	wpProg     padProgress      // the pad approach's progress clock (fights excluded)
-	claimTried map[area.ID]bool // panel-claimed pads already probed this run
-	bossHunt   bool             // Demand saw a living act boss on this level (huntBoss)
-	bossNoted  area.ID          // the boss hunt was ledgered in this area
-	wpWalkArea area.ID          // the area whose pad wpWalkAt is walking to
+	wpProg       padProgress      // the pad approach's progress clock (fights excluded)
+	claimTried   map[area.ID]bool // panel-claimed pads already probed this run
+	bossHunt     bool             // Demand saw a living act boss on this level (huntBoss)
+	bossNoted    area.ID          // the boss hunt was ledgered in this area
+	wpWalkArea   area.ID          // the area whose pad wpWalkAt is walking to
+	chestClickAt time.Time        // the quest leg's own chest click (quest.go)
 	// quest legs (quest.go): per seed.area, when the hold began and whether it ended.
 	questSince   map[string]time.Time
 	questDone    map[string]bool

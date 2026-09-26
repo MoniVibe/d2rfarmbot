@@ -162,19 +162,33 @@ func clickObject(ctx *Ctx, ob data.Object) bool {
 	me := d.PlayerUnit.Position
 	bx := int(float32((ob.Position.X-me.X)-(ob.Position.Y-me.Y))*19.8) + ctx.GR.GameAreaSizeX/2
 	by := int(float32((ob.Position.X-me.X)+(ob.Position.Y-me.Y))*9.9) + ctx.GR.GameAreaSizeY/2
+	// The object table's selection box first (the door fix, 2026-09-26), then
+	// the old base sweep.
+	var pts []data.Position
+	desc := ob.Name.Desc()
+	pts = append(pts, boxOffsetsXY(desc.Left, desc.Top, desc.Width, desc.Height)...)
 	for dy := -60; dy <= 12; dy += 8 {
 		for _, dx := range []int{0, -10, 10, -20, 20} {
-			cx, cy := bx+dx, by+dy
-			if !verbs.ClickableLogical(ctx.GR, cx, cy) {
-				continue
-			}
-			ctx.M.AimPhysical(cx, cy)
-			time.Sleep(45 * time.Millisecond)
-			if hd := ctx.GR.GetData().HoverData; hd.IsHovered && hd.UnitID == ob.ID {
-				ctx.M.BareClick(cx, cy)
-				return true
-			}
+			pts = append(pts, data.Position{X: dx, Y: dy})
 		}
+	}
+	for _, o := range pts {
+		cx, cy := bx+o.X, by+o.Y
+		if !verbs.ClickableLogical(ctx.GR, cx, cy) {
+			continue
+		}
+		ctx.M.AimPhysical(cx, cy)
+		time.Sleep(45 * time.Millisecond)
+		if hd := ctx.GR.GetData().HoverData; hd.IsHovered && hd.UnitID == ob.ID {
+			ctx.M.BareClick(cx, cy)
+			return true
+		}
+	}
+	// HOVER DARK (unfocused — owner, 2026-09-26: the Staff of Kings chest was
+	// never opened): click the box center blind; the caller judges by the
+	// object's own state (a chest turns unselectable, a panel opens).
+	if cx, cy := bx+pts[0].X, by+pts[0].Y; verbs.ClickableLogical(ctx.GR, cx, cy) {
+		ctx.M.BareClick(cx, cy)
 	}
 	return false
 }

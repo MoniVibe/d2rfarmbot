@@ -177,9 +177,19 @@ func (a *Advance) questHold(ctx *Ctx) bool {
 		return false
 	}
 	if seen {
-		// Stand beside it; Imbibe's quest-chest rite does the hover-confirmed click.
 		if chebyshev(s.Me.Pos, chest.Position) > 4 {
 			moveTo(ctx, chest.Position, moveto.Opts{Holder: a.Name(), Purpose: moveto.Approach, Arrive: 4, MaxHold: 1200 * time.Millisecond, Fallback: true})
+			return true
+		}
+		// THE LEG OPENS ITS OWN CHEST (owner, 2026-09-26: "i had to manually take
+		// the staff because it kind of skipped it since its in a chest" — the leg
+		// stood beside it waiting on Imbibe's rite, which went to another object).
+		// The socket's proven hover-confirmed object click, every 2 s.
+		if time.Since(a.chestClickAt) > 2*time.Second {
+			a.chestClickAt = time.Now()
+			ok := clickObject(ctx, chest)
+			ctx.Led.Append(verbs.Outcome{Verb: "quest", Holder: a.Name(), Result: verbs.ResDone,
+				Evidence: fmt.Sprintf("%s: clicked the chest (obj %d) at (%d,%d) confirmed=%v", q.label, int(q.chest), chest.Position.X, chest.Position.Y, ok)})
 		}
 		return true
 	}
