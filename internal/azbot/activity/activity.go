@@ -701,6 +701,9 @@ func (f *Flee) Step(ctx *Ctx) Verdict {
 	if !s.Valid {
 		return Running
 	}
+	if grabHeal(ctx, s, f.Name()) || escapeTrap(ctx, s, f.Name()) {
+		return Running // the escape reflexes (escape.go), then the retreat
+	}
 	// Done only above the SAME floor that triggers the bid (plus margin) — an exit bar
 	// below the entry bar re-bids the moment it releases: the thrash generator.
 	// The density retreat exits at crowd<8 (in at 12): healthy blood alone is not
@@ -1083,6 +1086,13 @@ func (b *Breakout) Step(ctx *Ctx) Verdict {
 	// she cast the exit and then stood BESIDE it ring-fighting until the bar armed —
 	// by then the label was buried under bodies and she died pinned at (5843,4847),
 	// 65->0 in 11s (run 24). Emergency + portal = ENTER, desperately.
+	// ESCAPE REFLEXES (owner: "cast traps as it runs away when low hp... picking
+	// up hp from the ground as it does") — not while diving an owned portal.
+	if !(b.engaged && s.Me.HPPct < 18) {
+		if grabHeal(ctx, s, b.Name()) || escapeTrap(ctx, s, b.Name()) {
+			return Running
+		}
+	}
 	hardFloor := s.Me.HPPct < 18
 	if len(livePortals) > 0 {
 		b.engaged = true // a standing LIVE portal + Breakout stepping = the escape is OWNED
