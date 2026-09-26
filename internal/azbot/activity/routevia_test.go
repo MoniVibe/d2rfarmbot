@@ -1,6 +1,7 @@
 package activity
 
 import (
+	"github.com/hectorgimenez/koolo/internal/game"
 	"testing"
 	"time"
 
@@ -77,5 +78,31 @@ func TestAct3Itinerary(t *testing.T) {
 		if _, ok := questLegs[ar]; !ok {
 			t.Errorf("area %d holds a Khalim relic leg", ar)
 		}
+	}
+}
+
+func TestHopCountPrefersTheNearestOnRamp(t *testing.T) {
+	lv := func(to ...area.ID) game.AreaData {
+		var ad game.AreaData
+		for _, a := range to {
+			ad.AdjacentLevels = append(ad.AdjacentLevels, data.Level{Area: a})
+		}
+		return ad
+	}
+	var d game.Data
+	d.Areas = map[area.ID]game.AreaData{
+		area.DryHills:             lv(area.RockyWaste, area.FarOasis, area.HallsOfTheDeadLevel1),
+		area.HallsOfTheDeadLevel1: lv(area.DryHills, area.HallsOfTheDeadLevel2),
+		area.HallsOfTheDeadLevel2: lv(area.HallsOfTheDeadLevel1, area.HallsOfTheDeadLevel3),
+		area.FarOasis:             lv(area.DryHills),
+	}
+	if h := hopCount(d, area.DryHills, area.FarOasis); h != 1 {
+		t.Fatalf("Dry Hills -> Far Oasis: %d hops, want 1", h)
+	}
+	if h := hopCount(d, area.HallsOfTheDeadLevel2, area.FarOasis); h != 3 {
+		t.Fatalf("Halls 2 -> Far Oasis: %d hops, want 3", h)
+	}
+	if h := hopCount(d, area.FarOasis, area.Harrogath); h != -1 {
+		t.Fatal("unknown: -1")
 	}
 }

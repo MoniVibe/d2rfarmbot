@@ -924,25 +924,36 @@ func (a *Advance) Step(ctx *Ctx) Verdict {
 			// walked the whole overland trek while STONY'S LIT PAD sat one
 			// ride away. The deepest lit pad at-or-behind the current leg is
 			// the on-ramp to an unlit target; ride it, then march.
+			// THE NEAREST ON-RAMP (2026-09-26: bound for Far Oasis, the deepest
+			// lit pad behind the front was Halls 2 — three levels back up to Dry
+			// Hills, whose own pad was lit). Among the lit pads at or behind the
+			// current leg, the one the fewest level hops from the target wins
+			// (ties: the deeper); off-route and hot pads are skipped.
+			best, bestHops := area.ID(0), 1<<30
 			for i := a.campIdx(); i >= 0; i-- {
+				ar := a.Itinerary[i].Area
 				lit := false
 				if ctx.Mem != nil {
-					ctx.Mem.GetJSON(LitKey(charName, a.Itinerary[i].Area), &lit)
+					ctx.Mem.GetJSON(LitKey(charName, ar), &lit)
 				}
-				if lit && a.Itinerary[i].Area != s.Me.Area {
-					// OFF-ROUTE PAD (R48: the Harem is next and opens from Lut
-					// Gholein itself; the staging ride took him to Lost City and
-					// the march turned around). The on-ramp must lie on the road:
-					// its first hop from here matches the target's.
-					if th, ph := nextHop(dd, s.Me.Area, next.Area), nextHop(dd, s.Me.Area, a.Itinerary[i].Area); th != 0 && ph != 0 && th != ph {
-						break
-					}
-					if hotLanding(a.Itinerary[i].Area) {
-						break // that pad just threw him out: walk
-					}
-					wants = append(wants, a.Itinerary[i].Area)
-					break
+				if !lit || ar == s.Me.Area || hotLanding(ar) {
+					continue
 				}
+				// OFF-ROUTE PAD (R48: the Harem opens from Lut Gholein itself; the
+				// staging ride took him to Lost City and the march turned around).
+				if th, ph := nextHop(dd, s.Me.Area, next.Area), nextHop(dd, s.Me.Area, ar); th != 0 && ph != 0 && th != ph {
+					continue
+				}
+				h := hopCount(dd, ar, next.Area)
+				if h < 0 {
+					h = 1 << 20 // unknown distance: only if nothing better
+				}
+				if h < bestHops {
+					best, bestHops = ar, h
+				}
+			}
+			if best != 0 {
+				wants = append(wants, best)
 			}
 			// An unknown destination is not permission to click its row. On this
 			// mod the panel can show a dark/lying list, and repeated blind rows
@@ -2739,4 +2750,32 @@ func (a *Advance) skipHeldQuestLegs(ctx *Ctx, idx int) int {
 		idx++
 	}
 	return idx
+}
+
+// hopCount: level hops from -> to over the map's adjacency (-1 unknown).
+func hopCount(d game.Data, from, to area.ID) int {
+	if from == to {
+		return 0
+	}
+	dist := map[area.ID]int{from: 0}
+	queue := []area.ID{from}
+	for len(queue) > 0 {
+		c := queue[0]
+		queue = queue[1:]
+		ad, ok := d.Areas[c]
+		if !ok {
+			continue
+		}
+		for _, al := range ad.AdjacentLevels {
+			if _, seen := dist[al.Area]; seen {
+				continue
+			}
+			dist[al.Area] = dist[c] + 1
+			if al.Area == to {
+				return dist[al.Area]
+			}
+			queue = append(queue, al.Area)
+		}
+	}
+	return -1
 }
