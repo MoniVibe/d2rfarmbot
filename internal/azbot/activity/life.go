@@ -152,7 +152,7 @@ func Registry(legs []Leg, road []data.Position) *Roster {
 		world(&Breakout{}), world(&Stand{}), world(&Flee{March: adv.MarchGoal}), world(NewDodge()),
 		free(&Respawn{}), unst, world(recall), world(NewReclaim()), world(fight), world(NewBuff()), world(NewTraps()),
 		NewDiscard(), world(NewLoot()), world(NewImbibe()), world(NewHaul()), NewFence(), NewRestock(),
-		NewRepair(), NewHeal(), NewCainIdentify(), NewStash(), NewBelt(), NewShed(), NewSocket(), // owner 2026-09-24: Cain identifies; keepers go to the stash
+		NewRepair(), NewHeal(), NewCainIdentify(), NewStash(), NewBelt(), NewShed(), NewSocket(), NewTransmute(), // owner 2026-09-24: Cain identifies; keepers go to the stash
 		NewEquip(), NewSpend(), NewVoyage(), world(NewActEnd(adv)), world(adv),
 		world(NewWithdraw()), world(NewUnload()), world(NewDoor()), world(&Return{}), world(&Travel{Road: road}), world(&Explore{Frontier: adv.FrontierFor, Bias: adv.ExploreBias}),
 	}}
