@@ -25,7 +25,10 @@ func init() { spendWorks.Store(true) }
 // skill points here (P-8.7). Retired on frozen counts.
 var skillSpendWorks atomic.Bool
 
-func init() { skillSpendWorks.Store(true) }
+// OWNER (2026-09-26): "i will spend some skill points and test some builds"
+// — skill points are the owner's; the bot spends only stat points (and a
+// skill-door refusal no longer strands the stat points behind it).
+func init() { skillSpendWorks.Store(false) }
 
 // farmbot's calibrated skill-tree grid, client pixels — PROVEN on this repack
 // (-autoskill spent Benji's banked points into Teeth, 2026-07-18). Page 1 is

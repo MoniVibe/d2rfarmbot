@@ -344,6 +344,8 @@ func TestSpendVendorInterlock(t *testing.T) {
 // Clean advances only on a clean screen, then picks the door.
 func TestSpendCleanPicksDoor(t *testing.T) {
 	withJanitor(t, true)
+	skillSpendWorks.Store(true) // the door mechanics (off by default: the owner spends skills)
+	defer skillSpendWorks.Store(false)
 	sp := NewSpend()
 	s := &percept.Snapshot{Valid: true}
 	s.Me.SkillPoints = 1
