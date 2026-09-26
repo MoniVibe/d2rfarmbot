@@ -12,6 +12,7 @@ import (
 	"unsafe"
 
 	"github.com/hectorgimenez/d2go/pkg/data"
+	"github.com/hectorgimenez/d2go/pkg/data/stat"
 	"github.com/hectorgimenez/d2go/pkg/memory"
 	"github.com/hectorgimenez/d2go/pkg/utils"
 	"github.com/hectorgimenez/koolo/internal/config"
@@ -50,6 +51,8 @@ func findHWND(pid uint32) win.HWND {
 
 func main() {
 	rooms := flag.Int("rooms", 3, "rooms to dump raw")
+	states := flag.Bool("states", false, "player states and selected skills")
+	pdata := flag.Bool("pdata", false, "dump PlayerData for quest/waypoint buffers")
 	mapcheck := flag.Bool("mapcheck", false, "fetch koolo-map with the live seed and print this level exits")
 	actlevels := flag.Bool("actlevels", false, "find the act first-level pointer")
 	roomlist := flag.Bool("roomlist", false, "current level rooms in subtiles: ROOM x y w h")
@@ -83,6 +86,49 @@ func main() {
 		os.Exit(1)
 	}
 	fmt.Printf("level=%d rooms=%d external=%d\n", g.LevelID, len(g.Rooms), len(g.External))
+	if *states {
+		fmt.Println("states:", d.PlayerUnit.States, "rightskill", int(d.PlayerUnit.RightSkill), "leftskill", int(d.PlayerUnit.LeftSkill))
+		g, _ := d.PlayerUnit.BaseStats.FindStat(stat.Gold, 0)
+		sg, _ := d.PlayerUnit.BaseStats.FindStat(stat.StashGold, 0)
+		fmt.Println("gold", g.Value, "stashgold", sg.Value, "inventory.Gold", d.Inventory.Gold, "stashedGold", d.Inventory.StashedGold)
+		sl := u64(d.PlayerUnit.Address + 0x88)
+		for off := uintptr(0xA80); off < 0xBA0; off += 4 {
+			if v := u32(sl + off); v != 0 {
+				fmt.Printf(" +%03x=%08x", off, v)
+			}
+		}
+		fmt.Println()
+		return
+	}
+	if *pdata {
+		pdp := u64(d.PlayerUnit.Address + 0x10)
+		fmt.Printf("playerdata %x name=%q\n", pdp, p.ReadStringFromMemory(pdp, 0))
+		for _, off := range []uintptr{0x40, 0x58} {
+			q := u64(pdp + off)
+			buf := u64(q)
+			fmt.Println("RAW", off, "struct", fmt.Sprintf("% x", p.ReadBytesFromMemory(q, 32)))
+			if b2 := u64(q + 0x10); b2 > 0x10000 && b2 < 0x7fffffffffff {
+				fmt.Println("RAW", off, "buf@+10", fmt.Sprintf("% x", p.ReadBytesFromMemory(b2, 48)))
+			}
+			if buf > 0x10000 && buf < 0x7fffffffffff {
+				fmt.Println("RAW", off, "buffer", fmt.Sprintf("% x", p.ReadBytesFromMemory(buf, 96)))
+			}
+		}
+		for off := uintptr(0); off < 0x100; off += 8 {
+			q := u64(pdp + off)
+			fmt.Printf("  +%02x %016x", off, q)
+			if q > 0x10000 && q < 0x7fffffffffff {
+				inner := u64(q)
+				fmt.Printf("  -> [%016x %016x]", inner, u64(q+8))
+				if inner > 0x10000 && inner < 0x7fffffffffff {
+					b := p.ReadBytesFromMemory(inner, 24)
+					fmt.Printf(" bytes % x", b)
+				}
+			}
+			fmt.Println()
+		}
+		return
+	}
 	if *mapcheck {
 		if err := gr.FetchMapData(); err != nil {
 			fmt.Println("fetch:", err)

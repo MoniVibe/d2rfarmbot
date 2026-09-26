@@ -65,6 +65,9 @@ const (
 // episodes that move nothing retire it; NewWorld re-arms it.
 var stashWorks atomic.Bool
 
+// stashShot: the open stash is photographed once per process.
+var stashShot atomic.Bool
+
 func init() { stashWorks.Store(true) }
 
 type stPhase uint8
@@ -265,6 +268,9 @@ func (st *Stash) Step(ctx *Ctx) Status {
 				st.tabbed, st.clickT = true, time.Now()
 				st.tab, st.want = stashTabShared, stashTabShared
 				return l.wait(400 * time.Millisecond)
+			}
+			if !stashShot.Swap(true) {
+				snapPNG(ctx, "logs/stash_open.png") // the gold button's geometry (withdraw errand, to come)
 			}
 			l.to(stLift, "stash open on the Shared tab (by sight)")
 			return l.running()

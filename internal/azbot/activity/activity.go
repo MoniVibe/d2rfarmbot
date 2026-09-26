@@ -2173,7 +2173,12 @@ func (l *Loot) Name() string { return "loot" }
 // (3,602 of ~14,600 ground units) — they would dominate every pile the probe
 // sweeps and every approach. The loot policy still plans bottles (tier
 // "potion", belt room only) for the day a relay shows pickups landing.
-var LootPotions = false
+//
+// ON 2026-09-26: pickups land now (the bag fills with planned takes), and a
+// broke trapper with an empty belt died twice in the Catacombs — bottles
+// on the floor are the potion supply when the purse is empty. Belt room
+// only (loot.Plan): they never clutter the bag.
+var LootPotions = true
 
 // wanted scores a ground item: the loot value model's plan (package loot,
 // config/loot.yaml — lootpolicy.go). A TAKE scores its value (tier S ≈ 0.9,
