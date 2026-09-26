@@ -24,7 +24,6 @@ import (
 	"time"
 	"unsafe"
 
-	"github.com/hectorgimenez/d2go/pkg/data/mode"
 	"github.com/hectorgimenez/d2go/pkg/memory"
 	"github.com/hectorgimenez/koolo/internal/game"
 	"github.com/lxn/win"
@@ -177,19 +176,24 @@ func inWorld(pid uint32) (world, charScreen, deathScreen, ok bool) {
 	// into the pause menu every 27s. Any live main player = in the world;
 	// the death screen is a named main player in area 0, mode Death/Dead,
 	// with no live one beside it.
-	named := false
+	// The death screen (dumped live 20:41): the body is a CORPSE unit (area
+	// kept, mode Dead) still flagged main — it must never count as "in the
+	// world" — and the rest are area-0 ghosts. Alive = a non-corpse main
+	// player with an area; dead = none such, and a corpse lying somewhere.
+	corpse := false
 	for _, pu := range gr.GetRawPlayerUnits() {
 		if !pu.IsMainPlayer {
+			continue
+		}
+		if pu.IsCorpse {
+			corpse = true
 			continue
 		}
 		if pu.Area > 0 && pu.Position.X > 0 {
 			world = true
 		}
-		if pu.Name != "" && pu.Area == 0 && (pu.Mode == mode.Death || pu.Mode == mode.Dead) {
-			named = true
-		}
 	}
-	deathScreen = !world && named
+	deathScreen = !world && corpse
 	return world, gr.IsInCharacterSelectionScreen(), deathScreen, true
 }
 
@@ -206,6 +210,12 @@ func main() {
 	_ = slog.Default()
 	if *check {
 		pid := pidOf("D2R.exe")
+		if proc, err := memory.NewProcessForPID(pid); err == nil {
+			for _, pu := range memory.NewGameReader(proc).GetRawPlayerUnits() {
+				fmt.Println("unit", pu.UnitID, "main", pu.IsMainPlayer, "corpse", pu.IsCorpse, "name", pu.Name, "area", pu.Area, "pos", pu.Position, "mode", pu.Mode, "addr", pu.Address)
+			}
+			proc.Close()
+		}
 		w, c, dth, ok := inWorld(pid)
 		fmt.Println("d2r", pid, "azbot", pidOf("azbot.exe"), "world", w, "charScreen", c, "deathScreen", dth, "ok", ok)
 		return
