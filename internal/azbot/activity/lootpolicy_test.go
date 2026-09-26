@@ -150,7 +150,7 @@ func TestLootSwapApproachThenDiscard(t *testing.T) {
 func TestLootProgressUrgency(t *testing.T) {
 	resetLoot(t)
 	l := NewLoot()
-	rare := percept.ItemRef{ID: 1, Pos: data.Position{X: 110, Y: 100}, Quality: 6, Class: 1}
+	rare := percept.ItemRef{ID: 1, Pos: data.Position{X: 110, Y: 100}, Quality: 6, Class: 307} // a rare helm: a judged slot
 	junk := []percept.BagItem{{Unit: 60, ID: 1, GX: 0, GY: 0, Qual: 2, Ident: true}}
 	s := lootSnap(0, 0, rare)
 	s.Bag = junk

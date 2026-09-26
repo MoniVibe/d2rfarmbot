@@ -563,9 +563,20 @@ func (p *Perceptor) Capture() *Snapshot {
 	bowActive, bowSecondary := false, false
 	quivActive, quivSecondary := -2, -2 // -2 = no quiver seen on that set
 	slotQual := map[item.LocationType]int{}
+	// slotScore: GearScore of what each judged slot wears (gearscore.go);
+	// rings keep both, the stronger decides (a quick-equip may swap either).
+	slotScore := map[item.LocationType]float64{}
+	var ringScores []float64
+	class := d.PlayerUnit.Class
 	bowQual := -1
 	for _, eq := range d.Inventory.ByLocation(item.LocationEquipped) {
 		bl := eq.Location.BodyLocation
+		switch bl {
+		case item.LocHead, item.LocTorso, item.LocFeet, item.LocGloves, item.LocNeck:
+			slotScore[bl] = GearScore(eq, class)
+		case item.LocLeftRing, item.LocRightRing:
+			ringScores = append(ringScores, GearScore(eq, class))
+		}
 		switch bl {
 		case item.LocHead, item.LocTorso, item.LocFeet, item.LocGloves:
 			slotQual[bl] = int(eq.Quality)
@@ -674,6 +685,19 @@ func (p *Perceptor) Capture() *Snapshot {
 	// fitsSlot: the piece would improve a slot she wears (or fill an empty one) —
 	// judged on quality alone, requirements NOT yet consulted.
 	fitsSlot := func(it data.Item) bool {
+		// THE GEAR SCORE (2026-09-26): armor and jewelry are judged by their
+		// stats against what the slot wears — an empty slot takes anything.
+		if slot := GearSlot(it.Desc().Type); slot != item.LocNone {
+			sc := GearScore(it, class)
+			if slot == item.LocLeftRing {
+				if len(ringScores) < 2 {
+					return sc > 0
+				}
+				return upgradeBeats(sc, max(ringScores[0], ringScores[1]))
+			}
+			worn, ok := slotScore[slot]
+			return !ok || upgradeBeats(sc, worn)
+		}
 		switch it.Desc().Type {
 		case "bow":
 			// P-9.3: judged against the bow set WHEREVER it rides. The Equip

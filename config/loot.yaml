@@ -31,10 +31,10 @@
 # Raise tiers here once pickups are proven reliable.
 tiers:
   unique: S
-  set: C
-  rare: C
-  crafted: C
-  magic_jewelry: C        # magic rings and amulets
+  set: A                 # 2026-09-26: picked for the gear score (armor/helm/gloves/boots/jewelry only); sold or dropped unless an upgrade
+  rare: A                 # 2026-09-26: picked for the gear score (armor/helm/gloves/boots/jewelry only); sold or dropped unless an upgrade
+  crafted: A                 # 2026-09-26: picked for the gear score (armor/helm/gloves/boots/jewelry only); sold or dropped unless an upgrade
+  magic_jewelry: A                 # 2026-09-26: picked for the gear score (armor/helm/gloves/boots/jewelry only); sold or dropped unless an upgrade
   magic_gear: C           # magic weapons/armor
   plain_gear: C           # normal / superior / low-quality bases
   rune: S

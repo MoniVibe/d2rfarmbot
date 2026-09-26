@@ -282,10 +282,10 @@ func Occupied(n int, at func(i int) (id, gx, gy int)) int {
 // classify as plain gear (tier C, never picked). R14: the Staff of Kings chest was
 // the goal, and "msf" read as a staff. Codes are vanilla (the gear rows are unshifted).
 var questGear = map[string]bool{
-	"msf": true, // Staff of Kings
-	"hst": true, // Horadric Staff
-	"vip": true, // Amulet of the Viper
-	"g33": true, // The Gidbinn
+	"msf": true,              // Staff of Kings
+	"hst": true,              // Horadric Staff
+	"vip": true,              // Amulet of the Viper
+	"g33": true,              // The Gidbinn
 	"qf1": true, "qf2": true, // Khalim's Flail / Will
 	"leg": true, // Wirt's Leg
 	"hfh": true, // Hell Forge Hammer

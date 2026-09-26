@@ -57,11 +57,11 @@ func TestEvaluateTiers(t *testing.T) {
 		tier Tier
 	}{
 		{Item{ID: 0, Quality: QUnique}, TierS},
-		{Item{ID: 0, Quality: QSet}, TierS},
+		{Item{ID: 307, Quality: QSet}, TierS},
 		{Item{ID: 626, Quality: QNormal, Name: "LumRune"}, TierS},          // Eld rune
 		{Item{ID: 618, Quality: QMagic, Name: "OrtRune"}, TierS},           // magic small charm
 		{Item{ID: 658, Quality: QRare}, TierS},                             // rare jewel
-		{Item{ID: 0, Quality: QRare}, TierA},                               // rare gear
+		{Item{ID: 307, Quality: QRare}, TierA},                               // rare gear
 		{Item{ID: 537, Quality: QMagic, Name: "Flag"}, TierA},              // magic ring
 		{Item{ID: 538, Quality: QNormal, Name: "Fang"}, TierA},             // gold
 		{Item{ID: 0, Quality: QMagic}, TierB},                              // magic gear
@@ -75,7 +75,7 @@ func TestEvaluateTiers(t *testing.T) {
 		}
 	}
 	// Unique beats rare beats magic inside the value order.
-	u, r := c.Evaluate(Item{ID: 0, Quality: QUnique}), c.Evaluate(Item{ID: 0, Quality: QRare})
+	u, r := c.Evaluate(Item{ID: 0, Quality: QUnique}), c.Evaluate(Item{ID: 307, Quality: QRare})
 	if u.Value <= r.Value {
 		t.Error("a unique must outvalue a rare")
 	}
@@ -185,9 +185,9 @@ func bagOf(items ...Carried) []Carried { return items }
 func TestPlanSpaceDecisions(t *testing.T) {
 	c := wide()
 	unique := Item{ID: 0, Quality: QUnique} // hand axe: 1x3
-	rare := Item{ID: 0, Quality: QRare}
+	rare := Item{ID: 307, Quality: QRare}
 	junkAxe := Carried{Unit: 11, Item: Item{ID: 0, Quality: QNormal}, Identified: true} // plain gear, 3 cells
-	idRare := Carried{Unit: 12, Item: Item{ID: 0, Quality: QRare}, Identified: true}    // shown its hand: B
+	idRare := Carried{Unit: 12, Item: Item{ID: 307, Quality: QRare}, Identified: true}    // shown its hand: B
 	tome := Carried{Unit: 13, Item: Item{ID: TomeTP, Quality: QNormal}, Identified: true}
 	charm := Carried{Unit: 14, Item: Item{ID: 620, Quality: QMagic}, Identified: true}
 
@@ -217,7 +217,7 @@ func TestPlanSpaceDecisions(t *testing.T) {
 	if p := c.Plan(rare, Situation{Free: 0, Bag: bagOf(idRare)}); p.Act != Swap {
 		t.Fatalf("A beats an identified rare: %s (%s)", p.Act, p.Why)
 	}
-	unid := Carried{Unit: 15, Item: Item{ID: 0, Quality: QRare}}
+	unid := Carried{Unit: 15, Item: Item{ID: 307, Quality: QRare}}
 	if p := c.Plan(rare, Situation{Free: 0, Bag: bagOf(unid, tome)}); p.Act != Skip {
 		t.Fatalf("A must not displace an equal unidentified rare: %s", p.Act)
 	}
@@ -239,7 +239,7 @@ func TestPlanProgressUrgency(t *testing.T) {
 	c := wide()
 	junk := Carried{Unit: 1, Item: Item{ID: 0, Quality: QNormal}, Identified: true}
 	sit := Situation{Free: 0, Urgent: true, Bag: bagOf(junk)}
-	if p := c.Plan(Item{ID: 0, Quality: QRare}, sit); p.Act != Skip || !strings.Contains(p.Why, "urgent") {
+	if p := c.Plan(Item{ID: 307, Quality: QRare}, sit); p.Act != Skip || !strings.Contains(p.Why, "urgent") {
 		t.Fatalf("urgent + full: tier A must be skipped, got %s (%s)", p.Act, p.Why)
 	}
 	if p := c.Plan(Item{ID: 626, Quality: QNormal}, sit); p.Act != Swap {
@@ -247,7 +247,7 @@ func TestPlanProgressUrgency(t *testing.T) {
 	}
 	// Room to spare: urgency does not stop an A pickup.
 	sit.Free = 20
-	if p := c.Plan(Item{ID: 0, Quality: QRare}, sit); p.Act != Take {
+	if p := c.Plan(Item{ID: 307, Quality: QRare}, sit); p.Act != Take {
 		t.Fatalf("urgent with room: %s", p.Act)
 	}
 	// Tier B stays on the ground by default; with pick_tier_b only when roomy and calm.
@@ -282,7 +282,7 @@ func TestPlanPotionsAndGold(t *testing.T) {
 
 func TestSellGradeAndKeep(t *testing.T) {
 	c := wide()
-	idRare := Carried{Item: Item{ID: 0, Quality: QRare}, Identified: true}
+	idRare := Carried{Item: Item{ID: 307, Quality: QRare}, Identified: true}
 	if c.SellGrade(idRare, 40) {
 		t.Fatal("rares are kept while the bag is roomy")
 	}
@@ -407,8 +407,12 @@ func TestDefaultIsUniquesAndSpecialOnly(t *testing.T) {
 	if d.Gold != TierA || d.Potion != TierA {
 		t.Fatalf("gold and potions are survival (A): %+v", d)
 	}
-	for name, tr := range map[string]Tier{"set": d.Set, "rare": d.Rare,
-		"magic_jewelry": d.MagicJewelry} {
+	// 2026-09-26 (owner: "equipment optimizations so the bot survives"):
+	// rares, sets and magic jewelry are picked for the gear score.
+	if d.Set != TierA || d.Rare != TierA || d.MagicJewelry != TierA {
+		t.Fatalf("gear for the score is A: %+v", d)
+	}
+	for name, tr := range map[string]Tier{"magic_gear": d.MagicGear, "plain_gear": d.PlainGear} {
 		if tr != TierC {
 			t.Errorf("%s must be C under the ruling, got %v", name, tr)
 		}

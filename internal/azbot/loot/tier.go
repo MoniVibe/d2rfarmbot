@@ -99,6 +99,9 @@ func (c *Config) Evaluate(it Item) Verdict {
 	case QUnique:
 		return verdict(d.Unique, it.Quality, "unique", cl)
 	case QSet:
+		if cl.Kind == KindGear && !JudgedGearType(cl.Type) {
+			return verdict(TierC, it.Quality, "set "+cl.Type+": a slot the gear score does not judge", cl)
+		}
 		return verdict(d.Set, it.Quality, "set", cl)
 	}
 	contradiction := func(what string) Verdict {
@@ -158,7 +161,12 @@ func (c *Config) Evaluate(it Item) Verdict {
 		}
 		return verdict(d.Misc, it.Quality, "misc "+cl.Code, cl)
 	}
-	// Gear.
+	// Gear. Rare and crafted pieces are picked only for the slots the gear
+	// score judges (armor, helms, gloves, boots); weapons and shields are the
+	// owner's call — picking them would only fill the bag with merchandise.
+	if (it.Quality == QRare || it.Quality == QCrafted) && !JudgedGearType(cl.Type) {
+		return verdict(TierC, it.Quality, QualityName(it.Quality)+" "+cl.Type+": a slot the gear score does not judge", cl)
+	}
 	switch it.Quality {
 	case QRare:
 		return verdict(d.Rare, it.Quality, "rare gear", cl)
@@ -198,12 +206,21 @@ func (c *Config) EvaluateCarried(it Carried) (v Verdict, pinned bool) {
 		return v, true
 	}
 	_, tagged := c.IDs[it.Item.ID]
-	if it.Identified && !tagged && v.Class.Kind == KindGear && v.Tier > TierB &&
-		(it.Item.Quality == QRare || it.Item.Quality == QMagic || it.Item.Quality == QCrafted) {
+	if it.Identified && !tagged && (v.Class.Kind == KindGear || v.Class.Kind == KindJewelry) && v.Tier > TierB &&
+		(it.Item.Quality == QRare || it.Item.Quality == QMagic || it.Item.Quality == QCrafted || it.Item.Quality == QSet) {
 		// Explicit id tags are respected above; a default-tier rare that turned
 		// out useless is sell-grade.
 		b := verdict(TierB, it.Item.Quality, "identified, not an upgrade", v.Class)
 		return b, false
 	}
 	return v, false
+}
+
+// JudgedGearType: item types the gear score (percept.GearSlot) judges.
+func JudgedGearType(typ string) bool {
+	switch typ {
+	case "helm", "circ", "phlm", "pelt", "tors", "glov", "boot", "amul", "ring":
+		return true
+	}
+	return false
 }
