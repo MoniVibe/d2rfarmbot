@@ -19,8 +19,8 @@ func TestTrapAimPicksDensestPack(t *testing.T) {
 	if !ok || n != 3 || chebyshev(aim, data.Position{X: 110, Y: 101}) > 1 {
 		t.Fatalf("aim %v pack %d ok %v, want the 3-pack", aim, n, ok)
 	}
-	if _, _, ok := trapAim(me, en[:1]); ok {
-		t.Fatal("a lone monster is not worth a trap")
+	if _, n, ok := trapAim(me, en[:1]); !ok || n != 1 {
+		t.Fatal("a lone monster is a target too (bosses come alone)")
 	}
 }
 
@@ -34,8 +34,9 @@ func TestTrapCenterStaysInReach(t *testing.T) {
 	}
 }
 
-// "summon 5 traps ... and continue on": five of hers standing = no more casts.
-func TestTrapsStopAtFive(t *testing.T) {
+// "summon 5 traps ... and continue on": five of hers covering the pack = no
+// more casts; sentries left at an old pack do not count; a lone target wants two.
+func TestTrapsCountCoverageAtTheAim(t *testing.T) {
 	SetTrapBinding(&combat.Binding{Key: 0x71, Skill: 264})
 	defer SetTrapBinding(nil)
 	tr := NewTraps()
@@ -44,10 +45,21 @@ func TestTrapsStopAtFive(t *testing.T) {
 	s.Me.Pos = data.Position{X: 100, Y: 100}
 	s.Enemies = []percept.EnemyRef{{Pos: data.Position{X: 106, Y: 100}}, {Pos: data.Position{X: 107, Y: 101}}}
 	if tr.Demand(s) == nil {
-		t.Fatal("a pack of 2 in reach, no traps standing: lay one")
+		t.Fatal("a pack in reach, no traps: lay one")
 	}
-	s.Me.OwnTraps = 5
+	near := data.Position{X: 105, Y: 100}
+	s.Me.OwnTrapPos = []data.Position{near, near, near, near, near}
 	if tr.Demand(s) != nil {
-		t.Fatal("five standing: continue on")
+		t.Fatal("five covering the pack: continue on")
+	}
+	far := data.Position{X: 80, Y: 80}
+	s.Me.OwnTrapPos = []data.Position{far, far, far, far, far}
+	if tr.Demand(s) == nil {
+		t.Fatal("five left at an old pack guard nothing here: lay more")
+	}
+	s.Enemies = s.Enemies[:1]
+	s.Me.OwnTrapPos = []data.Position{near, near}
+	if tr.Demand(s) != nil {
+		t.Fatal("a lone target wants two")
 	}
 }

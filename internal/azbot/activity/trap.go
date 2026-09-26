@@ -23,8 +23,10 @@ import (
 const (
 	trapReach   = 14                     // tiles: packs further off are the march's business
 	trapCluster = 4                      // tiles: bodies around the aim that count as one pack
-	trapMinPack = 2                      // a lone monster is not worth the mana
-	trapWant    = 5                      // live sentries wanted (the game caps five)
+	trapMinPack = 1                      // a lone monster gets traps too (bosses come alone)
+	trapWant    = 5                      // live sentries wanted at a pack (the game caps five)
+	trapWantOne = 2                      // at a lone monster
+	trapCover   = 10                     // tiles: a sentry this close to the aim covers it
 	trapGap     = 400 * time.Millisecond // one cast animation between sentries
 	trapMinMP   = 15                     // below this the belt refills the pool first
 	trapNear    = 8                      // the spread's center is at most this far from her
@@ -111,14 +113,22 @@ func (t *Traps) Demand(s *percept.Snapshot) *arbiter.Demand {
 	if _, ok := trapBinding(); !ok || !s.Valid || s.Me.InTown || s.Me.HPPct <= 0 || s.Me.MPPct < trapMinMP || s.Me.CursorItem {
 		return nil
 	}
-	if s.Me.OwnTraps >= trapWant || time.Since(t.castAt) < trapGap {
+	if time.Since(t.castAt) < trapGap {
 		return nil
 	}
 	aim, pack, ok := trapAim(s.Me.Pos, s.Enemies)
 	if !ok {
 		return nil
 	}
-	t.aim, t.pack = trapCenter(s.Me.Pos, aim), pack
+	center := trapCenter(s.Me.Pos, aim)
+	// Sentries left at the last pack do not guard this one (owner, 2026-09-26:
+	// "it doesnt use traps for some reason sometimes" — the old count took
+	// every trap within 30 of HER, so a fresh pack 20 tiles on met "5
+	// standing" and got none).
+	if trapsCovering(s.Me.OwnTrapPos, center) >= trapsWanted(pack) {
+		return nil
+	}
+	t.aim, t.pack = center, pack
 	return &arbiter.Demand{Who: t.Name(), Class: arbiter.ClassFight, Urgency: 0.99, // over the contact law (0.98): the traps ARE her damage
 		Commit: arbiter.Commitment{MinHold: 300 * time.Millisecond}}
 }
@@ -138,4 +148,23 @@ func (t *Traps) Step(ctx *Ctx) Verdict {
 	ctx.Led.Append(verbs.Outcome{Verb: "trap", Holder: t.Name(), Result: verbs.ResDone,
 		Evidence: fmt.Sprintf("sentry at (%d,%d): pack of %d, %d of hers standing, mp %d%%", at.X, at.Y, t.pack, ctx.Snap.Me.OwnTraps, ctx.Snap.Me.MPPct)})
 	return Done
+}
+
+// trapsWanted: sentries a target deserves — five at a pack, two at a lone one.
+func trapsWanted(pack int) int {
+	if pack <= 1 {
+		return trapWantOne
+	}
+	return trapWant
+}
+
+// trapsCovering: her sentries within trapCover of the aim.
+func trapsCovering(traps []data.Position, aim data.Position) int {
+	n := 0
+	for _, p := range traps {
+		if chebyshev(p, aim) <= trapCover {
+			n++
+		}
+	}
+	return n
 }

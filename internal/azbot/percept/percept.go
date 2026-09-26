@@ -127,8 +127,9 @@ type PlayerState struct {
 	CursorUnit data.UnitID
 	// OwnTraps: her live sentries within 30 (AllyCode); Summons: her live
 	// summons' monster codes within 30 ("shadowwarrior").
-	OwnTraps int
-	Summons  []string
+	OwnTraps   int
+	OwnTrapPos []data.Position // where they stand (Traps counts those near its aim)
+	Summons    []string
 	// BossesDead: act bosses (ActBoss) seen dying or dead this tick — the act
 	// transition's evidence (the quest log reads 0 on this build).
 	BossesDead []npc.ID
@@ -500,6 +501,7 @@ func (p *Perceptor) Capture() *Snapshot {
 		if chebyshev(pos, m.Position) <= 30 {
 			if strings.HasSuffix(mr.Code, "sentry") || mr.Code == "wakeofdestruction" || mr.Code == "bladecreeper" {
 				s.Me.OwnTraps++
+				s.Me.OwnTrapPos = append(s.Me.OwnTrapPos, m.Position)
 			} else {
 				s.Me.Summons = append(s.Me.Summons, mr.Code)
 			}
