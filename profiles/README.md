@@ -9,6 +9,7 @@ All fields are optional.
 ```yaml
 style: summoner hit-and-run   # the build in words (logged)
 traps: 5                      # sentries wanted at a pack; 0 = never lay traps
+mana_columns: 1               # belt columns kept for mana (default 1)
 summons:                      # summon skill (in-game name) -> count kept alive; 0 = never
   Raise Skeleton: 8
   Raise Skeletal Mage: 4

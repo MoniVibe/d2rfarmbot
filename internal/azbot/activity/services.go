@@ -872,10 +872,12 @@ func NewRestock() *Restock {
 func (r *Restock) Name() string { return "restock" }
 
 func plan(s *percept.Snapshot) (buyHP, buyMana int) {
-	wantMana := 4
-	if s.Me.BeltSlots <= 4 {
-		wantMana = 1
+	// The profile's mana columns (inventory.MinMPCols) x the belt's rows.
+	rows := s.Me.BeltSlots / 4
+	if rows < 1 {
+		rows = 1
 	}
+	wantMana := inventory.MinMPCols * rows
 	if s.Me.MaxMana < 20 {
 		wantMana = 0 // a 4-point pool needs no drink (the owner, 04:57: the barb)
 	}

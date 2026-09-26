@@ -7,6 +7,7 @@ import (
 	"sync"
 	"unicode"
 
+	"github.com/hectorgimenez/koolo/internal/azbot/inventory"
 	"gopkg.in/yaml.v3"
 )
 
@@ -22,6 +23,7 @@ import (
 //
 //	style: hit-and-run        # the owner's words for the build (logged; later: posture)
 //	traps: 5                  # sentries wanted at a pack (0 = never lay traps)
+//	mana_columns: 1           # belt columns kept for mana (default 1)
 //	summons:                  # summon skill (in-game name) -> count kept alive (0 = never)
 //	  Shadow Warrior: 1
 //	  Raise Skeleton: 8
@@ -31,6 +33,9 @@ type Profile struct {
 	Style   string         `yaml:"style"`
 	Traps   *int           `yaml:"traps"`
 	Summons map[string]int `yaml:"summons"`
+	// ManaColumns: belt columns kept for mana (default 1; a Leap-only
+	// barbarian wants 2). Restock buys to it.
+	ManaColumns *int `yaml:"mana_columns"`
 }
 
 var profile = struct {
@@ -62,6 +67,10 @@ func setProfile(char string, p Profile) {
 	profile.Lock()
 	profile.p, profile.char = p, char
 	profile.Unlock()
+	inventory.MinMPCols = 1
+	if p.ManaColumns != nil && *p.ManaColumns >= 0 && *p.ManaColumns <= 3 {
+		inventory.MinMPCols = *p.ManaColumns
+	}
 }
 
 // profileTraps: the sentries wanted at a pack (the default when unset).

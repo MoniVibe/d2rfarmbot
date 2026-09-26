@@ -1121,7 +1121,7 @@ func (p *Perceptor) SurvivalRead() (m mode.PlayerMode, hp, mp int, a area.ID, va
 func (p *Perceptor) Last() *Snapshot { return p.last.Load() }
 
 // potionReserve: bottles per family the bag keeps beside a full belt.
-var potionReserve = map[inventory.Potion]int{inventory.PotHP: 4, inventory.PotMP: 2, inventory.PotRV: 2}
+var potionReserve = map[inventory.Potion]int{inventory.PotHP: 6, inventory.PotMP: 2, inventory.PotRV: 2} // HP 4 -> 6: the belt refills mid-fight (2026-09-26)
 
 // mpPct: the mana percent against the true pool. MaxMana on this build omits the
 // gear's +mana — the pool read 209% (R76, owner: "mana potions exist for that

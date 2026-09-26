@@ -150,8 +150,10 @@ func (m *Model) BeltPlan() (Move, bool) {
 	return Move{}, false
 }
 
-// MinMPCols: blue columns a Leap-only spec keeps when blues are carried.
-const MinMPCols = 2
+// MinMPCols: blue columns kept when blues are carried — the build profile's
+// mana_columns (2026-09-26: 2 was the Leap barbarian's need; a trapper at 94%
+// mana died with half her belt in blues and no red). Default 1.
+var MinMPCols = 1
 
 // columnsOf: belt columns holding potion kind p.
 func (m *Model) columnsOf(p Potion) int {

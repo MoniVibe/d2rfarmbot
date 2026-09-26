@@ -3,5 +3,6 @@
 # of speed every once in a while").
 style: trap hit-and-run
 traps: 5
+mana_columns: 1   # a trapper swims in mana: the belt is for reds
 summons:
   Shadow Warrior: 1
