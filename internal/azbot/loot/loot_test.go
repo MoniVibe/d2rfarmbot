@@ -272,8 +272,18 @@ func TestPlanPotionsAndGold(t *testing.T) {
 	if p := c.Plan(red, Situation{Free: 0, BeltFree: 3, PotionsOn: true}); p.Act != Take || p.Need != 0 {
 		t.Fatalf("belt room: %s need=%d", p.Act, p.Need)
 	}
-	if p := c.Plan(red, Situation{Free: 40, BeltFree: 0, PotionsOn: true}); p.Act != Skip {
-		t.Fatal("full belt: no bottle")
+	if p := c.Plan(red, Situation{Free: 40, BeltFree: 0, PotionsOn: true}); p.Act != Take || p.Need != 1 {
+		t.Fatalf("full belt, bag room: a red goes to the bag (%s need=%d)", p.Act, p.Need)
+	}
+	if p := c.Plan(red, Situation{Free: 0, BeltFree: 0, PotionsOn: true}); p.Act != Skip {
+		t.Fatal("full belt and full bag: no bottle")
+	}
+	blue := Item{ID: 607, Quality: QNormal, Potion: "mana"}
+	if p := c.Plan(blue, Situation{Free: 40, BeltFree: 4, PotionsOn: true, HealPots: 1}); p.Act != Skip {
+		t.Fatal("healing not stocked: the blue waits (it would take a red column)")
+	}
+	if p := c.Plan(blue, Situation{Free: 40, BeltFree: 4, PotionsOn: true, HealPots: 4}); p.Act != Take {
+		t.Fatal("healing stocked: blues welcome")
 	}
 	if p := c.Plan(Item{ID: 538, Quality: QNormal}, Situation{Free: 0}); p.Act != Take {
 		t.Fatalf("gold needs no bag room: %s (%s)", p.Act, p.Why)

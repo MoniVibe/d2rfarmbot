@@ -30,6 +30,7 @@ type Situation struct {
 	BeltFree  int  // free belt slots
 	Urgent    bool // the march is lawful and bidding: she is trying to progress
 	PotionsOn bool // bottle looting is enabled (activity.LootPotions)
+	HealPots  int  // healing/rejuv bottles in the belt (mana waits until they are stocked)
 	HaulOK    bool // a town trip is possible now (portal binding or a live door; calm field)
 	SellCells int  // bag cells a Fence visit would free (perception's junk list)
 	Bag       []Carried
@@ -66,9 +67,23 @@ func (c *Config) Plan(it Item, sit Situation) Plan {
 			p.Why = "potion looting gated off"
 			return p
 		}
-		if sit.BeltFree <= 0 {
-			p.Why = "belt full"
+		// THE BELT IS FOR HEALING FIRST (2026-09-26, the fourth death: she drank
+		// her reds, picked the floor's blues, and D2 put them in the emptied
+		// red columns — "no health lane, belt 8/8" while reds dropped around
+		// her and were skipped as "belt full"). Healing rides the belt or, full,
+		// the bag (the reserve refills the belt); mana only once healing is
+		// stocked, so it never takes a column healing needs.
+		if it.Potion == "mana" && sit.HealPots < 4 {
+			p.Why = "mana waits: healing is not stocked (belt is for reds first)"
 			return p
+		}
+		if sit.BeltFree <= 0 {
+			if it.Potion != "health" || sit.Free <= 0 {
+				p.Why = "belt full"
+				return p
+			}
+			p.Need = 1 // a red into the bag: the belt refills from it
+			break
 		}
 		p.Need = 0
 	}

@@ -123,8 +123,8 @@ func TestLootWantsPotionsForTheBelt(t *testing.T) {
 	if l.wanted(s, uniq) <= l.wanted(s, red) {
 		t.Fatal("a unique must outrank a bottle")
 	}
-	s.Me.BeltUsed = 8
+	s.Me.BeltUsed, s.Me.InvFree = 8, 0
 	if l.wanted(s, red) != 0 {
-		t.Fatal("full belt: bottles are not wanted")
+		t.Fatal("full belt and no bag room: bottles are not wanted")
 	}
 }
