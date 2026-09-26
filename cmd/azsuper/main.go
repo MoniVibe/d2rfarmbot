@@ -141,8 +141,14 @@ func inTown(pid uint32) bool {
 		return false
 	}
 	defer proc.Close()
-	pu := memory.NewGameReader(proc).GetData().PlayerUnit
-	return pu.Address != 0 && pu.Area.IsTown()
+	// A fresh reader has no ghost filter (inWorld): any live, non-corpse
+	// main-player unit standing in a town.
+	for _, pu := range memory.NewGameReader(proc).GetRawPlayerUnits() {
+		if pu.IsMainPlayer && !pu.IsCorpse && pu.Area > 0 && pu.Area.IsTown() {
+			return true
+		}
+	}
+	return false
 }
 
 // deployWaiting: a new build waits beside the running one.
