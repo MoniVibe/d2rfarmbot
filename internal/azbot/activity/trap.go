@@ -2,31 +2,62 @@ package activity
 
 import (
 	"fmt"
+	"sync"
 	"time"
 
 	"github.com/hectorgimenez/d2go/pkg/data"
+	"github.com/hectorgimenez/koolo/internal/azbot/arbiter"
+	"github.com/hectorgimenez/koolo/internal/azbot/combat"
 	"github.com/hectorgimenez/koolo/internal/azbot/percept"
 	"github.com/hectorgimenez/koolo/internal/azbot/verbs"
 )
 
-// ---------------------------------------------------------------- the trap opener
+// ---------------------------------------------------------------- Traps (ClassFight)
 //
-// OWNER (2026-09-26, KillaryClinton the assassin): "combat is pretty easy,
-// just launch some sentries and melee the rest ... sentries, traps, and move
-// along". A proven trap binding lays sentries at the densest pack in reach,
-// a few at a time, then the ordinary melee fight runs. The game keeps at
-// most five traps alive and each fires a limited volley, so the budget is
-// a count over a lifetime window rather than a cast per tick.
+// OWNER (2026-09-26, KillaryClinton, Snowlash build): "just summon 5 traps in
+// a spread formation and continue on". A pack in reach gets sentries laid in
+// a spread around it until five of hers stand (percept OwnTraps counts her
+// live sentry units — not a timer); then the march carries on and the traps
+// do the killing. The fight itself stays evasive: pressed = fight.
 
 const (
-	trapReach   = 12                     // tiles: packs further off are the march's business
+	trapReach   = 14                     // tiles: packs further off are the march's business
 	trapCluster = 4                      // tiles: bodies around the aim that count as one pack
-	trapMinPack = 2                      // a lone monster gets the claws, not the mana
-	trapMax     = 4                      // live traps wanted (the game caps five)
-	trapLife    = 10 * time.Second       // a sentry's working life: older casts are spent
-	trapGap     = 450 * time.Millisecond // one cast animation between sentries
-	trapMinMP   = 25                     // below this the pool is kept for the belt to refill
+	trapMinPack = 2                      // a lone monster is not worth the mana
+	trapWant    = 5                      // live sentries wanted (the game caps five)
+	trapGap     = 400 * time.Millisecond // one cast animation between sentries
+	trapMinMP   = 15                     // below this the belt refills the pool first
+	trapNear    = 8                      // the spread's center is at most this far from her
 )
+
+// trapSpread: the formation around the center — one sentry per slot.
+var trapSpread = []data.Position{{X: 0, Y: 0}, {X: 3, Y: 0}, {X: -3, Y: 0}, {X: 0, Y: 3}, {X: 0, Y: -3}}
+
+var trapBind = struct {
+	sync.Mutex
+	b *combat.Binding
+}{}
+
+// SetTrapBinding is called by the executive after every calibration.
+func SetTrapBinding(b *combat.Binding) {
+	trapBind.Lock()
+	defer trapBind.Unlock()
+	if b == nil {
+		trapBind.b = nil
+		return
+	}
+	v := *b
+	trapBind.b = &v
+}
+
+func trapBinding() (combat.Binding, bool) {
+	trapBind.Lock()
+	defer trapBind.Unlock()
+	if trapBind.b == nil {
+		return combat.Binding{}, false
+	}
+	return *trapBind.b, true
+}
 
 // trapAim picks the pack: the unwalled enemy within trapReach with the most
 // unwalled neighbours inside trapCluster (ties: nearer). ok=false when no
@@ -55,41 +86,56 @@ func trapAim(me data.Position, enemies []percept.EnemyRef) (data.Position, int, 
 	return aim, best, best >= trapMinPack
 }
 
-// trapsLive prunes spent casts and reports how many are still working.
-func (f *Fight) trapsLive(now time.Time) int {
-	kept := f.trapAt[:0]
-	for _, t := range f.trapAt {
-		if now.Sub(t) < trapLife {
-			kept = append(kept, t)
-		}
+// trapCenter pulls a far pack's aim back toward her: the spread stands
+// between her and the pack, never out of her cast range.
+func trapCenter(me, aim data.Position) data.Position {
+	d := chebyshev(me, aim)
+	if d <= trapNear {
+		return aim
 	}
-	f.trapAt = kept
-	return len(kept)
+	return data.Position{X: me.X + (aim.X-me.X)*trapNear/d, Y: me.Y + (aim.Y-me.Y)*trapNear/d}
 }
 
-// layTrap casts one sentry at the pack when the budget allows; true = a cast
-// went out this tick (the caller yields the tick).
-func (f *Fight) layTrap(ctx *Ctx, s *percept.Snapshot) bool {
-	if ctx.Cap == nil || ctx.Cap.Trap == nil || s.Me.InTown || s.Me.MPPct < trapMinMP {
-		return false
+type Traps struct {
+	slot   int
+	castAt time.Time
+	aim    data.Position
+	pack   int
+}
+
+func NewTraps() *Traps { return &Traps{} }
+
+func (t *Traps) Name() string { return "traps" }
+
+func (t *Traps) Demand(s *percept.Snapshot) *arbiter.Demand {
+	if _, ok := trapBinding(); !ok || !s.Valid || s.Me.InTown || s.Me.HPPct <= 0 || s.Me.MPPct < trapMinMP || s.Me.CursorItem {
+		return nil
 	}
-	now := time.Now()
-	if f.trapsLive(now) >= trapMax {
-		return false
-	}
-	if n := len(f.trapAt); n > 0 && now.Sub(f.trapAt[n-1]) < trapGap {
-		return false
+	if s.Me.OwnTraps >= trapWant || time.Since(t.castAt) < trapGap {
+		return nil
 	}
 	aim, pack, ok := trapAim(s.Me.Pos, s.Enemies)
 	if !ok {
-		return false
+		return nil
 	}
-	if !groundAt(ctx, aim, ctx.Cap.Trap.Key, false) {
-		return false
+	t.aim, t.pack = trapCenter(s.Me.Pos, aim), pack
+	return &arbiter.Demand{Who: t.Name(), Class: arbiter.ClassFight, Urgency: 0.99, // over the contact law (0.98): the traps ARE her damage
+		Commit: arbiter.Commitment{MinHold: 300 * time.Millisecond}}
+}
+
+func (t *Traps) Step(ctx *Ctx) Verdict {
+	b, ok := trapBinding()
+	if !ok {
+		return Abandoned
 	}
-	f.trapAt = append(f.trapAt, now)
-	f.lastKey, f.lastStrikeAt = ctx.Cap.Trap.Key, now
-	ctx.Led.Append(verbs.Outcome{Verb: "trap", Holder: f.Name(), Result: verbs.ResDone,
-		Evidence: fmt.Sprintf("sentry at (%d,%d): pack of %d, %d live, mp %d%%", aim.X, aim.Y, pack, len(f.trapAt), s.Me.MPPct)})
-	return true
+	off := trapSpread[t.slot%len(trapSpread)]
+	at := data.Position{X: t.aim.X + off.X, Y: t.aim.Y + off.Y}
+	t.slot++
+	t.castAt = time.Now()
+	if !groundAt(ctx, at, b.Key, false) {
+		return Abandoned
+	}
+	ctx.Led.Append(verbs.Outcome{Verb: "trap", Holder: t.Name(), Result: verbs.ResDone,
+		Evidence: fmt.Sprintf("sentry at (%d,%d): pack of %d, %d of hers standing, mp %d%%", at.X, at.Y, t.pack, ctx.Snap.Me.OwnTraps, ctx.Snap.Me.MPPct)})
+	return Done
 }

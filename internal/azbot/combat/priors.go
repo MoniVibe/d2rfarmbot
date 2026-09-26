@@ -15,6 +15,7 @@ import (
 
 	"github.com/hectorgimenez/d2go/pkg/data/skill"
 	"github.com/hectorgimenez/d2go/pkg/data/state"
+	"github.com/hectorgimenez/koolo/internal/azbot/gamedata"
 )
 
 // Role is the seed classification a prior gives a proven selection (P-7.5).
@@ -30,6 +31,7 @@ const (
 	RoleVault         // cursor-targeted self-displacement: the ring becomes scenery
 	RoleTrap          // ground-placed sentries: laid at a pack, then the fight goes on in melee
 	RoleBuff          // self-cast buff with a readable player state (BuffState)
+	RoleSummon        // a summon kept alive: recast when its unit is gone (SummonCode)
 )
 
 // rolePriors seeds every class's early-to-mid kit plus the universal item
@@ -200,6 +202,12 @@ var rolePriorsByName = func() map[string]Role {
 // Prior returns the seed role for a selection, RoleNone when the table is
 // silent. Callers treat the answer as a hint, never as proof (P-7.2).
 func Prior(id skill.ID) Role {
+	// THE MOD'S OWN TABLE FIRST (2026-09-26): Reimagined adds skills the
+	// vanilla enum does not know (264 is "Snowlash Sentry" here, "Mind Blast"
+	// in d2go). The mod's skills.txt key is authoritative for what it adds.
+	if r := modRole(id); r != RoleNone {
+		return r
+	}
 	if def, ok := skill.Skills[id]; ok {
 		if role, found := rolePriorsByName[canonicalSkillName(def.Name)]; found {
 			return role
@@ -230,4 +238,42 @@ func BuffState(id skill.ID) (state.State, bool) {
 	}
 	st, ok := buffStates[id]
 	return st, ok
+}
+
+// modRole classifies by the mod skill table's key: every sentry is a trap
+// (Snowlash, Glacial Burst, the vanilla ones), the shadows are summons.
+func modRole(id skill.ID) Role {
+	db := gamedata.Get()
+	if db == nil {
+		return RoleNone
+	}
+	sk := db.Skill(int(id))
+	if sk == nil {
+		return RoleNone
+	}
+	k := canonicalSkillName(sk.Key)
+	switch {
+	case strings.HasSuffix(k, "sentry"):
+		return RoleTrap
+	case k == "shadowwarrior" || k == "shadowmaster":
+		return RoleSummon
+	}
+	return RoleNone
+}
+
+// SummonCode: the monstats code of a summon skill's unit ("" = not a summon).
+func SummonCode(id skill.ID) string {
+	db := gamedata.Get()
+	if db == nil {
+		return ""
+	}
+	if sk := db.Skill(int(id)); sk != nil {
+		switch canonicalSkillName(sk.Key) {
+		case "shadowwarrior":
+			return "shadowwarrior"
+		case "shadowmaster":
+			return "shadowmaster"
+		}
+	}
+	return ""
 }

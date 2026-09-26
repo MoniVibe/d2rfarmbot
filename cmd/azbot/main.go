@@ -2024,6 +2024,8 @@ func main() {
 		cap = calibrate()
 		activity.SetBrawler(cap.Reach == nil && cap.Throw == nil) // P-2.-2: no ranged game = the Brawler's Creed
 		activity.SetBuffs(cap.Buffs)
+		activity.SetSummons(cap.Summons)
+		activity.SetTrapBinding(cap.Trap)
 	}
 	if *disengagedF {
 		sd.ses.Disengage(time.Now(), "-disengaged start: the owner drives until F10")
@@ -2559,6 +2561,8 @@ func main() {
 			cap = calibrate()
 			activity.SetBrawler(cap.Reach == nil && cap.Throw == nil)
 			activity.SetBuffs(cap.Buffs)
+			activity.SetSummons(cap.Summons)
+			activity.SetTrapBinding(cap.Trap)
 			fight.Recalibrated() // the audit follows the hands (P-7.1)
 			arms.seed(s.Me.Armed)
 		}

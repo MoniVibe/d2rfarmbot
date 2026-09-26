@@ -49,11 +49,11 @@ type errand struct {
 	// trip; a buy click that does nothing or a reset clears it.
 	tradeSelected bool
 	npcID         npc.ID
-	act1NPC       npc.ID          // captured from the constructor on first use
-	act2NPC       npc.ID          // service counterpart in Lut Gholein; zero means no alternate
-	act3NPC       npc.ID          // service counterpart in Kurast Docks; zero means no alternate
-	circled       bool            // the town circles were appended to this ring
-	lastSeen      data.Position   // where the NPC last streamed in (Approach walks there when it unloads)
+	act1NPC       npc.ID        // captured from the constructor on first use
+	act2NPC       npc.ID        // service counterpart in Lut Gholein; zero means no alternate
+	act3NPC       npc.ID        // service counterpart in Kurast Docks; zero means no alternate
+	circled       bool          // the town circles were appended to this ring
+	lastSeen      data.Position // where the NPC last streamed in (Approach walks there when it unloads)
 	lastSeenAt    time.Time
 	ring          []data.Position // search waypoints until the NPC loads
 	ringIdx       int
@@ -1266,7 +1266,7 @@ type sellTx struct {
 	gold0  int
 	before map[data.UnitID]bool
 	at     time.Time
-	back   int // put-back clicks: the Ctrl+click lifted the item (putBack)
+	back   int  // put-back clicks: the Ctrl+click lifted the item (putBack)
 	drop   bool // the lifted item was set down on the vendor's window (the sell-by-drop)
 }
 

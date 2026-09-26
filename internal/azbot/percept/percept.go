@@ -125,6 +125,10 @@ type PlayerState struct {
 	CursorItem bool
 	// CursorUnit: the unit on the cursor (0 = none) — the inventory tracker's swap-loop count.
 	CursorUnit data.UnitID
+	// OwnTraps: her live sentries within 30 (AllyCode); Summons: her live
+	// summons' monster codes within 30 ("shadowwarrior").
+	OwnTraps int
+	Summons  []string
 	// BossesDead: act bosses (ActBoss) seen dying or dead this tick — the act
 	// transition's evidence (the quest log reads 0 on this build).
 	BossesDead []npc.ID
@@ -482,7 +486,29 @@ func (p *Perceptor) Capture() *Snapshot {
 		s.MenuOpen = ub[0xF4] == 1
 	}
 	s.QuitMenu = d.OpenMenus.QuitMenu
+	// THE ASSASSIN'S OWN (2026-09-26, KillaryClinton's Snowlash build): her
+	// sentries and shadows are monster units. d2go knows the shadows as pets
+	// but not the traps (the mod's Snowlash is row 771), so they read as
+	// enemies: packs "of 6" that were her own traps, swings at her sentries.
+	allies := map[data.UnitID]bool{}
+	for _, m := range d.Monsters {
+		mr := gamedata.Get().Monster(int(m.Name))
+		if mr == nil || !AllyCode(mr.Code) || m.Mode == mode.NpcDeath || m.Mode == mode.NpcDead {
+			continue
+		}
+		allies[m.UnitID] = true
+		if chebyshev(pos, m.Position) <= 30 {
+			if strings.HasSuffix(mr.Code, "sentry") || mr.Code == "wakeofdestruction" || mr.Code == "bladecreeper" {
+				s.Me.OwnTraps++
+			} else {
+				s.Me.Summons = append(s.Me.Summons, mr.Code)
+			}
+		}
+	}
 	for _, m := range d.Monsters.Enemies() {
+		if allies[m.UnitID] {
+			continue
+		}
 		if m.Mode == mode.NpcDeath || m.Mode == mode.NpcDead {
 			if ActBoss[m.Name] > 0 {
 				s.Me.BossesDead = append(s.Me.BossesDead, m.Name) // the campaign witness
@@ -1095,4 +1121,28 @@ var ActBoss = map[npc.ID]int{
 	npc.Mephisto: 3,
 	npc.Diablo:   4,
 	npc.BaalCrab: 5,
+}
+
+// AllyCode: monstats codes of the player's own traps and summons (assassin
+// sentries — vanilla and the mod's Snowlash/Glacial Burst — shadows).
+func AllyCode(code string) bool {
+	switch code {
+	case "wakeofdestruction", "bladecreeper", "shadowwarrior", "shadowmaster":
+		return true
+	}
+	return strings.HasSuffix(code, "sentry")
+}
+
+func chebyshev(a, b data.Position) int {
+	dx, dy := a.X-b.X, a.Y-b.Y
+	if dx < 0 {
+		dx = -dx
+	}
+	if dy < 0 {
+		dy = -dy
+	}
+	if dx > dy {
+		return dx
+	}
+	return dy
 }

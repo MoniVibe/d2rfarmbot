@@ -23,13 +23,25 @@ const (
 	buffMinMP   = 30              // the leap/trap pool comes first below this
 	buffCalm    = 6               // tiles: nothing this close when casting
 	buffRetry   = 4 * time.Second // per skill: a cast that did not take
-	buffTownToo = true            // Burst of Speed pays in town errands as well
+	buffTownToo = false           // skills do not cast in town
 )
 
 var buffs = struct {
 	sync.Mutex
-	list []combat.Binding
+	list    []combat.Binding
+	summons []combat.Binding
 }{}
+
+// SetSummons: the proven summons kept alive (Shadow Warrior) — recast when
+// their unit is not within 30 (percept Summons).
+func SetSummons(b []combat.Binding) {
+	buffs.Lock()
+	buffs.summons = append([]combat.Binding(nil), b...)
+	buffs.Unlock()
+}
+
+// summonRetry: a summon that did not appear is tried again after this.
+const summonRetry = 15 * time.Second
 
 // SetBuffs is called by the executive after every capability calibration.
 func SetBuffs(b []combat.Binding) {
@@ -62,6 +74,22 @@ func (b *Buff) lapsed(s *percept.Snapshot, now time.Time) (combat.Binding, bool)
 		}
 		return bd, true
 	}
+	for _, bd := range buffs.summons {
+		code := combat.SummonCode(bd.Skill)
+		if code == "" || now.Sub(b.triedAt[int(bd.Skill)]) < summonRetry {
+			continue
+		}
+		alive := false
+		for _, c := range s.Me.Summons {
+			if c == code {
+				alive = true
+				break
+			}
+		}
+		if !alive {
+			return bd, true
+		}
+	}
 	return combat.Binding{}, false
 }
 
@@ -91,6 +119,6 @@ func (b *Buff) Step(ctx *Ctx) Verdict {
 	b.triedAt[int(bd.Skill)] = time.Now()
 	o := verbs.CastSelf{Key: bd.Key, WantID: int(bd.Skill)}.Do(ctx.M, ctx.GR, ctx.P, ctx.Led, b.Name())
 	ctx.Led.Append(verbs.Outcome{Verb: "buff", Holder: b.Name(), Result: o.Result,
-		Evidence: fmt.Sprintf("%s (skill %d) recast: its state had lapsed", combat.SkillName(bd.Skill), int(bd.Skill))})
+		Evidence: fmt.Sprintf("%s (skill %d) recast: its state (or its unit) was gone", combat.SkillName(bd.Skill), int(bd.Skill))})
 	return Done
 }
