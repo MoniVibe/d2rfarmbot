@@ -110,7 +110,8 @@ func launchD2R() {
 func startAzbot(n int) {
 	fix := exec.Command(`.\farmbot.exe`, "-fixinput")
 	_ = fix.Run()
-	name := filepath.Join("logs", fmt.Sprintf("run_%s%s%d.out", time.Now().Format("2006-01-02"), *tag, n))
+	// Date + time: a restarted supervisor must never overwrite an earlier run's log.
+	name := filepath.Join("logs", fmt.Sprintf("run_%s%s%d.out", time.Now().Format("2006-01-02_1504"), *tag, n))
 	out, err := os.Create(name)
 	if err != nil {
 		logf("azbot log: %v", err)
