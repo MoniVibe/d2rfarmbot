@@ -2773,7 +2773,11 @@ func main() {
 				// errand keeps ServicesPending true, so Travel stands down for it and
 				// nobody bids ("hangs on Akara"). Silencing services frees the march;
 				// the errands retry next trip. Retired when the Director owns TownVisit.
-				activity.CoolAllServices(90 * time.Second)
+				if line := activity.ServicesPendingWhy(s); line != "" {
+					activity.CoolServiceLine(line, 5*time.Minute) // only the stuck line: restock still runs
+				} else {
+					activity.CoolAllServices(90 * time.Second)
+				}
 			}
 			time.Sleep(200 * time.Millisecond)
 			continue

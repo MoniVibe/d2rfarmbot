@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"image/png"
 	"os"
+	"sync"
 	"sync/atomic"
 	"time"
 
@@ -577,6 +578,28 @@ var globalServiceCoolUntil time.Time
 // CoolAllServices silences all service demands for d (called by the executive).
 func CoolAllServices(d time.Duration) { globalServiceCoolUntil = time.Now().Add(d) }
 
+// lineCool: docket lines silenced one by one (2026-09-26: "identify" waited on
+// a Cain who is not in camp until Tristram — the valve cooled EVERY service,
+// restock with it, and she left town with 219k gold and no healing).
+var lineCool = struct {
+	sync.Mutex
+	until map[string]time.Time
+}{until: map[string]time.Time{}}
+
+// CoolServiceLine silences one docket line for d (the idle valve's scalpel).
+func CoolServiceLine(line string, d time.Duration) {
+	lineCool.Lock()
+	lineCool.until[line] = time.Now().Add(d)
+	lineCool.Unlock()
+}
+
+// lineOpen: the docket line is not silenced.
+func lineOpen(line string) bool {
+	lineCool.Lock()
+	defer lineCool.Unlock()
+	return time.Now().After(lineCool.until[line])
+}
+
 func servicesCooled() bool { return time.Now().Before(globalServiceCoolUntil) }
 
 // ServicesPending reports whether a town errand is waiting: a real belt deficit she can
@@ -596,7 +619,9 @@ func ServicesPendingWhy(s *percept.Snapshot) string {
 		return "" // the idle breaker handed the wheel to the march
 	}
 	if s.Me.HPPct <= 55 && healerHeals.Load() {
-		return "heal" // Akara's refill is free; leaving town below the drink line is denial
+		if lineOpen("heal") {
+			return "heal" // Akara's refill is free; leaving town below the drink line is denial
+		}
 	}
 	// Dressing and identifying are errands too — Travel outranks Service by class,
 	// and without these lines Advance marched her out with a unique bow still bagged
@@ -605,20 +630,28 @@ func ServicesPendingWhy(s *percept.Snapshot) string {
 	// (no landing room, nothing left to sell) must not gate the march — she idled
 	// in town 12 minutes on that deadlock.
 	if equippableCands(s) > 0 && equipWorks.Load() && s.Me.InvFree >= 6 {
-		return "equip"
+		if lineOpen("equip") {
+			return "equip"
+		}
 	}
 	if s.Me.UnidentCount > 0 && cainIDWorks.Load() { // Cain identifies (owner 2026-09-24); no tome charges needed
-		return "identify"
+		if lineOpen("identify") {
+			return "identify"
+		}
 	}
 	// P-8.1: banked points are an errand — the march waited on every other
 	// docket while 20 points sat in the bank and the unique stayed bagged
 	// (run 52: Advance took the actuator at 0.20 over Spend's 0.35 by class).
 	// Same escape clause: a retired spend belief does not gate the march.
 	if s.Me.StatPoints > 0 && spendWorks.Load() {
-		return "spend-stats"
+		if lineOpen("spend-stats") {
+			return "spend-stats"
+		}
 	}
 	if s.Me.SkillPoints > 0 && skillSpendWorks.Load() {
-		return "spend-skills" // P-8.7: banked dps is an errand
+		if lineOpen("spend-skills") {
+			return "spend-skills" // P-8.7: banked dps is an errand
+		}
 	}
 	// P-4.5: a near-empty tome is an errand too — marching out with no escape
 	// hatch is how retreats lose their destination (P-2.3), and an empty ID
@@ -626,14 +659,20 @@ func ServicesPendingWhy(s *percept.Snapshot) string {
 	// TP only: identify is Cain's now (owner 2026-09-24), so an empty ID tome is not an
 	// errand — R15 idled 30 min in town on "pending=scrolls" with the ID tome at 0.
 	if s.Me.TPScrolls >= 0 && s.Me.TPScrolls <= 2 && scrollGap(s.Me.TPScrolls, s.Me.Gold) > 0 {
-		return "scrolls"
+		if lineOpen("scrolls") {
+			return "scrolls"
+		}
 	}
 	if s.Me.Gold >= 10 && s.Me.MinDurPct < inventory.TownRepairPct {
-		return "repair"
+		if lineOpen("repair") {
+			return "repair"
+		}
 	}
 	if s.Me.Gold >= 100 && time.Now().After(potionCoolUntil) {
 		if hp, mana := plan(s); hp+mana >= 2 {
-			return "potions"
+			if lineOpen("potions") {
+				return "potions"
+			}
 		}
 	}
 	// The Fence's docket: broke with junk to sell, or a heavy bag either way.
@@ -645,14 +684,20 @@ func ServicesPendingWhy(s *percept.Snapshot) string {
 	// the march preempted Stash with the item on the cursor. A cursor item in
 	// town is always an errand.
 	if s.Me.InTown && s.Me.CursorItem {
-		return "cursor"
+		if lineOpen("cursor") {
+			return "cursor"
+		}
 	}
 	if stashWorks.Load() && len(stashable(s, loot.Active())) > 0 {
-		return "stash"
+		if lineOpen("stash") {
+			return "stash"
+		}
 	}
 	// OWNER (R27): the bag must be CLEARED every visit — any item the bag plan sells.
 	if s.Me.JunkCount > 0 {
-		return "fence"
+		if lineOpen("fence") {
+			return "fence"
+		}
 	}
 	return ""
 }

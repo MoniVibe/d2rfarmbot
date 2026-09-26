@@ -1,6 +1,8 @@
 package activity
 
 import (
+	"time"
+
 	"testing"
 
 	"github.com/hectorgimenez/d2go/pkg/data"
@@ -129,5 +131,22 @@ func TestWantGoldWhenThePurseIsLow(t *testing.T) {
 	s.Me.Gold, s.Me.StashGold = 300, 0
 	if wantGold(s) {
 		t.Fatal("nothing stashed: nothing to withdraw")
+	}
+}
+
+func TestCoolingOneLineLeavesTheRest(t *testing.T) {
+	s := &percept.Snapshot{Valid: true}
+	s.Me.InTown, s.Me.HPPct, s.Me.UnidentCount, s.Me.JunkCount = true, 100, 2, 1
+	s.Me.TPScrolls = 50
+	if !cainIDWorks.Load() {
+		t.Skip("identify belief retired in this process")
+	}
+	if got := ServicesPendingWhy(s); got != "identify" {
+		t.Fatalf("got %q, want identify first", got)
+	}
+	CoolServiceLine("identify", time.Minute)
+	defer CoolServiceLine("identify", 0)
+	if got := ServicesPendingWhy(s); got != "fence" {
+		t.Fatalf("got %q: with identify silenced the fence line still stands", got)
 	}
 }
