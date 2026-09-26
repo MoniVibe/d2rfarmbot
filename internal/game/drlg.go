@@ -211,7 +211,6 @@ func liveObjects(ll LiveLevel, live []data.Object) []data.Object {
 	return out
 }
 
-
 // liveNPCs: the level's monster presets (town NPCs, quest bosses) REPLACE the
 // map's entry for the same NPC — the map is seed-generated and the seed read
 // is stuck (R-k2: Akara "at" (4532,4606), 900 tiles off, because even the
