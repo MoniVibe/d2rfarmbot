@@ -176,6 +176,7 @@ func CampaignItinerary(start area.ID) []Leg {
 }
 
 type Advance struct {
+	wpProg padProgress // the pad approach's progress clock (fights excluded)
 	// quest legs (quest.go): per seed.area, when the hold began and whether it ended.
 	questSince   map[string]time.Time
 	questDone    map[string]bool
@@ -1018,8 +1019,9 @@ func (a *Advance) Step(ctx *Ctx) Verdict {
 					// (a fenced pad must not own the march — the corner lesson).
 					if a.wpWalkAt.IsZero() {
 						a.wpWalkAt = time.Now()
+						a.wpProg = padProgress{}
 					}
-					if time.Since(a.wpWalkAt) > budget {
+					if a.wpProg.stalled(chebyshev(s.Me.Pos, ob.Position), time.Now(), budget/3) || time.Since(a.wpWalkAt) > 4*budget {
 						a.wpTouched[s.Me.Area] = time.Now()
 						a.wpWalkAt = time.Time{}
 						ctx.Led.Append(verbs.Outcome{Verb: "waypoint", Holder: a.Name(), Result: verbs.ResRefused,
@@ -2487,4 +2489,35 @@ func (a *Advance) followAct(s *percept.Snapshot) {
 	a.campaignAct = act
 	a.idx, a.frontier, a.frontierRead = 0, 0, false
 	a.questCap = -1
+}
+
+// padProgress: a pad approach concedes only when it stops closing in (owner,
+// 2026-09-26: "it skipped stony, wood and black marsh" — the wall-clock 150s
+// budget was spent in fights at Reimagined density, 72 and 87 tiles out,
+// while every march tick still gained ground). Time preempted by other
+// holders (a gap between approach ticks) does not count.
+type padProgress struct {
+	best   int
+	bestAt time.Time
+	last   time.Time
+}
+
+const padTickGap = 3 * time.Second // longer than this between ticks = someone else held
+
+// stalled records this approach tick and reports whether the approach made no
+// progress (3+ tiles closer) for window of approach time.
+func (p *padProgress) stalled(dist int, now time.Time, window time.Duration) bool {
+	if p.bestAt.IsZero() {
+		p.best, p.bestAt, p.last = dist, now, now
+		return false
+	}
+	if gap := now.Sub(p.last); gap > padTickGap {
+		p.bestAt = p.bestAt.Add(gap) // preempted: the clock did not run for us
+	}
+	p.last = now
+	if dist <= p.best-3 {
+		p.best, p.bestAt = dist, now
+		return false
+	}
+	return now.Sub(p.bestAt) > window
 }

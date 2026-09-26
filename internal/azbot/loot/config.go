@@ -107,7 +107,7 @@ func Default() *Config {
 			Unique: TierS, Set: TierC, Rare: TierC, Crafted: TierC,
 			MagicJewelry: TierC, MagicGear: TierC, PlainGear: TierC,
 			Rune: TierS, Gem: TierS, Jewel: TierC, Charm: TierS,
-			Gold: TierC, Potion: TierC, Quest: TierS, Ammo: TierC,
+			Gold: TierA, Potion: TierA, Quest: TierS, Ammo: TierC, // 2026-09-26: gold and bottles are survival
 			Scroll: TierC, Misc: TierC,
 			UnknownModItem: TierS, QualityContradiction: TierC,
 		},

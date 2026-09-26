@@ -402,8 +402,13 @@ func TestDefaultIsUniquesAndSpecialOnly(t *testing.T) {
 	if d.Rune != TierS || d.Gem != TierS || d.Charm != TierS {
 		t.Fatalf("runes, gems and charms must be S: %+v", d)
 	}
+	// 2026-09-26 (k4 died broke with an empty belt; owner: "so the bot
+	// survives better"): gold and bottles are picked (A).
+	if d.Gold != TierA || d.Potion != TierA {
+		t.Fatalf("gold and potions are survival (A): %+v", d)
+	}
 	for name, tr := range map[string]Tier{"set": d.Set, "rare": d.Rare,
-		"gold": d.Gold, "potion": d.Potion, "magic_jewelry": d.MagicJewelry} {
+		"magic_jewelry": d.MagicJewelry} {
 		if tr != TierC {
 			t.Errorf("%s must be C under the ruling, got %v", name, tr)
 		}

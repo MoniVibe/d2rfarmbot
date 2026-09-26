@@ -42,7 +42,7 @@ tiers:
   jewel: C
   charm: S                # small/large/grand charms (a unique charm already carried is skipped: one per character)
   gold: A                 # 2026-09-26: gold IS survival (potions, repair) — k4 died broke with an empty belt
-  potion: B               # 2026-09-26: bottles back on — the belt refills from the bag between town visits
+  potion: A               # 2026-09-26: bottles back on (the belt is their room; picked only while the belt has space)
   quest: S                # uber keys, essences, organs, tokens
   ammo: C                 # arrows/bolts
   scroll: C               # loose TP/ID scrolls (the tomes are refilled in town)
