@@ -1015,6 +1015,32 @@ func (a *Advance) Step(ctx *Ctx) Verdict {
 					Evidence: fmt.Sprintf("objective: area %d has an unlit waypoint — touching it before the march", int(s.Me.Area))})
 			}
 		}
+		// THE FIELD RIDE FORWARD (2026-09-26: after a town trip she walked
+		// Blood Moor → Outer Cloister past four lit pads): standing in an area
+		// whose pad is lit, with a deeper lit pad ahead on the route, the pad
+		// here is the road forward.
+		if litHere && time.Since(a.wpAt) > 60*time.Second {
+			if dest := a.deepestLitAhead(ctx.Mem, ctx.GR.GetData().PlayerUnit.Name, s); dest != 0 {
+				for _, ob := range mapPads {
+					if !ob.IsWaypoint() {
+						continue
+					}
+					if d := chebyshev(s.Me.Pos, ob.Position); d > 6 && d <= 90 {
+						o := marchOpts(ctx, a.Name(), 1200*time.Millisecond)
+						o.AllowLeap = true
+						moveTo(ctx, ob.Position, o)
+						return Running
+					} else if d <= 6 {
+						a.wpAt = time.Now()
+						ctx.Led.Append(verbs.Outcome{Verb: "waypoint", Holder: a.Name(), Result: verbs.ResDone,
+							Evidence: fmt.Sprintf("ride forward: area %d pad -> area %d (the deepest lit pad ahead)", int(s.Me.Area), int(dest))})
+						verbs.UseWaypoint{Want: []area.ID{dest}}.Do(ctx.M, ctx.GR, ctx.P, ctx.Led, a.Name())
+						return Running
+					}
+					break
+				}
+			}
+		}
 		for _, ob := range mapPads {
 			if litHere {
 				break // in the ledger — no ritual needed, ever again
@@ -2553,4 +2579,26 @@ func (p *padProgress) stalled(dist int, now time.Time, window time.Duration) boo
 		return false
 	}
 	return now.Sub(p.bestAt) > window
+}
+
+// deepestLitAhead: the deepest itinerary area past the one he stands in whose
+// pad the ledger knows lit, that his level allows and that did not just
+// throw him out (0 = none).
+func (a *Advance) deepestLitAhead(mem *memory.Store, char string, s *percept.Snapshot) area.ID {
+	if mem == nil {
+		return 0
+	}
+	here := a.place(s.Me.Area)
+	for i := len(a.Itinerary) - 1; i > here; i-- {
+		lg := a.Itinerary[i]
+		if s.Me.Level < lg.MinLevel || hotLanding(lg.Area) {
+			continue
+		}
+		lit := false
+		mem.GetJSON(LitKey(char, lg.Area), &lit)
+		if lit {
+			return lg.Area
+		}
+	}
+	return 0
 }

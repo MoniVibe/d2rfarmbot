@@ -1,6 +1,8 @@
 package activity
 
 import (
+	"github.com/hectorgimenez/koolo/internal/azbot/memory"
+	"github.com/hectorgimenez/koolo/internal/azbot/percept"
 	"time"
 
 	"testing"
@@ -80,5 +82,29 @@ func TestPadProgressIgnoresFightsAndRewardsGround(t *testing.T) {
 	}
 	if !stalled {
 		t.Fatal("no progress for 60s of approach: stalled")
+	}
+}
+
+func TestDeepestLitAheadRidesForward(t *testing.T) {
+	st, err := memory.Open(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+	a := NewAdvance(Act1Itinerary())
+	s := &percept.Snapshot{Valid: true}
+	s.Me.Area, s.Me.Level = area.StonyField, 18
+	if a.deepestLitAhead(st, "K", s) != 0 {
+		t.Fatal("nothing lit: no ride")
+	}
+	for _, ar := range []area.ID{area.StonyField, area.BlackMarsh, area.OuterCloister, area.JailLevel1} {
+		st.PutJSON(LitKey("K", ar), memory.ScopeForever, memory.Provenance{Source: "test"}, true)
+	}
+	if got := a.deepestLitAhead(st, "K", s); got != area.OuterCloister {
+		t.Fatalf("got %d: Jail 1 needs level 19, so Outer Cloister is the deepest lawful pad", got)
+	}
+	s.Me.Level = 19
+	if got := a.deepestLitAhead(st, "K", s); got != area.JailLevel1 {
+		t.Fatalf("got %d: at 19 the Jail pad", got)
 	}
 }
