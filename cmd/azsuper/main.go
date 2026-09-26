@@ -33,7 +33,7 @@ import (
 var (
 	d2rExe   = flag.String("d2r", `C:\Program Files (x86)\Diablo II Resurrected\D2R.exe`, "D2R executable")
 	d2rArgs  = flag.String("args", `-mod D2RMM -txt`, "D2R arguments (the mod launch line)")
-	seconds  = flag.Int("seconds", 3600, "azbot -seconds per run")
+	seconds  = flag.Int("seconds", 86400, "azbot -seconds per run (long: a wind-down is the exception)")
 	tag      = flag.String("tag", "s", "log tag prefix: logs\\run_<date><tag><n>.out")
 	goal     = flag.String("goal", "campaign", "azbot -goal")
 	extra    = flag.String("extra", "", "extra azbot flags")
@@ -133,17 +133,22 @@ func startAzbot(n int) {
 
 // inWorld reports whether a character is loaded (and whether the reader
 // could attach at all).
-func inWorld(pid uint32) (world, charScreen, ok bool) {
+func inWorld(pid uint32) (world, charScreen, deathScreen, ok bool) {
 	proc, err := memory.NewProcessForPID(pid)
 	if err != nil {
-		return false, false, false
+		return false, false, false, false
 	}
 	defer proc.Close()
 	gr := memory.NewGameReader(proc)
 	// IsIngame's static offset is stale on this build (reads false in the
 	// world); a loaded player unit with a position is the bot's own test.
 	pu := gr.GetData().PlayerUnit
-	return pu.Address != 0 && pu.Position.X > 0 && pu.Area > 0, gr.IsInCharacterSelectionScreen(), true
+	world = pu.Address != 0 && pu.Position.X > 0 && pu.Area > 0
+	// "You have died — press ESC to continue" (k4, 2026-09-26): the character
+	// is still loaded (named) but reads area 0 / position 0, and azbot's
+	// attach gate refuses to run on it. ESC respawns her in town.
+	deathScreen = !world && pu.Name != "" && pu.Area == 0
+	return world, gr.IsInCharacterSelectionScreen(), deathScreen, true
 }
 
 func clickPhysical(hwnd win.HWND, x, y int) {
@@ -159,8 +164,8 @@ func main() {
 	_ = slog.Default()
 	if *check {
 		pid := pidOf("D2R.exe")
-		w, c, ok := inWorld(pid)
-		fmt.Println("d2r", pid, "azbot", pidOf("azbot.exe"), "world", w, "charScreen", c, "ok", ok)
+		w, c, dth, ok := inWorld(pid)
+		fmt.Println("d2r", pid, "azbot", pidOf("azbot.exe"), "world", w, "charScreen", c, "deathScreen", dth, "ok", ok)
 		return
 	}
 	os.MkdirAll("logs", 0o755)
@@ -195,7 +200,7 @@ func main() {
 			time.Sleep(20 * time.Second)
 			continue
 		}
-		world, charScreen, ok := inWorld(pid)
+		world, charScreen, deathScreen, ok := inWorld(pid)
 		if !ok {
 			time.Sleep(3 * time.Second)
 			continue
@@ -225,6 +230,12 @@ func main() {
 			continue
 		}
 		switch {
+		case deathScreen:
+			logf("death screen: ESC to respawn in town")
+			game.ForceForegroundHWND(hwnd)
+			time.Sleep(200 * time.Millisecond)
+			game.SendKeyReal(0x1B) // ESC: "press ESC to continue"
+			time.Sleep(5 * time.Second)
 		case charScreen || time.Since(menuSince) > 60*time.Second:
 			logf("character screen (read=%v, %s in menus): clicking Play", charScreen, time.Since(menuSince).Round(time.Second))
 			clickPhysical(hwnd, *playX, *playY)
