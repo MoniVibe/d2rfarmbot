@@ -876,6 +876,26 @@ var fightCoolUntil time.Time
 // on ALL ground — the wide hunt exists only when grinding is the mission.
 var marchLawfulUntil time.Time
 
+// grindUntil — THE GRIND HINT (owner, 2026-09-26: "it is unruly and sometimes
+// goes on rampages unnecessarily"): the 45-tile hunt used to be the DEFAULT
+// whenever the march hint went stale — and it went stale whenever Advance was
+// mute for any reason: HP under 50 (a wounded barbarian hunted the whole
+// screen), the quest-area and tomb bids (they return before the stamp), the
+// town-errand pause. Now the wide hunt must be ASKED for: Advance stamps this
+// only when grinding is the mission (under-levelled for the next leg, or the
+// itinerary is complete). Everything else is the 10-tile corridor.
+var grindUntil time.Time
+
+// huntRadius: Fight's eyesight. 45 only on paying ground while grinding is the
+// declared mission and the march is not bidding; otherwise the corridor.
+func huntRadius(s *percept.Snapshot) int {
+	now := time.Now()
+	if now.Before(grindUntil) && !now.Before(marchLawfulUntil) && ExpWorthwhile(s.Me.Level, s.Me.Area) {
+		return 45
+	}
+	return 10
+}
+
 // canVault is PURE now (night-2 audit finding 5: a side-effecting predicate
 // probed every travel tick re-armed the 4s mana-hunger window perpetually and
 // benched the contact skill for whole marches). Sites that genuinely stood
@@ -1390,17 +1410,14 @@ func (f *Fight) Demand(s *percept.Snapshot) *arbiter.Demand {
 	// "shoot more than moving if enemies are nearby"): anything within 10 is
 	// SHOT — nearby aggro dies, the far field is ignored, and the march owns
 	// the ground between camps.
-	radius := 45
-	if !ExpWorthwhile(s.Me.Level, s.Me.Area) || time.Now().Before(marchLawfulUntil) {
-		// THE CORRIDOR LAW (owner, 02:35 night 2: "killing only monsters in
-		// its way, but otherwise prioritizing progressing the map"; extended
-		// act-wide the same night: "driven by progress rather than run
-		// around killing randomly"): while the march lawfully bids, the
-		// 10-tile corridor binds EVERYONE, everywhere, brawler included.
-		// The 45-tile eyesight exists only when grinding IS the mission —
-		// under-leveled for the next leg, Advance mute, XP the objective.
-		radius = 10
-	}
+	radius := huntRadius(s)
+	// THE CORRIDOR LAW (owner, 02:35 night 2: "killing only monsters in
+	// its way, but otherwise prioritizing progressing the map"; extended
+	// act-wide the same night: "driven by progress rather than run
+	// around killing randomly"): while the march lawfully bids, the
+	// 10-tile corridor binds EVERYONE, everywhere, brawler included.
+	// The 45-tile eyesight exists only when grinding IS the mission —
+	// under-leveled for the next leg or the itinerary done (grindUntil).
 	if time.Now().Before(crossingBracketUntil) {
 		// P-5.10 refined (10:34 screenshot: THIRTY at the mouth are not
 		// lingerers): the bracket holds against few; a door CAMP is a fight.
@@ -1500,10 +1517,7 @@ func (f *Fight) Step(ctx *Ctx) Verdict {
 		// The EXP ORACLE's radius applies here too — no chasing trash on old ground.
 		// ONE radius with Demand (10, reviewer 10): a target that never earned
 		// the bid must never win the selection.
-		radius := 45
-		if !ExpWorthwhile(s.Me.Level, s.Me.Area) || time.Now().Before(marchLawfulUntil) {
-			radius = 10 // THE CORRIDOR LAW: the march owns every tick it lawfully bids
-		}
+		radius := huntRadius(s) // ONE radius with Demand
 		if time.Now().Before(crossingBracketUntil) {
 			horde := 0
 			for _, e := range s.Enemies {

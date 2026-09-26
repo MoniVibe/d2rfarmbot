@@ -441,12 +441,14 @@ func (a *Advance) Demand(s *percept.Snapshot) *arbiter.Demand {
 		idx = a.frontier // the campaign's front line outranks his feet (02:16)
 	}
 	if idx >= len(a.Itinerary)-1 && s.Me.Area == a.Itinerary[len(a.Itinerary)-1].Area {
+		grindUntil = time.Now().Add(2 * time.Second)
 		return nil // the march is complete — grind the summit
 	}
 	if idx >= len(a.Itinerary)-1 {
 		idx = len(a.Itinerary) - 2 // off-itinerary at the last leg: still route back
 	}
 	if s.Me.Level < a.Itinerary[idx+1].MinLevel {
+		grindUntil = time.Now().Add(2 * time.Second)
 		return nil // under-leveled for the next leg: grind here (Fight/Loot/Explore bid on)
 	}
 	urg := 0.2 // above Explore's wander; Fight preempts by class — that IS the rampage
