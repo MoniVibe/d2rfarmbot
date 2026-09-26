@@ -26,6 +26,7 @@ import (
 	"github.com/hectorgimenez/d2go/pkg/data"
 	"github.com/hectorgimenez/d2go/pkg/data/area"
 	"github.com/hectorgimenez/d2go/pkg/data/mode"
+	"github.com/hectorgimenez/d2go/pkg/data/npc"
 	"github.com/hectorgimenez/koolo/internal/azbot/arbiter"
 	"github.com/hectorgimenez/koolo/internal/azbot/coverage"
 	"github.com/hectorgimenez/koolo/internal/azbot/gamedata"
@@ -206,6 +207,8 @@ func campaignLegs(start area.ID) []Leg {
 type Advance struct {
 	wpProg     padProgress      // the pad approach's progress clock (fights excluded)
 	claimTried map[area.ID]bool // panel-claimed pads already probed this run
+	bossHunt   bool             // Demand saw a living act boss on this level (huntBoss)
+	bossNoted  area.ID          // the boss hunt was ledgered in this area
 	wpWalkArea area.ID          // the area whose pad wpWalkAt is walking to
 	// quest legs (quest.go): per seed.area, when the hold began and whether it ended.
 	questSince   map[string]time.Time
@@ -485,6 +488,15 @@ func (a *Advance) Demand(s *percept.Snapshot) *arbiter.Demand {
 		idx = a.frontier // the campaign's front line outranks his feet (02:16)
 	}
 	if idx >= len(a.Itinerary)-1 && s.Me.Area == a.Itinerary[len(a.Itinerary)-1].Area {
+		// THE BOSS HUNT (2026-09-26: at Catacombs 4 nobody bid — the grind
+		// finds no paying monster at level 22 and Andariel was never sought).
+		// On an act's boss level with the boss alive, the march IS the boss.
+		if _, ok := bossOf[s.Me.Area]; ok && campaignMode && !BossDown(s.Me.Area.Act()) {
+			a.bossHunt = true
+			// No march stamp: the evasive march would forbid Fight at the boss.
+			return &arbiter.Demand{Who: a.Name(), Class: arbiter.ClassTravel, Urgency: 0.4,
+				Commit: arbiter.Commitment{MinHold: 2 * time.Second}}
+		}
 		grindUntil = time.Now().Add(2 * time.Second)
 		return nil // the march is complete — grind the summit
 	}
@@ -596,6 +608,12 @@ func (a *Advance) Step(ctx *Ctx) Verdict {
 	a.syncFrontier(ctx)
 	if s.Me.InTown && time.Now().Before(a.wpHoldUntil) {
 		return Running
+	}
+	if a.bossHunt {
+		a.bossHunt = false
+		if v, ok := a.huntBoss(ctx); ok {
+			return v
+		}
 	}
 	CarryReach(ctx) // P-5.9: the march walks with the bow out
 	if a.lastArea == 0 {
@@ -2652,4 +2670,54 @@ func (a *Advance) deepestLitAhead(mem *memory.Store, char string, s *percept.Sna
 		}
 	}
 	return 0
+}
+
+// bossOf: the act boss each boss level holds.
+var bossOf = map[area.ID]npc.ID{
+	area.CatacombsLevel4:      npc.Andariel,
+	area.DurielsLair:          npc.Duriel,
+	area.DuranceOfHateLevel3:  npc.Mephisto,
+	area.ChaosSanctuary:       npc.Diablo,
+	area.TheWorldstoneChamber: npc.BaalCrab,
+}
+
+// huntBoss walks to the act boss: the live unit when it streams in, else its
+// map/DRLG preset (true since the seed fix), else a coverage sweep. Fight and
+// Traps preempt by class the moment it is in reach.
+func (a *Advance) huntBoss(ctx *Ctx) (Verdict, bool) {
+	s := ctx.Snap
+	boss, ok := bossOf[s.Me.Area]
+	if !ok {
+		return 0, false
+	}
+	d := ctx.GR.GetData()
+	var at data.Position
+	for _, m := range d.Monsters {
+		if m.Name == boss {
+			at = m.Position
+			break
+		}
+	}
+	if at == (data.Position{}) {
+		if np, ok := d.NPCs.FindOne(boss); ok && len(np.Positions) > 0 {
+			at = np.Positions[0]
+		}
+	}
+	if at == (data.Position{}) {
+		if st, ok := a.cov.step(ctx, coverage.Bias{}, a.Name()); ok && st == coverage.Exploring {
+			return Running, true
+		}
+		return 0, false
+	}
+	if a.bossNoted != s.Me.Area {
+		a.bossNoted = s.Me.Area
+		ctx.Led.Append(verbs.Outcome{Verb: "quest", Holder: a.Name(), Result: verbs.ResDone,
+			Evidence: fmt.Sprintf("boss hunt: npc %d at (%d,%d), %d from me", int(boss), at.X, at.Y, chebyshev(s.Me.Pos, at))})
+	}
+	if chebyshev(s.Me.Pos, at) > 6 {
+		o := marchOpts(ctx, a.Name(), 1200*time.Millisecond)
+		o.AllowLeap = true
+		moveTo(ctx, at, o)
+	}
+	return Running, true
 }
