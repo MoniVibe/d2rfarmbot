@@ -13,6 +13,7 @@ import (
 
 func main() {
 	class := flag.String("class", "ass", "charclass code (ama sor nec pal bar dru ass)")
+	mlvl := flag.Bool("mlvl", false, "print each level's normal monster level")
 	warps := flag.Bool("warps", false, "list each Act 1-5 level's warp exits with the lvlwarp select box")
 	mon := flag.String("mon", "", "list monster rows whose code or name contains this (case-insensitive) instead")
 	flag.Parse()
@@ -20,6 +21,14 @@ func main() {
 	if err != nil || db == nil {
 		fmt.Println("gamedata:", err)
 		os.Exit(1)
+	}
+	if *mlvl {
+		for id := 1; id < 140; id++ {
+			if l := db.Level(id); l != nil {
+				fmt.Println(id, l.Key, "mlvl", l.MonLvl[0])
+			}
+		}
+		return
 	}
 	if *warps {
 		for id := 1; id < 140; id++ {

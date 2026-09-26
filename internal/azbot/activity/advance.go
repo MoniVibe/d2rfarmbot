@@ -160,6 +160,34 @@ func Act2Itinerary() []Leg {
 // supported now; later acts intentionally fall back to Act 1 until their quest
 // gates and area-specific route are modeled instead of being guessed.
 func CampaignItinerary(start area.ID) []Leg {
+	return gateByMonsterLevel(campaignLegs(start))
+}
+
+// gateSlack: a leg opens at its monster level + this (normal difficulty).
+const gateSlack = 3
+
+// gateByMonsterLevel lowers each leg's level gate to the mod's own monster
+// level + gateSlack (2026-09-26: Inner Cloister's monsters are level 10 and the
+// gate was 21 — a level-20 trapper wandered Jail 3 for half an hour "grinding"
+// for a door she could have taken). Gates only ever go down; without the
+// tables the hand-set gates stand.
+func gateByMonsterLevel(legs []Leg) []Leg {
+	db := gamedata.Get()
+	out := append([]Leg(nil), legs...)
+	for i := range out {
+		if db == nil {
+			break
+		}
+		if lv := db.Level(int(out[i].Area)); lv != nil && lv.MonLvl[0] > 0 {
+			if g := lv.MonLvl[0] + gateSlack; g < out[i].MinLevel {
+				out[i].MinLevel = g
+			}
+		}
+	}
+	return out
+}
+
+func campaignLegs(start area.ID) []Leg {
 	switch start.Act() {
 	case 5:
 		return Act5Itinerary()
