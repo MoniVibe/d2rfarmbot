@@ -183,6 +183,13 @@ func (a *Advance) questHold(ctx *Ctx) bool {
 		}
 		return true
 	}
+	// Not in sight yet: the map's preset is the chest's true position now that
+	// the seed read is fixed (2026-09-26) — walk there; the live chest streams
+	// in on the way. Only without a preset does the level get swept.
+	if pre, ok := questPreset(d.Objects, q.chest); ok && chebyshev(s.Me.Pos, pre) > 6 {
+		moveTo(ctx, pre, moveto.Opts{Holder: a.Name(), Purpose: moveto.Travel, Arrive: 5, MaxHold: 1500 * time.Millisecond, Fallback: true})
+		return true
+	}
 	// Not in sight yet: sweep the level (the same coverage picker the door search uses).
 	if st, ok := a.cov.step(ctx, coverage.Bias{}, a.Name()); ok && st == coverage.Exploring {
 		return true
@@ -349,4 +356,14 @@ func (a *Advance) noteStaffAssembled(ctx *Ctx) {
 	}
 	ctx.Led.Append(verbs.Outcome{Verb: "quest", Holder: a.Name(), Result: verbs.ResDone,
 		Evidence: "the Horadric Staff is held: cube, shaft and amulet legs ended for good — next the Palace, the Sanctuary and the Tombs"})
+}
+
+// questPreset: the chest's map/DRLG preset (unit 0) position, if the level has one.
+func questPreset(obs []data.Object, chest object.Name) (data.Position, bool) {
+	for _, ob := range obs {
+		if ob.Name == chest && ob.ID == 0 {
+			return ob.Position, true
+		}
+	}
+	return data.Position{}, false
 }

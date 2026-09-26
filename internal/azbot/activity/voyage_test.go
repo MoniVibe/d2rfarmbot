@@ -3,6 +3,7 @@ package activity
 import (
 	"testing"
 
+	"github.com/hectorgimenez/d2go/pkg/data"
 	"github.com/hectorgimenez/d2go/pkg/data/area"
 	"github.com/hectorgimenez/d2go/pkg/data/npc"
 	"github.com/hectorgimenez/koolo/internal/azbot/memory"
@@ -98,5 +99,19 @@ func TestFollowActSwapsItinerary(t *testing.T) {
 	a.followAct(s)
 	if a.campaignAct != 5 || a.Itinerary[len(a.Itinerary)-1].Area != area.TheWorldstoneChamber {
 		t.Fatal("Harrogath loads Act 5 ending in the Worldstone Chamber")
+	}
+}
+
+func TestQuestPresetIgnoresLiveUnits(t *testing.T) {
+	obs := []data.Object{
+		{ID: 55, Name: 405, Position: data.Position{X: 1, Y: 1}},
+		{ID: 0, Name: 405, Position: data.Position{X: 7000, Y: 7100}},
+	}
+	p, ok := questPreset(obs, 405)
+	if !ok || p.X != 7000 {
+		t.Fatalf("got %v %v: the preset (unit 0) is the walk target", p, ok)
+	}
+	if _, ok := questPreset(obs, 406); ok {
+		t.Fatal("no preset for another chest")
 	}
 }
