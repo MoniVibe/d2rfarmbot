@@ -178,6 +178,7 @@ func CampaignItinerary(start area.ID) []Leg {
 type Advance struct {
 	wpProg     padProgress      // the pad approach's progress clock (fights excluded)
 	claimTried map[area.ID]bool // panel-claimed pads already probed this run
+	wpWalkArea area.ID          // the area whose pad wpWalkAt is walking to
 	// quest legs (quest.go): per seed.area, when the hold began and whether it ended.
 	questSince   map[string]time.Time
 	questDone    map[string]bool
@@ -396,6 +397,12 @@ func (a *Advance) place(ar area.ID) int {
 func (a *Advance) Demand(s *percept.Snapshot) *arbiter.Demand {
 	sanctuaryClock(s, time.Now())
 	a.followAct(s)
+	// A pad approach belongs to its area (2026-09-26: the Outer Cloister touch
+	// was preempted by the ride home; its clock rode into town, read as a
+	// spent town-pad deadline, and she walked out through Blood Moor).
+	if s.Valid && !a.wpWalkAt.IsZero() && s.Me.Area != a.wpWalkArea {
+		a.wpWalkAt = time.Time{}
+	}
 	// R66: in the Canyon the itinerary ended there, Advance never bid, and the
 	// true-tomb pick (in Step) never ran. One bid lets Step append the tomb leg.
 	if s.Valid && (!a.tombTried && (s.Me.Area == area.CanyonOfTheMagi || isTomb(s.Me.Area)) || isTomb(s.Me.Area) && !a.tombSettled) {
@@ -1027,7 +1034,7 @@ func (a *Advance) Step(ctx *Ctx) Verdict {
 					// Bounded approach: 60 s of not reaching the pad concedes it
 					// (a fenced pad must not own the march — the corner lesson).
 					if a.wpWalkAt.IsZero() {
-						a.wpWalkAt = time.Now()
+						a.wpWalkAt, a.wpWalkArea = time.Now(), s.Me.Area
 						a.wpProg = padProgress{}
 					}
 					if a.wpProg.stalled(chebyshev(s.Me.Pos, ob.Position), time.Now(), budget/3) || time.Since(a.wpWalkAt) > 4*budget {
@@ -2347,7 +2354,7 @@ func (r *Return) Step(ctx *Ctx) Verdict {
 // and hands the march back to the gate.
 func (a *Advance) walkToPad(ctx *Ctx, padPos data.Position) bool {
 	if a.wpWalkAt.IsZero() {
-		a.wpWalkAt = time.Now()
+		a.wpWalkAt, a.wpWalkArea = time.Now(), ctx.Snap.Me.Area
 	}
 	if time.Since(a.wpWalkAt) > 60*time.Second {
 		a.wpAt, a.wpWalkAt = time.Now(), time.Time{}

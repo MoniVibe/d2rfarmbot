@@ -9,6 +9,7 @@ import (
 	"github.com/hectorgimenez/d2go/pkg/data/area"
 	"github.com/hectorgimenez/koolo/internal/azbot/arbiter"
 	"github.com/hectorgimenez/koolo/internal/azbot/inventory"
+	"github.com/hectorgimenez/koolo/internal/azbot/memory"
 	"github.com/hectorgimenez/koolo/internal/azbot/percept"
 	"github.com/hectorgimenez/koolo/internal/azbot/verbs"
 )
@@ -205,6 +206,12 @@ func (u *Unload) rideHome(ctx *Ctx) Verdict {
 	ctx.Led.Append(verbs.Outcome{Verb: "waypoint", Holder: u.Name(), Result: verbs.ResDone,
 		Evidence: fmt.Sprintf("going home by waypoint: area %d -> town %d (no TP charges)", int(s.Me.Area), int(town))})
 	verbs.UseWaypoint{Want: []area.ID{town}}.Do(ctx.M, ctx.GR, ctx.P, ctx.Led, u.Name())
+	// The panel stood: this area's pad is lit (the ride home proves it — the
+	// Outer Cloister pad was ridden from and never ledgered).
+	if ctx.Mem != nil && time.Since(verbs.LastPanelOpenAt) < 10*time.Second {
+		ctx.Mem.PutJSON(LitKey(ctx.GR.GetData().PlayerUnit.Name, s.Me.Area), memory.ScopeForever,
+			memory.Provenance{Source: "measured", Evidence: "the waypoint panel stood on the ride home"}, true)
+	}
 	return Running
 }
 
