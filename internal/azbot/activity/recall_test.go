@@ -15,6 +15,7 @@ func TestRecallBidsOnlyWhenTheSessionAsks(t *testing.T) {
 	r := NewRecall()
 	s := &percept.Snapshot{Valid: true}
 	s.Me.HPPct = 80
+	s.Me.TPScrolls = 20 // a stocked tome (0 = empty: the pad road)
 	s.Me.Pos = data.Position{X: 100, Y: 100}
 	// far enough that the recall stands (a monster within 8 = fight first: owner, R34)
 	s.Enemies = []percept.EnemyRef{{Pos: data.Position{X: 120, Y: 100}}}
@@ -52,6 +53,7 @@ func TestNoTownPortalBindingSkipsThePortalRoad(t *testing.T) {
 	r.Want(true)
 	s := &percept.Snapshot{Valid: true}
 	s.Me.HPPct = 30
+	s.Me.TPScrolls = 20
 	if d := r.Demand(s); d != nil || !r.Spent() {
 		t.Fatalf("unbound, no door: demand %+v spent %v, want nil and spent", d, r.Spent())
 	}

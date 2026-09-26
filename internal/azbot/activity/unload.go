@@ -8,7 +8,6 @@ import (
 	"github.com/hectorgimenez/d2go/pkg/data"
 	"github.com/hectorgimenez/d2go/pkg/data/area"
 	"github.com/hectorgimenez/koolo/internal/azbot/arbiter"
-	"github.com/hectorgimenez/koolo/internal/azbot/gamedata"
 	"github.com/hectorgimenez/koolo/internal/azbot/inventory"
 	"github.com/hectorgimenez/koolo/internal/azbot/percept"
 	"github.com/hectorgimenez/koolo/internal/azbot/verbs"
@@ -172,21 +171,13 @@ func padLitAt(ar area.ID) (data.Position, bool) {
 	return p, ok
 }
 
-// actTown: the town of an area's act (gamedata levels.txt), 0 when unknown.
+// actTown: the town of an area's act (d2go's act ranges), 0 when unknown.
 func actTown(ar area.ID) area.ID {
-	db := gamedata.Get()
-	if db == nil {
-		return 0
-	}
-	lv := db.Level(int(ar))
-	if lv == nil {
+	if ar <= 0 {
 		return 0
 	}
 	towns := []area.ID{area.RogueEncampment, area.LutGholein, area.KurastDocks, area.ThePandemoniumFortress, area.Harrogath}
-	if lv.Act < 0 || lv.Act >= len(towns) {
-		return 0
-	}
-	return towns[lv.Act]
+	return towns[ar.Act()-1]
 }
 
 // wpHomeReady: no portal road, but a lit pad here and a known town.

@@ -139,9 +139,14 @@ func (w *Withdraw) ride(ctx *Ctx, who string) Verdict {
 // session, whose ladder then pauses the game (or its quiet field or budget
 // ends the run).
 type Recall struct {
-	want bool
-	door bool // the last Demand saw a live portal on the field
-	w    Withdraw
+	want  bool
+	door  bool // the last Demand saw a live portal on the field
+	pad   bool // the last Demand saw a lit waypoint road home (no TP needed)
+	empty bool // the last Demand saw the TP tome empty
+	byPad bool // this bid rides the waypoint (k3, 2026-09-26: an empty tome
+	// abandoned the recall and she stood disengaged in Black Marsh among 152)
+	w Withdraw
+	u Unload // the pad road (rideHome)
 }
 
 func NewRecall() *Recall { return &Recall{} }
@@ -158,17 +163,24 @@ func (r *Recall) Want(on bool) { r.want = on }
 // Town Portal binding (SetTownPortal(false)) and no door on the field Recall
 // is spent from the first tick — the ladder goes straight to the pause rung.
 func (r *Recall) Spent() bool {
-	return time.Now().Before(r.w.coolAt) || (!townPortalBound && !r.door)
+	if r.pad {
+		return false // the waypoint road home is still open
+	}
+	return time.Now().Before(r.w.coolAt) || (!townPortalBound && !r.door) || (r.empty && !r.door)
 }
 
 func (r *Recall) Demand(s *percept.Snapshot) *arbiter.Demand {
 	if s.Valid {
 		r.door = liveDoor(s)
+		r.pad = !s.Me.InTown && wpHomeReady(s)
+		r.empty = s.Me.TPScrolls == 0
 	}
-	if !r.want || !s.Valid || s.Me.InTown || s.Me.HPPct <= 0 || time.Now().Before(r.w.coolAt) {
+	if !r.want || !s.Valid || s.Me.InTown || s.Me.HPPct <= 0 {
 		return nil
 	}
-	if !townPortalBound && !r.door {
+	tpOut := !townPortalBound || s.Me.TPScrolls == 0 || time.Now().Before(r.w.coolAt)
+	r.byPad = !r.door && tpOut && r.pad
+	if !r.door && tpOut && !r.pad {
 		return nil // nothing to cast with, nothing to ride: Spent says so
 	}
 	// STAND FOR HIMSELF FIRST (owner, R34: "bot tried entering the portal but
@@ -184,4 +196,9 @@ func (r *Recall) Demand(s *percept.Snapshot) *arbiter.Demand {
 		Commit:  arbiter.Commitment{MinHold: 3 * time.Second}}
 }
 
-func (r *Recall) Step(ctx *Ctx) Verdict { return r.w.ride(ctx, r.Name()) }
+func (r *Recall) Step(ctx *Ctx) Verdict {
+	if r.byPad {
+		return r.u.rideHome(ctx)
+	}
+	return r.w.ride(ctx, r.Name())
+}

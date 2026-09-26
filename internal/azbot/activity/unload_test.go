@@ -5,6 +5,7 @@ import (
 	"time"
 
 	"github.com/hectorgimenez/d2go/pkg/data"
+	"github.com/hectorgimenez/d2go/pkg/data/area"
 	"github.com/hectorgimenez/koolo/internal/azbot/percept"
 )
 
@@ -37,6 +38,7 @@ func TestRecallStandsForHimselfFirst(t *testing.T) {
 	r.want = true
 	s := townSnap()
 	s.Me.InTown = false
+	s.Me.TPScrolls = 20
 	s.Enemies = []percept.EnemyRef{{Pos: data.Position{X: s.Me.Pos.X + 3, Y: s.Me.Pos.Y}}}
 	if r.Demand(s) != nil {
 		t.Fatal("a monster at 3 tiles: fight first, no portal")
@@ -99,7 +101,9 @@ func TestUnloadNeedsTPCharges(t *testing.T) {
 func TestPressed(t *testing.T) {
 	s := townSnap()
 	s.Me.InTown, s.Me.HPPct = false, 100
-	at := func(dx int) percept.EnemyRef { return percept.EnemyRef{Pos: data.Position{X: s.Me.Pos.X + dx, Y: s.Me.Pos.Y}} }
+	at := func(dx int) percept.EnemyRef {
+		return percept.EnemyRef{Pos: data.Position{X: s.Me.Pos.X + dx, Y: s.Me.Pos.Y}}
+	}
 	s.Enemies = []percept.EnemyRef{at(2), at(3), at(7)}
 	if pressed(s) {
 		t.Fatal("three nearby at full health: leap past")
@@ -111,5 +115,24 @@ func TestPressed(t *testing.T) {
 	s.Enemies, s.Me.HPPct = nil, 50
 	if !pressed(s) {
 		t.Fatal("wounded: fight")
+	}
+}
+
+// k3 (2026-09-26): an EMPTY tome abandoned the wind-down recall and she stood
+// disengaged among 152 monsters. A lit pad in the area is the road home.
+func TestRecallRidesThePadWithAnEmptyTome(t *testing.T) {
+	r := NewRecall()
+	r.want = true
+	s := townSnap()
+	s.Me.InTown = false
+	s.Me.Area = area.BlackMarsh
+	s.Me.TPScrolls = 0
+	if r.Demand(s) != nil || !r.Spent() {
+		t.Fatal("empty tome, no pad known: nothing to ride, Spent")
+	}
+	notePadLit(area.BlackMarsh, data.Position{X: 10, Y: 10})
+	defer func() { padsLit.Lock(); delete(padsLit.m, area.BlackMarsh); padsLit.Unlock() }()
+	if r.Demand(s) == nil || !r.byPad || r.Spent() {
+		t.Fatal("empty tome, lit pad here: ride the waypoint home, not Spent")
 	}
 }
