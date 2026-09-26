@@ -36,6 +36,26 @@ type UseWaypoint struct {
 // the CURRENT pad lit regardless of how the ride went.
 var LastPanelOpenAt time.Time
 
+// LastAvailable: the waypoint panel's claimed-lit list at its last verified
+// open (LastAvailableAt). A hint for a bounded probe, never ledger truth.
+var (
+	LastAvailable   []area.ID
+	LastAvailableAt time.Time
+)
+
+// ClaimedLit: the panel claimed ar lit within the last 30 minutes.
+func ClaimedLit(ar area.ID) bool {
+	if time.Since(LastAvailableAt) > 30*time.Minute {
+		return false
+	}
+	for _, a := range LastAvailable {
+		if a == ar {
+			return true
+		}
+	}
+	return false
+}
+
 func wpCheb(a, b data.Position) int {
 	dx, dy := a.X-b.X, a.Y-b.Y
 	if dx < 0 {
@@ -251,6 +271,12 @@ func (uw UseWaypoint) Do(m *motor.Motor, gr *game.MemoryReader, p *percept.Perce
 	}
 	time.Sleep(300 * time.Millisecond)
 	LastPanelOpenAt = time.Now() // the open is PROVEN: this pad is lit
+	// The panel's list — a CLAIM, never proof (it lied both ways on this mod):
+	// the town ride may probe one claimed-lit row per area (owner, 2026-09-26:
+	// hand-lit pads were unknown to the ledger, so she walked from town).
+	if av := gr.GetData().PlayerUnit.AvailableWaypoints; len(av) > 0 {
+		LastAvailable, LastAvailableAt = append([]area.ID(nil), av...), time.Now()
+	}
 	// Photograph the OPEN panel every session (00:54: the failure photo showed
 	// no panel at all — the first bad row click had closed it, and the picture
 	// that could have named the true rows was taken twenty seconds too late).

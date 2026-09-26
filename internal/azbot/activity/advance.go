@@ -176,7 +176,8 @@ func CampaignItinerary(start area.ID) []Leg {
 }
 
 type Advance struct {
-	wpProg padProgress // the pad approach's progress clock (fights excluded)
+	wpProg     padProgress      // the pad approach's progress clock (fights excluded)
+	claimTried map[area.ID]bool // panel-claimed pads already probed this run
 	// quest legs (quest.go): per seed.area, when the hold began and whether it ended.
 	questSince   map[string]time.Time
 	questDone    map[string]bool
@@ -849,6 +850,14 @@ func (a *Advance) Step(ctx *Ctx) Verdict {
 					}
 					if lit && !hotLanding(a.Itinerary[i].Area) {
 						wants = append(wants, a.Itinerary[i].Area)
+					} else if verbs.ClaimedLit(a.Itinerary[i].Area) && !a.claimTried[a.Itinerary[i].Area] && !hotLanding(a.Itinerary[i].Area) {
+						// The panel CLAIMS it lit (the owner lit it by hand): one probe
+						// ride per area per run; the landing alone records it lit.
+						if a.claimTried == nil {
+							a.claimTried = map[area.ID]bool{}
+						}
+						a.claimTried[a.Itinerary[i].Area] = true
+						wants = append(wants, a.Itinerary[i].Area)
 					} else {
 						probe = append(probe, a.Itinerary[i].Area)
 					}
@@ -1349,6 +1358,23 @@ func (a *Advance) borderTarget(ctx *Ctx, d game.Data, hop area.ID, me data.Posit
 	// Stony border wall-hugging in search of stairs the seed server had
 	// named since attach). Mapped exits lie by a few tiles (the farmbot
 	// law), but the door band's drive and the entrance ritual absorb that.
+	// THE MAP'S WALKABLE BORDER (2026-09-26): for a walk-through neighbour the
+	// true grids name the gap where the two level frames touch.
+	if ca, ok := d.Areas[cur]; ok {
+		if ha, ok := d.Areas[hop]; ok {
+			walk := true
+			for _, lv := range ca.AdjacentLevels {
+				if lv.Area == hop && lv.IsEntrance {
+					walk = false
+				}
+			}
+			if walk {
+				if p, ok := mapEdgeExit(ca.Grid, ha.Grid, me); ok {
+					cands = append(cands, route.Candidate{Src: "map-edge", Pos: p})
+				}
+			}
+		}
+	}
 	var mapHint data.Position
 	goal := a.doorGoal(ctx, d, hop) // destination facts: arrival door, neighbours, wrong landings
 	if ad, ok := d.Areas[cur]; ok {
