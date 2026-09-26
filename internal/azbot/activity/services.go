@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"image/png"
 	"os"
+	"sync"
 	"sync/atomic"
 	"time"
 
@@ -17,9 +18,13 @@ import (
 	"github.com/hectorgimenez/d2go/pkg/data/npc"
 	"github.com/hectorgimenez/d2go/pkg/data/stat"
 	"github.com/hectorgimenez/koolo/internal/azbot/arbiter"
-	"github.com/hectorgimenez/koolo/internal/azbot/journey"
+	"github.com/hectorgimenez/koolo/internal/azbot/inventory"
+	"github.com/hectorgimenez/koolo/internal/azbot/loot"
 	"github.com/hectorgimenez/koolo/internal/azbot/memory"
+	"github.com/hectorgimenez/koolo/internal/azbot/moveto"
 	"github.com/hectorgimenez/koolo/internal/azbot/percept"
+	"github.com/hectorgimenez/koolo/internal/azbot/phase"
+	"github.com/hectorgimenez/koolo/internal/azbot/screen"
 	"github.com/hectorgimenez/koolo/internal/azbot/verbs"
 	"github.com/hectorgimenez/koolo/internal/game"
 )
@@ -33,22 +38,28 @@ const (
 	repairBtnX, repairBtnY = 570, 747 // Charsi trade panel, repair-all (2g fixed Buckler 3/12->12/12)
 )
 
-// errand is the shared NPC-service state machine. One bounded slice per Step.
+// errand is the shared NPC-service state machine. One bounded slice per Step;
+// its lifecycle (phases, claims, budgets, closing) is svcLife's.
 type errand struct {
+	svcLife[errandPhase] // Clean, Seek, Approach, Talk, Menu, Opening, Act, Close (errandphase.go)
+
 	lastTrace string
 	// tradeSelected: vendor stock LINGERS in memory after the trade window closes
 	// (2026-09-23: buys fired into Drognan's Talk/Trade menu because stock still
 	// read). Stock is trusted as "shop open" ONLY after Trade was selected on THIS
 	// trip; a buy click that does nothing or a reset clears it.
 	tradeSelected bool
-	npcID   npc.ID
-	act1NPC npc.ID          // captured from the constructor on first use
-	act2NPC npc.ID          // service counterpart in Lut Gholein; zero means no alternate
-	ring    []data.Position // search waypoints until the NPC loads
-	ringIdx int
-	phase   int // 0 seek, 1 approach, 2 talk, 3 menu-nav, 4 act (owner's), 5 done
-	clickAt time.Time
-	tries   int
+	npcID         npc.ID
+	act1NPC       npc.ID        // captured from the constructor on first use
+	act2NPC       npc.ID        // service counterpart in Lut Gholein; zero means no alternate
+	act3NPC       npc.ID        // service counterpart in Kurast Docks; zero means no alternate
+	circled       bool          // the town circles were appended to this ring
+	lastSeen      data.Position // where the NPC last streamed in (Approach walks there when it unloads)
+	lastSeenAt    time.Time
+	ring          []data.Position // search waypoints until the NPC loads
+	ringIdx       int
+	clickAt       time.Time
+	tries         int
 	// menuTry: which menu-option slot to ENTER on this attempt. The blind law was
 	// "Home, Down, Enter = TRADE is the second item" — but NPC menus GROW (quest
 	// lines appear), and run 26 spent 30 minutes failing a restock against a menu
@@ -57,19 +68,102 @@ type errand struct {
 	// vendor-stock oracle judges. What works is what's true.
 	trade      bool // this errand ends in a TRADE window; readable stock proves it open
 	menuTry    int
-	blocked    int              // consecutive blocked approach strides — the fire-pit-wall detector
-	hoverFails int              // consecutive hover-sweep misses — the torch-owns-this-bearing detector
-	startedAt  time.Time        // hard budget: a missing/deaf NPC must not own the bot forever
-	j          *journey.Journey // the PLANNER for far movement — town walls live in the
-	// static grid, and local slides can never round a real wall (run 38: fence paced
-	// the north wall at y=4897 while every ring waypoint sat past y=4930)
+	blocked    int // consecutive blocked approach strides — the fire-pit-wall detector
+	hoverFails int // consecutive hover-sweep misses — the torch-owns-this-bearing detector
+	// Far movement goes by PLANNER (MoveTo) — town walls live in the static
+	// grid, and local slides can never round a real wall (run 38: fence paced
+	// the north wall at y=4897 while every ring waypoint sat past y=4930).
+	// adopt: the errand (name) whose trade window at THIS errand's NPC stood
+	// open when this episode began — Clean claims it and the first Step
+	// adopts it (vendorHandoff). "" = none.
+	adopt string
+	// parks: cursor items this trip parked at our own open bag (pre); parkAt
+	// the last one's click.
+	parks  int
+	parkAt time.Time
 }
 
+// vendorHandoff: the trade window a vendor errand left OPEN on a clean finish
+// (janitor ON: End drops the claims without closing). The next errand at the
+// SAME NPC adopts it — its Clean claims the vendor panels so the gate does not
+// tear the window down, and its first Step goes straight to Act — instead of
+// the janitor closing it and the walk, talk and menu starting over. Any other
+// next holder claims nothing in its Clean and the janitor closes the window
+// (one click: the explicit, cheap Clean).
+var vendorHandoff struct {
+	npc npc.ID
+	who string
+	at  time.Time
+}
+
+// handoffFresh: an open window is adoptable this long after its errand ended.
+const handoffFresh = 3 * time.Second
+
+// needs: the lifecycle's claims — plus, in Clean, the vendor panels of a
+// trade window this episode is adopting (the gate must not close it first).
+func (e *errand) needs() Needs {
+	if e.adopt != "" && e.clean() {
+		return needsService(claimsVendor)
+	}
+	return e.svcLife.needs()
+}
+
+// handOff (End, before the lifecycle resets): a Done at an open trade window
+// leaves it for the next errand at the same NPC.
+func (e *errand) handOff(v phase.Verdict, who string) {
+	if JanitorOn && e.trade && v == phase.Done && e.ph.Phase() == erAct && e.tradeSelected {
+		vendorHandoff.npc, vendorHandoff.who, vendorHandoff.at = e.npcID, who, time.Now()
+	}
+}
+
+// adoptHandoff (Begin of a fresh episode): the previous errand at this
+// errand's NPC left its trade window open moments ago. One adopter per
+// handoff; a mismatch forgets it.
+func (e *errand) adoptHandoff(ctx *Ctx) {
+	e.adopt = ""
+	h := vendorHandoff
+	vendorHandoff.who = ""
+	if !JanitorOn || !e.trade || h.who == "" || time.Since(h.at) > handoffFresh ||
+		ctx == nil || ctx.Snap == nil || !ctx.Snap.Valid {
+		return
+	}
+	e.useNPCForArea(ctx.Snap.Me.Area)
+	if e.npcID == h.npc {
+		e.adopt = h.who
+	}
+}
+
+// initLife wires the errand's lifecycle for its owner service.
+func (e *errand) initLife(who string) {
+	e.init(who, erClose, errandClaims)
+	for p, d := range errandBudgets {
+		e.ph.Budget(p, d)
+	}
+}
+
+// reset starts the trip over from the clean screen (an area change swapped
+// the NPC): counters go, the phase returns to Clean.
 func (e *errand) reset() {
-	e.phase, e.ringIdx, e.tries, e.menuTry, e.blocked, e.hoverFails = 0, 0, 0, 0, 0, 0
+	e.to(erClean, "reset")
+	e.resetTrip()
+}
+
+// resetTrip forgets the trip's counters (not the phase).
+func (e *errand) resetTrip() {
+	e.ringIdx, e.tries, e.menuTry, e.blocked, e.hoverFails, e.parks = 0, 0, 0, 0, 0, 0
+	e.circled = false
 	e.tradeSelected = false
-	e.startedAt = time.Time{}
-	e.j = nil
+}
+
+// resume re-verifies the phase after a preemption (errandResume).
+func (e *errand) resume(ctx *Ctx) {
+	seen, _ := seenPanels(ctx)
+	menu := ctx.Snap != nil && ctx.Snap.MenuOpen
+	cur := e.ph.Phase()
+	if p := errandResume(cur, JanitorOn, menu, seen&screen.Shop != 0); p != cur {
+		e.tradeSelected = false
+		e.to(p, "resumed: "+cur.String()+" no longer holds")
+	}
 }
 
 // useNPCForArea keeps the service state machine from carrying Act 1 town
@@ -83,51 +177,74 @@ func (e *errand) useNPCForArea(ar area.ID) {
 	if e.act2NPC != 0 && ar.Act() == 2 {
 		want = e.act2NPC
 	}
+	if e.act3NPC != 0 && ar.Act() == 3 {
+		want = e.act3NPC
+	}
 	if e.npcID != want {
 		e.npcID = want
 		e.reset()
 	}
 }
 
-// walkTo drives one planner step toward goal; falls back to a slide when the
-// planner has no grid or no route. Returns true when the journey says stop
-// (arrived handled by caller's distance checks; stalled/nopath = give up on goal).
+// walkTo drives one MoveTo step toward goal. Returns true when the planner
+// says stop (arrived is the caller's distance check; stalled/nopath = give up
+// on this goal — MoveTo already dropped the trip).
 func (e *errand) walkTo(ctx *Ctx, goal data.Position, who string) (exhausted bool) {
+	o := moveto.Opts{Holder: who, Purpose: moveto.Errand, Arrive: 4}
 	if ctx.Grid == nil {
-		clickStride(ctx, goal, 1100*time.Millisecond, who) // click gait: his town's fences are as invisible as hers (04:36)
-		return false
+		// No grid: the click gait — his town's fences are as invisible as hers (04:36).
+		o.Click, o.MaxHold = true, 1100*time.Millisecond
 	}
-	if e.j == nil || chebyshev(e.j.Goal, goal) > 4 {
-		e.j = journey.New(ctx.GR, ctx.Grid, goal, who)
-		e.j.Arrive = 4
-	}
-	st := e.j.Step(ctx.M, ctx.P, ctx.Led)
-	if st.State == journey.Stalled || st.State == journey.NoPath {
-		e.j = nil
-		return true
-	}
-	return false
+	return stalled(moveTo(ctx, goal, o))
 }
 
-// step advances the errand toward an open trade panel. Returns true when the shop is
-// OPEN (vendor stock readable — the honest oracle) and the caller may act.
-func (e *errand) step(ctx *Ctx, who string) (shopOpen bool, dead bool) {
+// shopOpen: the trade window is up — the vendor stock reads AND the panel is
+// on screen (stock LINGERS; the screen decides).
+func shopOpen(ctx *Ctx) bool {
+	return len(ctx.GR.GetData().Inventory.ByLocation(item.LocationVendor)) > 0 && game.ShopVisible(ctx.GR.Screenshot())
+}
+
+// step advances the errand toward an open trade panel. open=true when the shop
+// is OPEN (vendor stock readable — the honest oracle) and the caller may act.
+func (e *errand) step(ctx *Ctx, who string) errandStep {
 	s := ctx.Snap
 	// PHASE TRACE (2026-09-23: restock passed the town self-test yet failed in
 	// the live run; the state machine must be visible wherever it runs).
-	if tr := fmt.Sprintf("phase=%d menuTry=%d tries=%d menuOpen=%v tradeSelected=%v", e.phase, e.menuTry, e.tries, s.MenuOpen, e.tradeSelected); tr != e.lastTrace {
+	if tr := fmt.Sprintf("phase=%s menuTry=%d tries=%d menuOpen=%v tradeSelected=%v", e.ph.Phase(), e.menuTry, e.tries, s.MenuOpen, e.tradeSelected); tr != e.lastTrace {
 		e.lastTrace = tr
 		ctx.Led.Append(verbs.Outcome{Verb: "errand-trace", Holder: who, Result: verbs.ResRefused, Evidence: tr})
 	}
+	// THE PRECONDITION: an errand starts only from a clean screen (2026-09-24:
+	// "fence phase=0 menuOpen=true", "repair starts with menuOpen=true" — the
+	// previous errand's menu rode into the next one's talk). Clean claims
+	// nothing: the janitor closes leftovers (ON), or the errand does, by sight.
+	if e.ph.Phase() == erClean {
+		if who := e.adopt; who != "" {
+			e.adopt = "" // one look: open now, or the claims drop and the janitor closes it
+			if shopOpen(ctx) {
+				e.tradeSelected = true
+				e.to(erAct, "adopted "+who+"'s open trade window (same NPC): no close, no walk, no talk")
+				return errandStep{open: true}
+			}
+		}
+		ok, st := e.cleanScreen(ctx, 0)
+		if !ok {
+			if st.V == phase.Abandoned {
+				return errandStep{dead: true, why: st.Why, ev: st.Evidence}
+			}
+			return errandStep{wait: time.Until(st.WakeAt)}
+		}
+		e.to(erSeek, "screen clear")
+	}
 	d := ctx.GR.GetData()
-	if e.startedAt.IsZero() {
-		e.startedAt = time.Now()
-	} else if time.Since(e.startedAt) > 45*time.Second {
-		ctx.Led.Append(verbs.Outcome{Verb: "errand", Holder: who, Result: verbs.ResTimeout,
-			Evidence: fmt.Sprintf("npc=%d service attempt exceeded 45s in area %d", int(e.npcID), int(s.Me.Area))})
-		return false, true
+	if e.ph.Phase() < erAct && heldOf(ctx, who) > errandBudget {
+		return errandStep{dead: true, why: phase.Timebox,
+			ev: fmt.Sprintf("npc=%d service attempt exceeded %s held in area %d", int(e.npcID), errandBudget, int(s.Me.Area))}
 	}
 	e.useNPCForArea(s.Me.Area)
+	if e.ph.Phase() == erClean {
+		return errandStep{} // the NPC changed with the area: re-verify the screen first
+	}
 	var target data.Monster
 	found := false
 	for _, mo := range d.Monsters {
@@ -145,6 +262,16 @@ func (e *errand) step(ctx *Ctx, who string) (shopOpen bool, dead bool) {
 			if e.ringIdx >= len(e.ring) {
 				e.ringIdx = 0
 			}
+		} else if near, ok := npcNeighbour[e.npcID]; ok && len(e.ring) == 0 {
+			// The map lacks this NPC but names a neighbour (owner, 2026-09-25:
+			// "hratli is near meshif"): seek beside the neighbour first.
+			if np, ok := d.AreaData.NPCs.FindOne(near); ok && len(np.Positions) > 0 {
+				e.ring = append(e.ring[:0], np.Positions...)
+				e.ringIdx = 0
+			}
+			// He wanders (owner: "hratli went back to the blacksmith, south"): the
+			// neighbour is the first stop, the town circles follow.
+			e.ring = append(e.ring, townCircles(ctx.Grid, s.Me.Pos)...)
 		}
 	}
 
@@ -155,43 +282,66 @@ func (e *errand) step(ctx *Ctx, who string) (shopOpen bool, dead bool) {
 	// oracle the Lexicon already trusts: if it reads, we are trading. Jump
 	// straight to act, and NEVER re-click an open shop closed. Trade errands
 	// only — Heal wants the heal-dialog, not the merchant's shelves.
-	if e.trade && e.tradeSelected && len(d.Inventory.ByLocation(item.LocationVendor)) > 0 && game.ShopVisible(ctx.GR.Screenshot()) {
-		e.phase = 4
-		return true, false
+	if e.trade && e.tradeSelected && e.ph.Phase() >= erTalk && shopOpen(ctx) {
+		e.to(erAct, "shop open: stock readable and trade panel on screen")
+		return errandStep{open: true}
 	}
 
-	switch e.phase {
-	case 0: // seek: walk the ring until the NPC loads
+	// NO RING AT ALL (R78: the map named no Hratli in Kurast Docks, the ring was
+	// empty and Repair gave up in 0.2s): circle the town from here — two rings at
+	// 40 and 80 tiles — until the NPC streams in.
+	if !found && len(e.ring) == 0 && s.Me.InTown {
+		e.ring = townCircles(ctx.Grid, s.Me.Pos)
+		e.ringIdx = 0
+	}
+	// R81: the map DID place Hratli — 870 tiles off, behind a wall — so the ring
+	// was that one dead point. In town the walkable circles always follow what
+	// the map says (once per ring).
+	if !found && s.Me.InTown && !e.circled && len(e.ring) > 0 {
+		e.ring = append(e.ring, townCircles(ctx.Grid, s.Me.Pos)...)
+		e.circled = true
+	}
+	switch e.ph.Phase() {
+	case erSeek: // walk the ring until the NPC loads
 		if found {
-			e.phase = 1
-			return false, false
+			e.to(erApproach, "npc loaded")
+			return errandStep{}
 		}
 		if e.ringIdx >= len(e.ring) {
-			ctx.Led.Append(verbs.Outcome{Verb: "errand", Holder: who, Result: verbs.ResWhiff,
-				Evidence: fmt.Sprintf("npc=%d never loaded on the whole ring (P-6.2)", int(e.npcID))})
-			return false, true // walked the whole ring, no NPC — give up this trip
+			return errandStep{dead: true, why: phase.NoTarget,
+				ev: fmt.Sprintf("npc=%d never loaded on the whole ring (P-6.2)", int(e.npcID))} // walked the whole ring, no NPC — give up this trip
 		}
 		wp := e.ring[e.ringIdx]
 		if chebyshev(s.Me.Pos, wp) <= 5 {
 			e.ringIdx++
-			e.j = nil
-			return false, false
+			forgetMove(who) // the next ring waypoint is a new trip
+			return errandStep{}
 		}
 		if e.walkTo(ctx, wp, who) {
 			e.ringIdx++ // no route to this waypoint — try the next
 		}
-	case 1: // approach: the band (4..7) — closer breaks hover, farther breaks the click
+	case erApproach: // the band (4..7) — closer breaks hover, farther breaks the click
+		if found {
+			e.lastSeen, e.lastSeenAt = target.Position, time.Now()
+		}
 		if !found {
-			e.phase = 0
-			return false, false
+			// R82: Hratli sat at the streaming edge — loaded, unloaded, every 0.8s,
+			// and every unload sent the errand back to Seek without a step taken.
+			// A recent sighting is walked toward; only a stale one re-seeks.
+			if !e.lastSeenAt.IsZero() && time.Since(e.lastSeenAt) < 8*time.Second {
+				e.walkTo(ctx, e.lastSeen, who)
+				return errandStep{}
+			}
+			e.to(erSeek, "npc unloaded")
+			return errandStep{}
 		}
 		dist := chebyshev(s.Me.Pos, target.Position)
-		if dist >= 4 && dist <= 7 {
+		if talkBand(dist) == 0 {
 			ctx.M.MoveStop()
-			e.phase = 2
-			return false, false
+			e.to(erTalk, fmt.Sprintf("in band, dist %d", dist))
+			return errandStep{}
 		}
-		if dist < 4 {
+		if talkBand(dist) < 0 {
 			// Proportional backstep TO THE BAND, not a triple-distance fling —
 			// the old *3 threw her from the clinch past 7 and the approach
 			// re-overshot: the torch dance (the owner, 10:2x: "walks back and
@@ -206,18 +356,17 @@ func (e *errand) step(ctx *Ctx, who string) (shopOpen bool, dead bool) {
 			// (2026-09-23 selftest: 75s of gain=0 arrived-early). Stride stops ~2 short,
 			// landing ~6 out: inside the 4..7 band.
 			back := data.Position{X: target.Position.X + adx*8/m, Y: target.Position.Y + ady*8/m}
-			verbs.Stride{To: back, Hold: 400 * time.Millisecond}.Do(ctx.M, ctx.GR, ctx.P, ctx.Led, who)
-			return false, false
+			moveTo(ctx, back, moveto.Opts{Holder: who, Purpose: moveto.Errand, MaxHold: 400 * time.Millisecond, Fallback: true})
+			return errandStep{}
 		}
 		// FAR approach goes by PLANNER (real walls demand real routing); the last
 		// stretch is local footwork around camp furniture the grids can't see.
 		if dist > 12 {
 			if e.walkTo(ctx, target.Position, who) {
-				ctx.Led.Append(verbs.Outcome{Verb: "errand", Holder: who, Result: verbs.ResBlocked,
-					Evidence: fmt.Sprintf("npc=%d: planner found no route from (%d,%d) at dist %d (P-6.2)", int(e.npcID), s.Me.Pos.X, s.Me.Pos.Y, dist)})
-				return false, true // no route to the NPC at all — give up this trip
+				return errandStep{dead: true, why: phase.Unreachable,
+					ev: fmt.Sprintf("npc=%d: planner found no route from (%d,%d) at dist %d (P-6.2)", int(e.npcID), s.Me.Pos.X, s.Me.Pos.Y, dist)}
 			}
-			return false, false
+			return errandStep{}
 		}
 		// AIM AT THE BAND, never the body: sliding at the NPC's center lands in
 		// the hover-breaking clinch and the backstep oscillates. A point 5 out
@@ -229,47 +378,50 @@ func (e *errand) step(ctx *Ctx, who string) (shopOpen bool, dead bool) {
 		}
 		bandPt := data.Position{X: target.Position.X + adx*5/bm, Y: target.Position.Y + ady*5/bm}
 		hold := 500 * time.Millisecond
-		// SLIDE, and on a wall streak ARC: the camps put fire pits and tables between
+		// PLANNED, and on a wall streak ARC: the camps put fire pits and tables between
 		// her and the NPC — none of it in any collision grid. A straight stride beat
 		// its head on Akara's fire 28 times in a row (run 31, the owner: "she is
-		// circling akara... goes back and forth"). Three blocked slides = walk the
-		// arc 90° around the NPC and come at them from a new bearing.
-		o := slideStride(ctx, bandPt, hold, 1, who)
-		if o.Result == verbs.ResBlocked {
+		// circling akara... goes back and forth"). Blocked steps (a stride that
+		// moved nothing, or a planner refusal) = walk the arc 90° around the NPC
+		// and come at them from a new bearing. Planned pulses are short, so the
+		// streak is five, not the old three 1.5s slides.
+		st := moveTo(ctx, bandPt, moveto.Opts{Holder: who, Purpose: moveto.Errand, Arrive: 1, MaxHold: hold, Fallback: true})
+		if st.Blocked || stalled(st) {
 			e.blocked++
 		} else {
 			e.blocked = 0
 		}
-		if e.blocked >= 3 {
+		if e.blocked >= 5 {
 			e.blocked = 0
 			adx, ady := s.Me.Pos.X-target.Position.X, s.Me.Pos.Y-target.Position.Y
 			arc := data.Position{X: target.Position.X + ady, Y: target.Position.Y - adx}
-			slideStride(ctx, arc, 900*time.Millisecond, 1, who+"/arc")
+			moveTo(ctx, arc, moveto.Opts{Holder: who + "/arc", Purpose: moveto.Errand, MaxHold: 900 * time.Millisecond, Fallback: true})
 		}
-	case 2: // talk: hover-confirm, BARE click, wait for the menu byte
-		// Clicking Akara opens a DIALOG (MenuOpen high) that the phase-3 nav
+	case erTalk: // hover-confirm, BARE click, wait for the menu byte
+		// Clicking Akara opens a DIALOG (MenuOpen high) that the Menu phase
 		// steers to Trade — REVERTED here after run 72 froze at gold=741 with
 		// this path removed (the 12:44 screenshot showed the END state, an open
 		// shop, not HOW it opened: dialog → Home/Down/Enter → trade). The
-		// vendor-stock short-circuit at the top of step() handles the
-		// already-open case so an open shop is never re-navigated closed.
+		// vendor-stock short-circuit above handles the already-open case so an
+		// open shop is never re-navigated closed.
 		if s.MenuOpen {
 			// OUR menu only (2026-09-23 selftest photo: a walk-click beside another
 			// NPC opened HIS Talk/Introduction/Gossip menu; the errand steered it six
 			// times and never traded). A menu that opened without our talk click in
-			// the last few seconds is a stray: close it for real and carry on.
-			if e.clickAt.IsZero() || time.Since(e.clickAt) > 5*time.Second {
-				safeEsc(ctx)
+			// the last few seconds is a stray: back to Clean, which closes it by
+			// sight (never a blind ESC), and talk again.
+			if !talkedRecently(e.clickAt, time.Now()) {
 				ctx.Led.Append(verbs.Outcome{Verb: "errand", Holder: who, Result: verbs.ResRefused,
-					Evidence: "closed a stray NPC menu (not opened by our talk click)"})
-				return false, false
+					Evidence: "stray NPC menu (not opened by our talk click) — closing by sight"})
+				e.to(erClean, "stray NPC menu")
+				return errandStep{}
 			}
-			e.phase = 3
-			return false, false
+			e.to(erMenu, "menu byte after our talk click")
+			return errandStep{}
 		}
 		if !found {
-			e.phase = 0
-			return false, false
+			e.to(erSeek, "npc unloaded")
+			return errandStep{}
 		}
 		// THE DIAG'S VERDICT (12:25: "dist=20 ... hoverConfirmed=true"): a
 		// missed bare click is a MOVE order — she sails past the NPC, and
@@ -277,18 +429,18 @@ func (e *errand) step(ctx *Ctx, who string) (shopOpen bool, dead bool) {
 		// truncates before arrival, forever. The band is re-checked on EVERY
 		// attempt; beyond 8 she re-approaches instead of clicking.
 		if chebyshev(s.Me.Pos, target.Position) > 8 {
-			e.phase = 1
-			return false, false
+			e.to(erApproach, "out of the talk band")
+			return errandStep{}
 		}
-		// One bounded click attempt per grant of this phase.
-		if time.Since(e.clickAt) < 3*time.Second {
-			return false, false // the click starts a WALK-to-talk; let it play out
+		// One bounded click attempt per 3s: the click starts a WALK-to-talk; let
+		// it play out, polling lightly for the menu byte.
+		if left := 3*time.Second - time.Since(e.clickAt); left > 0 {
+			return errandStep{wait: minDur(left, 150*time.Millisecond)}
 		}
 		if e.tries >= 6 {
 			NoteGhost() // P-4.8a: a dead NPC counts toward the world's poison
-			ctx.Led.Append(verbs.Outcome{Verb: "errand", Holder: who, Result: verbs.ResDeaf,
-				Evidence: fmt.Sprintf("npc=%d: 6 talk attempts, menu never opened (hover or click deaf — P-6.2)", int(e.npcID))})
-			return false, true
+			return errandStep{dead: true, why: phase.Deaf,
+				ev: fmt.Sprintf("npc=%d: 6 talk attempts, menu never opened (hover or click deaf — P-6.2)", int(e.npcID))}
 		}
 		me := d.PlayerUnit.Position
 		bx := int(float32((target.Position.X-me.X)-(target.Position.Y-me.Y))*19.8) + ctx.GR.GameAreaSizeX/2
@@ -310,25 +462,37 @@ func (e *errand) step(ctx *Ctx, who string) (shopOpen bool, dead bool) {
 			// at the projection is safe — no shift means walk-or-talk, never an
 			// attack — and the walk-to-talk clears the wall the hover couldn't.
 			// After 3 hover misses, click blind at the label; keep arcing too.
-			if e.hoverFails++; e.hoverFails >= 3 {
+			// NEVER BLIND AMONG NEIGHBOURS (2026-09-26: the fence's blind label
+			// click landed on Warriv beside the vendor, the menu's second line
+			// was "Go East", and she sailed to Act 2 mid-errand).
+			crowded := false
+			for _, mo := range d.Monsters {
+				if mo.UnitID != target.UnitID && mo.IsGoodNPC() && chebyshev(mo.Position, target.Position) <= 6 {
+					crowded = true
+					break
+				}
+			}
+			if e.hoverFails++; e.hoverFails >= 3 && !crowded {
 				e.hoverFails = 0
-				ctx.M.BareClick(bx, by-30) // the label sits above the base
+				if cx, cy, ok := verbs.ClampClickLogical(ctx.GR, bx, by-30); ok {
+					ctx.M.BareClick(cx, cy) // the label sits above the base
+				}
 				e.clickAt = time.Now()
-				return false, false
+				return errandStep{}
 			}
 			// A tracked miss retries next tick. The old hover-arc side-step spent 0.9s
 			// for gain=0 and re-approached from scratch (2026-09-23 gap analysis).
-			return false, false
+			return errandStep{}
 		}
 		e.hoverFails = 0
 		ctx.M.BareClick(px, py)
 		e.clickAt = time.Now()
-	case 3: // menu open: HOME normalizes, then ENTER the menuTry'th candidate slot
+	case erMenu: // HOME normalizes, then ENTER the menuTry'th candidate slot
 		if !s.MenuOpen {
 			if time.Since(e.clickAt) > 4*time.Second {
-				e.phase = 2 // menu died — talk again
+				e.to(erTalk, "menu died") // talk again
 			}
-			return false, false
+			return errandStep{wait: 100 * time.Millisecond}
 		}
 		ctx.M.MoveStop()
 		// MENUS DEMAND TRUE FOREGROUND (2026-09-23 photo: Drognan's Talk/Trade/Cancel
@@ -339,49 +503,72 @@ func (e *errand) step(ctx *Ctx, who string) (shopOpen bool, dead bool) {
 		for i := 0; i < downs; i++ {
 			ctx.M.RealKey(0x28) // DOWN
 		}
-		ctx.M.RealKey(0x0D) // ENTER
+		ctx.M.RealKey(0x0D)    // ENTER
 		e.tradeSelected = true // a Trade selection was actually made
-		e.phase = 4
-	case 4:
+		e.to(erOpening, fmt.Sprintf("trade selected (menu slot try %d)", e.menuTry))
+		return errandStep{wait: 100 * time.Millisecond}
+	case erOpening:
 		// The trade window takes a moment to populate after ENTER. Poll, don't
 		// glance (2026-09-23 trace: an instant check read 0 stock, ESC'd the
-		// opening shop and burned all six menu tries in three seconds).
-		for i := 0; i < 20; i++ {
-			// stock LINGERS; the screen decides (game.TradePanelVisible)
-			if len(ctx.GR.GetData().Inventory.ByLocation(item.LocationVendor)) > 0 && game.ShopVisible(ctx.GR.Screenshot()) {
-				return true, false
-			}
-			time.Sleep(100 * time.Millisecond)
+		// opening shop and burned all six menu tries in three seconds). The
+		// short-circuit above takes the open shop; here it has not opened yet.
+		if e.ph.InPhase() < 2*time.Second {
+			return errandStep{wait: 100 * time.Millisecond}
 		}
 		// Trade did not open: the slot was wrong (menus GROW when quest lines appear —
 		// the blind 'second item is Trade' law cost run 26 a 30-minute restock loop).
-		// Back all the way out and try the next slot on a fresh talk.
+		// Back all the way out (Clean closes the menu by sight) and try the next
+		// slot on a fresh talk.
 		e.menuTry++
 		if e.menuTry >= 6 {
-			ctx.Led.Append(verbs.Outcome{Verb: "errand", Holder: who, Result: verbs.ResDeaf,
-				Evidence: fmt.Sprintf("npc=%d: no menu slot opened a trade in %d attempts", int(e.npcID), e.menuTry)})
-			return false, true
+			return errandStep{dead: true, why: phase.Deaf,
+				ev: fmt.Sprintf("npc=%d: no menu slot opened a trade in %d attempts", int(e.npcID), e.menuTry)}
 		}
-		if s.MenuOpen {
-			safeEsc(ctx) // close menu/dialog; re-clears a pause menu the ESC may open
-			time.Sleep(300 * time.Millisecond)
-		}
-		e.phase = 2
-		return false, false
+		e.tradeSelected = false
+		e.to(erClean, fmt.Sprintf("trade never opened (menu slot try %d)", e.menuTry))
+	case erAct:
+		// The window we traded in is gone (the short-circuit above failed):
+		// start over from a clean screen rather than click into whatever is up.
+		e.tradeSelected = false
+		e.to(erClean, "trade window no longer on screen")
 	}
-	return false, false
+	return errandStep{}
 }
 
-// closeShop escapes out of the panel stack.
-func closeShop(ctx *Ctx) {
-	// Close by the panel's own X — never ESC, which opens the pause menu when the
-	// shop has already closed. Then peel anything else off the screen.
+// talkBand: 0 inside the 4..7 talk band, <0 too close (hover breaks), >0 too
+// far (the click becomes a walk).
+func talkBand(dist int) int {
+	switch {
+	case dist < 4:
+		return -1
+	case dist > 7:
+		return 1
+	}
+	return 0
+}
+
+// talkedRecently: a menu that opens within 5s of our talk click is ours.
+func talkedRecently(clickAt, now time.Time) bool {
+	return !clickAt.IsZero() && now.Sub(clickAt) <= 5*time.Second
+}
+
+func minDur(a, b time.Duration) time.Duration {
+	if a < b {
+		return a
+	}
+	return b
+}
+
+// closeShopStep is ONE sight-driven step toward a closed trade window for the
+// manual -selftest harness (no executive, no Eye): the panel's own red X, then
+// the pause peel. Never ESC. done=true when nothing is left to click.
+func closeShopStep(ctx *Ctx) (done bool, wait time.Duration) {
 	if x, y, ok := game.ShopOpenX(ctx.GR.Screenshot()); ok {
 		ctx.M.RealMenuClick(x, y)
-		time.Sleep(400 * time.Millisecond)
+		return false, 400 * time.Millisecond
 	}
 	EnsureWorld(ctx.GR, ctx.M)
-	time.Sleep(300 * time.Millisecond)
+	return true, 0
 }
 
 // healerHeals: the live belief that Akara's talk-heal works on this mod (vanilla law:
@@ -401,6 +588,28 @@ var globalServiceCoolUntil time.Time
 // CoolAllServices silences all service demands for d (called by the executive).
 func CoolAllServices(d time.Duration) { globalServiceCoolUntil = time.Now().Add(d) }
 
+// lineCool: docket lines silenced one by one (2026-09-26: "identify" waited on
+// a Cain who is not in camp until Tristram — the valve cooled EVERY service,
+// restock with it, and she left town with 219k gold and no healing).
+var lineCool = struct {
+	sync.Mutex
+	until map[string]time.Time
+}{until: map[string]time.Time{}}
+
+// CoolServiceLine silences one docket line for d (the idle valve's scalpel).
+func CoolServiceLine(line string, d time.Duration) {
+	lineCool.Lock()
+	lineCool.until[line] = time.Now().Add(d)
+	lineCool.Unlock()
+}
+
+// lineOpen: the docket line is not silenced.
+func lineOpen(line string) bool {
+	lineCool.Lock()
+	defer lineCool.Unlock()
+	return time.Now().After(lineCool.until[line])
+}
+
 func servicesCooled() bool { return time.Now().Before(globalServiceCoolUntil) }
 
 // ServicesPending reports whether a town errand is waiting: a real belt deficit she can
@@ -410,12 +619,19 @@ func servicesCooled() bool { return time.Now().Before(globalServiceCoolUntil) }
 // (the latent starvation bug) or at 37% straight back into the pack that chased her home
 // (measured 04:13:07: Breakout's portal landed her in town with zero gold and zero junk —
 // nothing pended, Advance marched her out wounded two seconds later).
-func ServicesPending(s *percept.Snapshot) bool {
+// ServicesPending: some town errand is due (Advance holds the march for it).
+func ServicesPending(s *percept.Snapshot) bool { return ServicesPendingWhy(s) != "" }
+
+// ServicesPendingWhy names the docket line that holds the march ("" = none) — logged
+// by the idle breaker so a deadlocked docket names itself (R15: 30 min idle in town).
+func ServicesPendingWhy(s *percept.Snapshot) string {
 	if servicesCooled() {
-		return false // the idle breaker handed the wheel to the march
+		return "" // the idle breaker handed the wheel to the march
 	}
 	if s.Me.HPPct <= 55 && healerHeals.Load() {
-		return true // Akara's refill is free; leaving town below the drink line is denial
+		if lineOpen("heal") {
+			return "heal" // Akara's refill is free; leaving town below the drink line is denial
+		}
 	}
 	// Dressing and identifying are errands too — Travel outranks Service by class,
 	// and without these lines Advance marched her out with a unique bow still bagged
@@ -424,40 +640,136 @@ func ServicesPending(s *percept.Snapshot) bool {
 	// (no landing room, nothing left to sell) must not gate the march — she idled
 	// in town 12 minutes on that deadlock.
 	if equippableCands(s) > 0 && equipWorks.Load() && s.Me.InvFree >= 6 {
-		return true
+		if lineOpen("equip") {
+			return "equip"
+		}
 	}
-	if s.Me.UnidentCount > 0 && identifyWorks.Load() && s.Me.IDScrolls > 0 {
-		return true
+	if s.Me.UnidentCount > 0 && cainIDWorks.Load() { // Cain identifies (owner 2026-09-24); no tome charges needed
+		if lineOpen("identify") {
+			return "identify"
+		}
 	}
 	// P-8.1: banked points are an errand — the march waited on every other
 	// docket while 20 points sat in the bank and the unique stayed bagged
 	// (run 52: Advance took the actuator at 0.20 over Spend's 0.35 by class).
 	// Same escape clause: a retired spend belief does not gate the march.
 	if s.Me.StatPoints > 0 && spendWorks.Load() {
-		return true
+		if lineOpen("spend-stats") {
+			return "spend-stats"
+		}
 	}
 	if s.Me.SkillPoints > 0 && skillSpendWorks.Load() {
-		return true // P-8.7: banked dps is an errand
+		if lineOpen("spend-skills") {
+			return "spend-skills" // P-8.7: banked dps is an errand
+		}
 	}
 	// P-4.5: a near-empty tome is an errand too — marching out with no escape
 	// hatch is how retreats lose their destination (P-2.3), and an empty ID
 	// tome starves the whole judging pipeline.
-	if (s.Me.TPScrolls >= 0 && s.Me.TPScrolls <= 2 || s.Me.IDScrolls == 0) && scrollDeficit(s) > 0 {
-		return true
+	// TP only: identify is Cain's now (owner 2026-09-24), so an empty ID tome is not an
+	// errand — R15 idled 30 min in town on "pending=scrolls" with the ID tome at 0.
+	if s.Me.TPScrolls >= 0 && s.Me.TPScrolls <= 2 && scrollGap(s.Me.TPScrolls, s.Me.Gold) > 0 {
+		if lineOpen("scrolls") {
+			return "scrolls"
+		}
 	}
-	if s.Me.Gold >= 10 && s.Me.MinDurPct <= 25 {
-		return true
+	if s.Me.Gold >= 10 && s.Me.MinDurPct < inventory.TownRepairPct {
+		if lineOpen("repair") {
+			return "repair"
+		}
 	}
 	if s.Me.Gold >= 100 && time.Now().After(potionCoolUntil) {
 		if hp, mana := plan(s); hp+mana >= 2 {
-			return true
+			if lineOpen("potions") {
+				return "potions"
+			}
 		}
 	}
 	// The Fence's docket: broke with junk to sell, or a heavy bag either way.
-	if s.Me.JunkCount > 0 && (s.Me.Gold < 500 || s.Me.JunkCount >= 4) {
-		return true
+	// ...or a loot room trip (Haul): she came home to make room for a tier S
+	// drop, and every junk cell sold is room.
+	// R27: haul's return leg left before the stash ran, so every tier-S drop
+	// cost a town trip that emptied nothing. Keepers waiting = an errand.
+	// R31: a keeper lifted mid-stash left the bag, the docket read clear, and
+	// the march preempted Stash with the item on the cursor. A cursor item in
+	// town is always an errand.
+	if s.Me.InTown && s.Me.CursorItem {
+		if lineOpen("cursor") {
+			return "cursor"
+		}
 	}
-	return false
+	if stashWorks.Load() && len(stashable(s, loot.Active())) > 0 {
+		if lineOpen("stash") {
+			return "stash"
+		}
+	}
+	// OWNER (R27): the bag must be CLEARED every visit — any item the bag plan sells.
+	if s.Me.JunkCount > 0 {
+		if lineOpen("fence") {
+			return "fence"
+		}
+	}
+	return ""
+}
+
+// ---------------------------------------------------------------- vendor errands on contract v2
+
+// pre is the vendor services' common head: the phase budget, the close phase
+// (janitor OFF), the snapshot guards. stop=true: return st.
+func (e *errand) pre(ctx *Ctx) (st Status, stop bool) {
+	if st, over := e.overrun(ctx); over {
+		return st, true
+	}
+	if e.ph.Phase() == erClose {
+		return e.closing(ctx), true
+	}
+	s := ctx.Snap
+	if !s.Valid {
+		return e.wait(100 * time.Millisecond), true
+	}
+	if s.Me.CursorItem {
+		// At our own open trade window the bag is up beside it: the item is
+		// parked into a free cell (ParkCursor — the bag SEEN, the measured
+		// grid) rather than waited on until the panel lock's budget runs out.
+		// A few tries per trip; then the wait, and the budget, stand.
+		if e.ph.Phase() == erAct && e.parks < 3 && time.Since(e.parkAt) > 450*time.Millisecond && ctx.GR != nil {
+			if act, ok := ParkCursor(ctx, nil); ok {
+				e.parks++
+				e.parkAt = time.Now()
+				ctx.Led.Append(verbs.Outcome{Verb: "errand", Holder: e.ph.Act, Result: verbs.ResDone, Evidence: "cursor item at our shop: " + act})
+				return e.wait(450 * time.Millisecond), true
+			}
+		}
+		return e.wait(150 * time.Millisecond), true // WARNING 9: a shop or NPC click with a held item misfires
+	}
+	return Status{}, false
+}
+
+// drive runs one errand Step for its owner. open=true: the trade window is up
+// and the owner acts in this Step; dead=true: st is the abandoned verdict.
+func (e *errand) drive(ctx *Ctx, who string) (st Status, open, dead bool) {
+	es := e.step(ctx, who)
+	switch {
+	case es.dead:
+		ctx.Led.Append(verbs.Outcome{Verb: "errand", Holder: who, Result: verbs.ResDeaf, Evidence: es.why.String() + ": " + es.ev})
+		return e.finish(ctx, phase.Abandoned, es.why, es.ev), false, true
+	case es.open:
+		return Status{}, true, false
+	case es.wait > 0:
+		return e.wait(es.wait), false, false
+	}
+	return e.running(), false, false
+}
+
+// coolOnEnd: an episode that ran out of budget or wedged the screen cools its
+// service like a dead trip (P-4.2a: an abandoned trip stays abandoned), unless
+// the Step already set a longer cool.
+func coolOnEnd(v phase.Verdict, why phase.Reason, until *time.Time) {
+	if v == phase.Abandoned && (why == phase.Timebox || why == phase.UIWedge) {
+		if t := time.Now().Add(120 * time.Second); t.After(*until) {
+			*until = t
+		}
+	}
 }
 
 // ---------------------------------------------------------------- Restock (ClassService)
@@ -480,13 +792,19 @@ type Restock struct {
 	frozenID   int
 	nextAt     time.Time // ghost-abort cooldown: a dead window stays dead for minutes,
 	// not seconds — eight identical aborts in eight minutes taught the churn (12:07)
-	probeHP  int // potion-cell discovery cursors (the shop layout SHIFTS with level —
-	probeMN  int // the level-5 cells died at level 9, measured 12:15)
-	frozenHP int
-	frozenMN int
-	potFails int  // consecutive verified-buy failures this trip
-	noMana   bool // the open vendor stocks no mana potion
+	potFails int      // consecutive verified-buy failures this trip
+	noMana   bool     // the open vendor stocks no mana potion
+	buy      buyTx    // the verified potion purchase in flight
+	kind     string   // its kind: "health" | "mana"
+	scr      scrollTx // the scroll purchase in flight
+	sbuy     buyTx    // the verified scroll purchase in flight (stock-read)
+	sbuyTome int
 }
+
+var (
+	_ Life   = (*Restock)(nil)
+	_ Phased = (*Restock)(nil)
+)
 
 // potCount: total bottles of one kind she owns, belt AND bag — the only honest
 // BUY check. A bottle that landed in the bag still landed; the belt-only read
@@ -505,64 +823,6 @@ func potCount(ctx *Ctx, id int) int {
 		}
 	}
 	return n
-}
-
-// buyPotion — one potion purchase with the scroll machinery's discipline:
-// judged by the OWNED-count delta, the cell LEARNED per kind (ScopeGame —
-// the shop restocks per level), and a learned cell that freezes twice is
-// FORGOTTEN and re-probed rather than trusted into a ghost. Returns false
-// when probing exhausts every candidate this trip.
-func (r *Restock) buyPotion(ctx *Ctx, id int, memKey string, probeIdx, frozen *int) bool {
-	var candidates [][2]int
-	if id == modHPPotionID {
-		candidates = [][2]int{{hpCellX, hpCellY}, {612, 431}, {612, 384}, {664, 478}, {664, 525}, {612, 337}}
-	} else {
-		candidates = [][2]int{{manaCellX, manaCellY}, {612, 478}, {664, 525}, {664, 478}, {612, 431}, {664, 384}}
-	}
-	var cell [2]int
-	learned := ctx.Mem != nil && ctx.Mem.GetJSON(memKey, &cell) && cell != [2]int{0, 0}
-	if !learned {
-		if *probeIdx >= len(candidates) {
-			NoteGhost() // P-4.8a: a whole probe pass into a dead window is poison
-			// P-4.2a THE ESCAPE CLAUSE: an abandoned trip cools its docket line —
-			// it must not gate the march (measured 23:55: idle at the hub, 501
-			// gold, nothing left to try, Advance locked out by pending potions).
-			potionCoolUntil = time.Now().Add(3 * time.Minute)
-			ctx.Led.Append(verbs.Outcome{Verb: "buy", Holder: r.Name(), Result: verbs.ResDeaf,
-				Evidence: fmt.Sprintf("potion %d: no candidate cell raised the owned count — trip abandoned", id)})
-			return false
-		}
-		cell = candidates[*probeIdx]
-	}
-	before := potCount(ctx, id)
-	ctx.M.UIClick(cell[0], cell[1])
-	time.Sleep(450 * time.Millisecond)
-	after := potCount(ctx, id)
-	switch {
-	case after > before:
-		*frozen = 0
-		if !learned && ctx.Mem != nil {
-			ctx.Mem.PutJSON(memKey, memory.ScopeGame,
-				memory.Provenance{Source: "measured", Evidence: fmt.Sprintf("probe: potion %d count %d→%d at (%d,%d)", id, before, after, cell[0], cell[1])}, cell)
-			ctx.Led.Append(verbs.Outcome{Verb: "buy", Holder: r.Name(), Result: verbs.ResDone,
-				Evidence: fmt.Sprintf("%s LEARNED at (%d,%d)", memKey, cell[0], cell[1])})
-		}
-	case !learned:
-		*probeIdx++ // wrong cell: whatever it bought, the fence sorts it out
-	default:
-		if *frozen++; *frozen >= 2 {
-			// The learned cell died — the shop restocked over it (level-up).
-			// Forget and re-probe next pass rather than trust it into a ghost.
-			if ctx.Mem != nil {
-				ctx.Mem.PutJSON(memKey, memory.ScopeGame,
-					memory.Provenance{Source: "proven-negative", Evidence: "cell froze twice — forgotten for reprobe"}, [2]int{0, 0})
-			}
-			ctx.Led.Append(verbs.Outcome{Verb: "buy", Holder: r.Name(), Result: verbs.ResDeaf,
-				Evidence: fmt.Sprintf("potion %d: learned cell froze twice — forgotten, reprobing", id)})
-			*probeIdx, *frozen = 0, 0
-		}
-	}
-	return true
 }
 
 // scrollWorks: the live belief that scroll restocking works here — retired when
@@ -603,8 +863,10 @@ func tomeCount(ctx *Ctx, tomeID int) int {
 }
 
 func NewRestock() *Restock {
-	return &Restock{e: errand{npcID: npc.Akara, act2NPC: npc.Drognan, trade: true,
+	r := &Restock{e: errand{npcID: npc.Akara, act2NPC: npc.Drognan, act3NPC: npc.Ormus, trade: true,
 		ring: []data.Position{{X: 6023, Y: 4933}, {X: 6070, Y: 4960}, {X: 6100, Y: 4990}, {X: 6050, Y: 5010}, {X: 6110, Y: 4930}}}}
+	r.e.initLife(r.Name())
+	return r
 }
 
 func (r *Restock) Name() string { return "restock" }
@@ -647,7 +909,9 @@ func plan(s *percept.Snapshot) (buyHP, buyMana int) {
 	return
 }
 
-func (r *Restock) Demand(s *percept.Snapshot) *arbiter.Demand {
+func (r *Restock) Demand(s *percept.Snapshot) *arbiter.Demand { return r.e.keepBid(r.demand(s), s) }
+
+func (r *Restock) demand(s *percept.Snapshot) *arbiter.Demand {
 	if servicesCooled() {
 		return nil
 	}
@@ -669,33 +933,66 @@ func (r *Restock) Demand(s *percept.Snapshot) *arbiter.Demand {
 		Commit:  arbiter.Commitment{MinHold: 5 * time.Second}}
 }
 
-func (r *Restock) Step(ctx *Ctx) Verdict {
-	s := ctx.Snap
-	if !s.Valid {
-		return Running
+func (r *Restock) Needs(*percept.Snapshot) Needs { return r.e.needs() }
+
+func (r *Restock) Begin(ctx *Ctx, resumed bool) {
+	r.e.begin(resumed)
+	// A purchase in flight is never resumed blind: the next decision reads
+	// the live counts again.
+	r.buy, r.scr, r.sbuy = buyTx{}, scrollTx{}, buyTx{}
+	if resumed {
+		r.e.resume(ctx)
+		return
 	}
-	if s.Me.CursorItem {
-		return Running // WARNING 9: an instant-buy cell click would misfire
+	r.e.resetTrip()
+	r.resetCounters()
+	r.e.adoptHandoff(ctx)
+}
+
+func (r *Restock) Suspend(ctx *Ctx, _ phase.Reason) { r.e.suspend(ctx) }
+
+func (r *Restock) End(ctx *Ctx, v phase.Verdict, why phase.Reason) {
+	r.e.handOff(v, r.Name())
+	r.e.end(ctx, v, why)
+	r.e.resetTrip()
+	r.resetCounters()
+	r.buy, r.scr, r.sbuy = buyTx{}, scrollTx{}, buyTx{}
+	coolOnEnd(v, why, &r.nextAt)
+}
+
+func (r *Restock) Step(ctx *Ctx) Status {
+	e := &r.e
+	if st, stop := e.pre(ctx); stop {
+		return st
+	}
+	s := ctx.Snap
+	// A purchase in flight finishes first: its judgment reads the live counts.
+	if r.buy.active() {
+		v, done, w := r.buy.step(ctx, r.Name(), "", nil)
+		if !done {
+			return e.wait(w)
+		}
+		return r.afterPotion(ctx, v)
+	}
+	if r.sbuy.active() {
+		if done, w := r.buyScrollStock(ctx, 0); !done {
+			return e.wait(w)
+		}
+		return r.afterScroll(ctx)
 	}
 	buyHP, buyMana := plan(s)
 	if buyHP+buyMana+scrollDeficit(s) == 0 {
-		if r.e.phase >= 3 {
-			closeShop(ctx)
-		}
-		r.e.reset()
-		r.resetCounters()
-		return Done
+		return e.finish(ctx, phase.Done, phase.Completed, "belt and tomes at doctrine")
 	}
-	open, dead := r.e.step(ctx, r.Name())
+	st, open, dead := e.drive(ctx, r.Name())
 	if dead {
 		r.nextAt = time.Now().Add(120 * time.Second)
-		r.e.reset()
-		return Abandoned
+		return st
 	}
 	if !open {
-		return Running
+		return st
 	}
-	// Shop open: ONE purchase per step (instant-buy cells). Potions first, then
+	// Shop open: ONE purchase at a time (instant-buy cells). Potions first, then
 	// scrolls (P-4.5): blood before the escape hatch.
 	if buyMana > 0 || buyHP > 0 {
 		// THE BELT THAT EATS NOTHING (P-4.9; the owner, 2026-07-20: "spammed
@@ -714,134 +1011,175 @@ func (r *Restock) Step(ctx *Ctx) Verdict {
 			r.beltFrozen++
 		}
 		if r.beltFrozen >= 3 {
-			potionCoolUntil = time.Now().Add(5 * time.Minute)
-			r.nextAt = time.Now().Add(5 * time.Minute)
+			potionCoolUntil = time.Now().Add(60 * time.Minute) // R27: frozen belt -> bottles land in the bag and the fence sells them back
+			r.nextAt = time.Now().Add(60 * time.Minute)
 			ctx.Led.Append(verbs.Outcome{Verb: "buy", Holder: r.Name(), Result: verbs.ResDeaf,
 				Evidence: "belt frozen through 3 buys — bottles land in the bag; trip ended, potions cooled 5m"})
-			closeShop(ctx)
-			r.e.reset()
-			r.resetCounters()
-			return Abandoned
+			return e.finish(ctx, phase.Abandoned, phase.Refused, "belt frozen through 3 buys")
 		}
-			// VERIFIED BUYS (2026-09-23) supersede the probing: the stock is READ
-			// from memory, the cell hover-confirmed before the click, the result
-			// judged by gold AND owned count. Probe-by-purchase paid for its
-			// mistakes (9k gold of Act 2 junk on Act 1 cell guesses).
-			kind := "mana"
-			if buyMana == 0 || r.noMana {
-				kind = "health"
-			}
-			want := func(it data.Item) bool { return percept.PotionKind(it, true) == kind }
-			if kind == "health" && len(vendorStock(ctx, func(it data.Item) bool { return int(it.ID) == 603 })) > 0 {
-				want = func(it data.Item) bool { return int(it.ID) == 603 } // the proven belt bottle
-			}
-			switch buyVerified(ctx, r.Name(), kind+" potion", want) {
-			case buyOK:
-				r.potFails = 0
-			case buyNotStock:
-				if kind == "mana" {
-					r.noMana = true // this vendor sells no mana: fill the belt with health
-					return Running
-				}
-				r.potFails = 99
-			case buyWrong:
-				potionCoolUntil = time.Now().Add(30 * time.Minute)
-				r.potFails = 99
-			default:
-				// The click did nothing: the shop is NOT open, whatever lingering
-				// stock says. Talk again and select Trade for real.
-				r.potFails++
-				r.e.tradeSelected = false
-				r.e.phase = 2
-				return Running
-			}
-			if r.potFails >= 3 {
-				if time.Now().After(potionCoolUntil) {
-					potionCoolUntil = time.Now().Add(5 * time.Minute)
-				}
-				closeShop(ctx)
-				r.e.reset()
-				r.resetCounters()
-				r.nextAt = time.Now().Add(4 * time.Minute)
-				return Abandoned
-			}
-			r.potBought++
-		if r.potBought > s.Me.BeltSlots+2+8 { // runaway guard, probe headroom included
-			// The runaway abandon must COOL or it re-grants in seconds and buys
-			// another armful — the 10:56 spam re-granted 25s after abandoning.
-			potionCoolUntil = time.Now().Add(4 * time.Minute)
-			r.nextAt = time.Now().Add(4 * time.Minute)
-			closeShop(ctx)
-			r.e.reset()
-			r.resetCounters()
-			return Abandoned
+		// VERIFIED BUYS (2026-09-23) supersede the probing: the stock is READ
+		// from memory, the cell computed from measured geometry, the result
+		// judged by gold AND owned count. Probe-by-purchase paid for its
+		// mistakes (9k gold of Act 2 junk on Act 1 cell guesses).
+		r.kind = "mana"
+		if buyMana == 0 || r.noMana {
+			r.kind = "health"
 		}
-	} else {
-		// Scrolls: the TP tome first (the escape hatch), then the ID tome.
-		if scrollGap(s.Me.TPScrolls, s.Me.Gold) > 0 {
-			r.buyScroll(ctx, 533, "shop.akara.cell.tpscroll", &r.probeTP, &r.frozenTP)
-		} else {
-			r.buyScroll(ctx, 534, "shop.akara.cell.idscroll", &r.probeID, &r.frozenID)
+		kind := r.kind
+		want := func(it data.Item) bool { return percept.PotionKind(it, true) == kind }
+		if kind == "health" && len(vendorStock(ctx, func(it data.Item) bool { return int(it.ID) == 603 })) > 0 {
+			want = func(it data.Item) bool { return int(it.ID) == 603 } // the proven belt bottle
 		}
-		r.scrBought++
-		if r.scrBought > 2*tpScrollFloor+12 { // probes + refills, generously bounded
-			closeShop(ctx)
-			r.e.reset()
-			r.resetCounters()
-			return Abandoned
+		v, done, w := r.buy.step(ctx, r.Name(), kind+" potion", want)
+		if !done {
+			return e.wait(w)
 		}
+		return r.afterPotion(ctx, v)
 	}
-	time.Sleep(400 * time.Millisecond)
-	return Running
+	// Scrolls: the TP tome first (the escape hatch), then the ID tome.
+	tome, key := 534, "shop.akara.cell.idscroll"
+	if scrollGap(s.Me.TPScrolls, s.Me.Gold) > 0 {
+		tome, key = 533, "shop.akara.cell.tpscroll"
+	}
+	if done, w := r.buyScrollStock(ctx, tome); !done {
+		_ = key
+		return e.wait(w)
+	}
+	return r.afterScroll(ctx)
+}
+
+// afterPotion applies one verified purchase's verdict (the proven law, one
+// purchase per decision, 400ms between purchases).
+func (r *Restock) afterPotion(ctx *Ctx, v buyVerdict) Status {
+	e := &r.e
+	switch v {
+	case buyOK:
+		r.potFails = 0
+	case buyNotStock:
+		if r.kind == "mana" {
+			r.noMana = true // this vendor sells no mana: fill the belt with health
+			return e.running()
+		}
+		r.potFails = 99
+	case buyWrong:
+		potionCoolUntil = time.Now().Add(30 * time.Minute)
+		r.potFails = 99
+	default:
+		// The click did nothing: the shop is NOT open, whatever lingering
+		// stock says. Close what is up by sight and talk again, selecting
+		// Trade for real.
+		r.potFails++
+		e.tradeSelected = false
+		e.to(erClean, "buy click did nothing")
+		return e.running()
+	}
+	if r.potFails >= 3 {
+		if time.Now().After(potionCoolUntil) {
+			potionCoolUntil = time.Now().Add(5 * time.Minute)
+		}
+		r.nextAt = time.Now().Add(4 * time.Minute)
+		why := phase.Deaf
+		if v == buyNotStock {
+			why = phase.Refused
+		}
+		return e.finish(ctx, phase.Abandoned, why, "potion buys failing (verdict "+fmt.Sprint(v)+")")
+	}
+	r.potBought++
+	if r.potBought > ctx.Snap.Me.BeltSlots+2+8 { // runaway guard, probe headroom included
+		// The runaway abandon must COOL or it re-grants in seconds and buys
+		// another armful — the 10:56 spam re-granted 25s after abandoning.
+		potionCoolUntil = time.Now().Add(4 * time.Minute)
+		r.nextAt = time.Now().Add(4 * time.Minute)
+		return e.finish(ctx, phase.Abandoned, phase.Refused, fmt.Sprintf("runaway guard: %d potion buys", r.potBought))
+	}
+	return e.wait(400 * time.Millisecond)
+}
+
+func (r *Restock) afterScroll(ctx *Ctx) Status {
+	r.scrBought++
+	if r.scrBought > 2*tpScrollFloor+12 { // probes + refills, generously bounded
+		return r.e.finish(ctx, phase.Abandoned, phase.Refused, fmt.Sprintf("runaway guard: %d scroll buys", r.scrBought))
+	}
+	return r.e.wait(400 * time.Millisecond)
 }
 
 func (r *Restock) resetCounters() {
 	r.potBought, r.beltFrozen, r.scrBought, r.potFails, r.noMana = 0, 0, 0, 0, false
 	r.lastBeltHP, r.lastBeltMN = 0, 0
 	r.frozenTP, r.frozenID = 0, 0
-	r.probeHP, r.probeMN, r.frozenHP, r.frozenMN = 0, 0, 0, 0
 }
+
+// scrollTx is one scroll purchase in flight: the misc-tab click, a 450ms
+// settle, then the TOME's quantity delta judges it.
+type scrollTx struct {
+	stage   uint8 // 0 idle, 1 clicked (judging)
+	tomeID  int
+	memKey  string
+	cell    [2]int
+	learned bool
+	before  int
+}
+
+func (t *scrollTx) active() bool { return t.stage != 0 }
 
 // buyScroll — P-4.5: one scroll purchase, judged by the TOME's quantity delta
 // (gold cannot tell a scroll from junk). The cell is LEARNED once per tome and
 // kept forever; until learned, probe the misc-tab candidates — a wrong probe's
-// junk goes to the fence like any other merchandise.
-func (r *Restock) buyScroll(ctx *Ctx, tomeID int, memKey string, probeIdx, frozen *int) {
-	candidates := [][2]int{{612, 431}, {612, 384}, {612, 337}, {664, 478}, {664, 431}, {664, 384}}
-	var cell [2]int
-	learned := ctx.Mem != nil && ctx.Mem.GetJSON(memKey, &cell)
-	if !learned {
-		if *probeIdx >= len(candidates) {
-			scrollWorks.Store(false)
-			ctx.Led.Append(verbs.Outcome{Verb: "buy", Holder: r.Name(), Result: verbs.ResDeaf,
-				Evidence: fmt.Sprintf("no misc-tab candidate raised tome %d — scroll belief retired", tomeID)})
-			return
+// junk goes to the fence like any other merchandise. done=false: come back
+// after wait (the click landed; the judgment follows). tomeID/memKey are read
+// only when a new purchase starts.
+func (r *Restock) buyScroll(ctx *Ctx, tomeID int, memKey string) (done bool, wait time.Duration) {
+	t := &r.scr
+	if t.stage == 0 {
+		probeIdx, _ := r.scrollCursors(tomeID)
+		candidates := [][2]int{{612, 431}, {612, 384}, {612, 337}, {664, 478}, {664, 431}, {664, 384}}
+		var cell [2]int
+		learned := ctx.Mem != nil && ctx.Mem.GetJSON(memKey, &cell)
+		if !learned {
+			if *probeIdx >= len(candidates) {
+				scrollWorks.Store(false)
+				ctx.Led.Append(verbs.Outcome{Verb: "buy", Holder: r.Name(), Result: verbs.ResDeaf,
+					Evidence: fmt.Sprintf("no misc-tab candidate raised tome %d — scroll belief retired", tomeID)})
+				return true, 0
+			}
+			cell = candidates[*probeIdx]
 		}
-		cell = candidates[*probeIdx]
+		*t = scrollTx{stage: 1, tomeID: tomeID, memKey: memKey, cell: cell, learned: learned, before: tomeCount(ctx, tomeID)}
+		ctx.M.UIClick(cell[0], cell[1])
+		return false, 450 * time.Millisecond
 	}
-	before := tomeCount(ctx, tomeID)
-	ctx.M.UIClick(cell[0], cell[1])
-	time.Sleep(450 * time.Millisecond)
-	after := tomeCount(ctx, tomeID)
+	tx := *t
+	*t = scrollTx{}
+	probeIdx, frozen := r.scrollCursors(tx.tomeID)
+	after := tomeCount(ctx, tx.tomeID)
 	switch {
-	case after > before:
+	case after > tx.before:
 		*frozen = 0
-		if !learned && ctx.Mem != nil {
-			ctx.Mem.PutJSON(memKey, memory.ScopeForever,
-				memory.Provenance{Source: "measured", Evidence: fmt.Sprintf("probe: tome %d %d→%d at (%d,%d)", tomeID, before, after, cell[0], cell[1])}, cell)
+		if !tx.learned && ctx.Mem != nil {
+			ctx.Mem.PutJSON(tx.memKey, memory.ScopeForever,
+				memory.Provenance{Source: "measured", Evidence: fmt.Sprintf("probe: tome %d %d→%d at (%d,%d)", tx.tomeID, tx.before, after, tx.cell[0], tx.cell[1])}, tx.cell)
 			ctx.Led.Append(verbs.Outcome{Verb: "buy", Holder: r.Name(), Result: verbs.ResDone,
-				Evidence: fmt.Sprintf("%s LEARNED at (%d,%d)", memKey, cell[0], cell[1])})
+				Evidence: fmt.Sprintf("%s LEARNED at (%d,%d)", tx.memKey, tx.cell[0], tx.cell[1])})
 		}
-	case !learned:
+	case !tx.learned:
 		*probeIdx++ // wrong cell: whatever it bought is the fence's problem
 	default:
 		// A learned cell with a frozen delta twice is a GHOST WINDOW (WARNING 2).
 		if *frozen++; *frozen >= 2 {
 			scrollWorks.Store(false)
 			ctx.Led.Append(verbs.Outcome{Verb: "buy", Holder: r.Name(), Result: verbs.ResDeaf,
-				Evidence: fmt.Sprintf("tome %d frozen at %d twice on the learned cell — scroll belief retired", tomeID, before)})
+				Evidence: fmt.Sprintf("tome %d frozen at %d twice on the learned cell — scroll belief retired", tx.tomeID, tx.before)})
 		}
 	}
+	return true, 0
+}
+
+// scrollCursors: the probe and frozen counters of one tome.
+func (r *Restock) scrollCursors(tomeID int) (probe, frozen *int) {
+	if tomeID == 533 {
+		return &r.probeTP, &r.frozenTP
+	}
+	return &r.probeID, &r.frozenID
 }
 
 // ---------------------------------------------------------------- Fence (ClassService)
@@ -849,7 +1187,7 @@ func (r *Restock) buyScroll(ctx *Ctx, tomeID int, memKey string, probeIdx, froze
 // Fence sells inventory junk to Akara — the classic bots' economy law: loot → sell →
 // gold → repair/potions. A bot with an empty purse cannot take care of itself (the
 // owner, 03:08: "she doesn't repair either but she's out of gold i guess?"). One
-// ctrl-click quick-sell per Step, gold delta as the postcondition.
+// ctrl-click quick-sell at a time, exactly-this-item-gone as the postcondition.
 //
 // THE TOME OATH (the owner: "she simply dropped her tp book again. i'd like her to
 // stop that"): a tome must never leave the bag at the Fence. Three layers —
@@ -859,7 +1197,6 @@ func (r *Restock) buyScroll(ctx *Ctx, tomeID int, memKey string, probeIdx, froze
 type Fence struct {
 	e      errand
 	sold   int
-	gold0  int
 	tomes0 int // tome census when the shop opened; -1 = not yet taken
 	// Ghost-window defense (the owner: "trying to sell outside akara's trade
 	// window"): the vendor-stock read can LINGER after the panel closes, and a
@@ -869,11 +1206,20 @@ type Fence struct {
 	lastJunk int
 	ghost    int
 	coolAt   time.Time
+	sell     sellTx // the quick-sell in flight
+	pickups  int    // sells this trip whose Ctrl+click LIFTED the item instead (putBack)
 }
 
+var (
+	_ Life   = (*Fence)(nil)
+	_ Phased = (*Fence)(nil)
+)
+
 func NewFence() *Fence {
-	return &Fence{tomes0: -1, e: errand{npcID: npc.Akara, act2NPC: npc.Drognan, trade: true,
+	fc := &Fence{tomes0: -1, e: errand{npcID: npc.Akara, act2NPC: npc.Drognan, act3NPC: npc.Ormus, trade: true,
 		ring: []data.Position{{X: 6023, Y: 4933}, {X: 6070, Y: 4960}, {X: 6100, Y: 4990}, {X: 6050, Y: 5010}, {X: 6110, Y: 4930}}}}
+	fc.e.initLife(fc.Name())
+	return fc
 }
 
 // tomeCensus counts TP+ID tomes in the live inventory read — the Fence's oath audit.
@@ -889,19 +1235,44 @@ func tomeCensus(ctx *Ctx) int {
 
 func (fc *Fence) Name() string { return "fence" }
 
-func (fc *Fence) Demand(s *percept.Snapshot) *arbiter.Demand {
+func (fc *Fence) Demand(s *percept.Snapshot) *arbiter.Demand { return fc.e.keepBid(fc.demand(s), s) }
+
+func (fc *Fence) demand(s *percept.Snapshot) *arbiter.Demand {
 	if servicesCooled() {
 		return nil
 	}
 	if !s.Valid || !s.Me.InTown || s.Me.JunkCount == 0 || time.Now().Before(fc.coolAt) {
 		return nil
 	}
-	if s.Me.Gold >= 500 && s.Me.JunkCount < 4 {
-		return nil // solvent and light: selling can wait for a fuller bag
-	}
+	// OWNER (R27): every town visit clears the bag — no "solvent and light" wait.
 	return &arbiter.Demand{Who: fc.Name(), Class: arbiter.ClassService,
 		Urgency: 0.45 + float64(minInt(s.Me.JunkCount, 8))/20, // poverty + full bags push it up
 		Commit:  arbiter.Commitment{MinHold: 5 * time.Second}}
+}
+
+func (fc *Fence) Needs(*percept.Snapshot) Needs { return fc.e.needs() }
+
+func (fc *Fence) Begin(ctx *Ctx, resumed bool) {
+	fc.e.begin(resumed)
+	fc.sell = sellTx{}
+	if resumed {
+		fc.e.resume(ctx)
+		return
+	}
+	fc.e.resetTrip()
+	fc.sold, fc.tomes0, fc.ghost, fc.lastJunk, fc.pickups = 0, -1, 0, 0, 0
+	fc.e.adoptHandoff(ctx)
+}
+
+func (fc *Fence) Suspend(ctx *Ctx, _ phase.Reason) { fc.e.suspend(ctx) }
+
+func (fc *Fence) End(ctx *Ctx, v phase.Verdict, why phase.Reason) {
+	fc.e.handOff(v, fc.Name())
+	fc.e.end(ctx, v, why)
+	fc.e.resetTrip()
+	fc.sold, fc.tomes0, fc.ghost, fc.lastJunk, fc.pickups = 0, -1, 0, 0, 0
+	fc.sell = sellTx{}
+	coolOnEnd(v, why, &fc.coolAt)
 }
 
 // invCell converts an inventory GRID slot to the proven panel pixel formula.
@@ -920,33 +1291,84 @@ func invCellPx(ctx *Ctx, gx, gy int) (int, int) {
 	return int(x), int(y)
 }
 
-func (fc *Fence) Step(ctx *Ctx) Verdict {
-	s := ctx.Snap
-	if !s.Valid {
-		return Running
+// sellVerdict is one verified quick-sell's result.
+type sellVerdict uint8
+
+const (
+	sellOK    sellVerdict = iota // exactly the target left the bag
+	sellWrong                    // something else left: STOP fencing
+	sellDeaf                     // nothing left the bag
+)
+
+// judgeSell: the fence's postcondition — EXACTLY this item gone.
+func judgeSell(target data.UnitID, gone []data.UnitID) sellVerdict {
+	switch {
+	case len(gone) == 1 && gone[0] == target:
+		return sellOK
+	case len(gone) > 0:
+		return sellWrong
 	}
-	if s.Me.CursorItem {
-		return Running // WARNING 9: a ctrl-click with a held item is a drop
+	return sellDeaf
+}
+
+// sellTx is one quick-sell in flight: the real Ctrl+click, then the bag
+// polled for up to 1s — no sleeps.
+type sellTx struct {
+	active bool
+	target data.UnitID
+	gx, gy int
+	cx, cy int
+	gold0  int
+	before map[data.UnitID]bool
+	at     time.Time
+	back   int  // put-back clicks: the Ctrl+click lifted the item (putBack)
+	drop   bool // the lifted item was set down on the vendor's window (the sell-by-drop)
+}
+
+// gone: units of before no longer in the bag.
+func (t *sellTx) gone(ctx *Ctx) []data.UnitID {
+	now := map[data.UnitID]bool{}
+	for _, inv := range ctx.GR.GetData().Inventory.ByLocation(item.LocationInventory) {
+		now[inv.UnitID] = true
+	}
+	var out []data.UnitID
+	for u := range t.before {
+		if !now[u] {
+			out = append(out, u)
+		}
+	}
+	return out
+}
+
+func (fc *Fence) Step(ctx *Ctx) Status {
+	e := &fc.e
+	if fc.sell.active && ctx.Snap.Valid && (ctx.Snap.Me.CursorItem || fc.sell.back > 0) {
+		// Before pre()'s cursor wait: the item on the cursor is OURS.
+		if st, over := e.overrun(ctx); over {
+			return st
+		}
+		return fc.putBack(ctx)
+	}
+	if st, stop := e.pre(ctx); stop {
+		return st
+	}
+	s := ctx.Snap
+	if fc.sell.active {
+		return fc.judge(ctx)
 	}
 	if len(s.Junk) == 0 {
-		if fc.e.phase >= 3 {
-			closeShop(ctx)
-		}
-		fc.e.reset()
-		fc.sold, fc.tomes0 = 0, -1
-		return Done // the bag is honest merchandise no more
+		return e.finish(ctx, phase.Done, phase.Completed, fmt.Sprintf("bag clean: %d sold", fc.sold)) // the bag is honest merchandise no more
 	}
-	open, dead := fc.e.step(ctx, fc.Name())
+	st, open, dead := e.drive(ctx, fc.Name())
 	if dead {
 		// P-4.2a: an abandoned trip stays abandoned (05:17: Fence re-bid 0.65
 		// the instant it gave up on a wall-blocked Akara — the idle breaker
 		// never sees idle, so the SERVICE must cool itself). Retry next town.
 		fc.coolAt = time.Now().Add(120 * time.Second)
-		fc.e.reset()
-		return Abandoned
+		return st
 	}
 	if !open {
-		return Running
+		return st
 	}
 	// WARNING 2 + Lexicon/SELL: the delta check is the only proof — a sell that
 	// doesn't shrink the junk count is firing into a GHOST WINDOW, and ctrl-clicks
@@ -961,11 +1383,8 @@ func (fc *Fence) Step(ctx *Ctx) Verdict {
 			NoteGhost() // P-4.8a: the classic ghost window counts toward the poison
 			ctx.Led.Append(verbs.Outcome{Verb: "fence", Holder: fc.Name(), Result: verbs.ResDeaf,
 				Evidence: "GHOST TRADE WINDOW: sells not landing — aborting before a ctrl-click drops an item"})
-			closeShop(ctx)
-			fc.e.reset()
-			fc.sold, fc.tomes0, fc.ghost = 0, -1, 0
 			fc.coolAt = time.Now().Add(45 * time.Second)
-			return Abandoned
+			return e.finish(ctx, phase.Abandoned, phase.Deaf, "ghost trade window: sells not landing")
 		}
 	}
 	fc.lastJunk = len(s.Junk)
@@ -976,15 +1395,11 @@ func (fc *Fence) Step(ctx *Ctx) Verdict {
 	if fc.tomes0 < 0 {
 		fc.tomes0 = census
 	} else if census < fc.tomes0 {
-		ctx.Led.Append(verbs.Outcome{Verb: "fence", Holder: fc.Name(), Result: verbs.ResDeaf,
-			Evidence: fmt.Sprintf("TOME LOST mid-errand (%d -> %d) — fencing aborted", fc.tomes0, census)})
-		closeShop(ctx)
-		fc.e.reset()
-		fc.sold, fc.tomes0 = 0, -1
-		return Abandoned
+		ev := fmt.Sprintf("TOME LOST mid-errand (%d -> %d) — fencing aborted", fc.tomes0, census)
+		ctx.Led.Append(verbs.Outcome{Verb: "fence", Holder: fc.Name(), Result: verbs.ResDeaf, Evidence: ev})
+		return e.finish(ctx, phase.Abandoned, phase.Precondition, ev)
 	}
-	// Shop open: quick-sell ONE junk item per step; the next snapshot's Junk list and
-	// gold are the postcondition.
+	// Shop open: quick-sell ONE junk item; the bag is the postcondition.
 	it := s.Junk[0]
 	// TOME OATH, identity layer: the snapshot called this cell junk — re-identify it
 	// against LIVE memory the instant before the ctrl-click. Percept and reality
@@ -996,13 +1411,12 @@ func (fc *Fence) Step(ctx *Ctx) Verdict {
 			continue
 		}
 		id := int(inv.ID)
-		if id == 533 || id == 534 || id == 549 || inv.Desc().Type == item.TypeQuest {
-			ctx.Led.Append(verbs.Outcome{Verb: "fence", Holder: fc.Name(), Result: verbs.ResRefused,
-				Evidence: fmt.Sprintf("cell (%d,%d) holds a LIFELINE (id %d, type %s) — sell refused", it.GX, it.GY, id, inv.Desc().Type)})
-			closeShop(ctx)
-			fc.e.reset()
-			fc.sold, fc.tomes0 = 0, -1
-			return Abandoned
+		// loot.Lifeline adds the mod's numbering: the cube is row 564 here (the
+		// recorded sell list carried it), and quest rows sit 15 past vanilla.
+		if id == 533 || id == 534 || id == 549 || inv.Desc().Type == item.TypeQuest || loot.Lifeline(id) {
+			ev := fmt.Sprintf("cell (%d,%d) holds a LIFELINE (id %d, type %s) — sell refused", it.GX, it.GY, id, inv.Desc().Type)
+			ctx.Led.Append(verbs.Outcome{Verb: "fence", Holder: fc.Name(), Result: verbs.ResRefused, Evidence: ev})
+			return e.finish(ctx, phase.Abandoned, phase.Precondition, ev)
 		}
 	}
 	// REAL SELL, VERIFIED (2026-09-23: the posted SellClick at the old 45-px Act 1
@@ -1010,66 +1424,131 @@ func (fc *Fence) Step(ctx *Ctx) Verdict {
 	// from the MEASURED inventory grid (10x8 on this mod), the click is a real
 	// Ctrl+click, and the result must be EXACTLY this item gone. Any other item
 	// leaving the bag stops fencing on the spot.
-	var targetUnit data.UnitID
-	before := map[data.UnitID]bool{}
+	t := sellTx{gx: it.GX, gy: it.GY, before: map[data.UnitID]bool{}}
 	for _, inv := range ctx.GR.GetData().Inventory.ByLocation(item.LocationInventory) {
-		before[inv.UnitID] = true
+		t.before[inv.UnitID] = true
 		if inv.Position.X == it.GX && inv.Position.Y == it.GY {
-			targetUnit = inv.UnitID
+			t.target = inv.UnitID
 		}
 	}
-	if targetUnit == 0 {
+	if t.target == 0 {
 		ctx.Led.Append(verbs.Outcome{Verb: "fence", Holder: fc.Name(), Result: verbs.ResRefused,
 			Evidence: fmt.Sprintf("junk cell (%d,%d) no longer holds an item — resync", it.GX, it.GY)})
-		time.Sleep(300 * time.Millisecond)
-		return Running
+		return e.wait(300 * time.Millisecond)
 	}
-	gold0 := ctx.GR.GetData().PlayerUnit.TotalPlayerGold()
-	cx, cy := invCellPx(ctx, it.GX, it.GY)
-	ctx.M.RealMenuCtrlClick(cx, cy)
-	var gone []data.UnitID
-	for i := 0; i < 10; i++ {
-		time.Sleep(100 * time.Millisecond)
-		now := map[data.UnitID]bool{}
-		for _, inv := range ctx.GR.GetData().Inventory.ByLocation(item.LocationInventory) {
-			now[inv.UnitID] = true
-		}
-		gone = gone[:0]
-		for u := range before {
-			if !now[u] {
-				gone = append(gone, u)
-			}
-		}
-		if len(gone) > 0 {
-			break
-		}
+	t.gold0 = ctx.GR.GetData().PlayerUnit.TotalPlayerGold()
+	t.cx, t.cy = invCellPx(ctx, it.GX, it.GY)
+	ctx.M.RealMenuCtrlClick(t.cx, t.cy)
+	t.active, t.at = true, time.Now()
+	fc.sell = t
+	return e.wait(100 * time.Millisecond)
+}
+
+// judge polls the sell in flight (≤1s) and applies its verdict.
+func (fc *Fence) judge(ctx *Ctx) Status {
+	e, t := &fc.e, &fc.sell
+	if cur := ctx.GR.GetData().Inventory.ByLocation(item.LocationCursor); len(cur) > 0 && cur[0].UnitID == t.target {
+		return fc.putBack(ctx) // it left the bag onto the CURSOR: lifted, not sold
 	}
+	gone := t.gone(ctx)
+	if len(gone) == 0 && time.Since(t.at) < time.Second {
+		return e.wait(100 * time.Millisecond)
+	}
+	t.active = false
 	gold1 := ctx.GR.GetData().PlayerUnit.TotalPlayerGold()
-	switch {
-	case len(gone) == 1 && gone[0] == targetUnit:
+	switch judgeSell(t.target, gone) {
+	case sellOK:
 		ctx.Led.Append(verbs.Outcome{Verb: "fence", Holder: fc.Name(), Result: verbs.ResDone,
-			Evidence: fmt.Sprintf("sold cell (%d,%d) px(%d,%d) gold %d→%d", it.GX, it.GY, cx, cy, gold0, gold1)})
-	case len(gone) > 0:
-		ctx.Led.Append(verbs.Outcome{Verb: "fence", Holder: fc.Name(), Result: verbs.ResDeaf,
-			Evidence: fmt.Sprintf("WRONG ITEM LEFT THE BAG (wanted unit %d at (%d,%d), gone=%v) — fencing halted", targetUnit, it.GX, it.GY, gone)})
-		closeShop(ctx)
-		fc.e.reset()
-		fc.sold, fc.tomes0 = 0, -1
+			Evidence: fmt.Sprintf("sold cell (%d,%d) px(%d,%d) gold %d→%d", t.gx, t.gy, t.cx, t.cy, t.gold0, gold1)})
+	case sellWrong:
+		ev := fmt.Sprintf("WRONG ITEM LEFT THE BAG (wanted unit %d at (%d,%d), gone=%v) — fencing halted", t.target, t.gx, t.gy, gone)
+		ctx.Led.Append(verbs.Outcome{Verb: "fence", Holder: fc.Name(), Result: verbs.ResDeaf, Evidence: ev})
 		fc.coolAt = time.Now().Add(30 * time.Minute)
-		return Abandoned
+		return e.finish(ctx, phase.Abandoned, phase.Deaf, ev)
 	default:
 		ctx.Led.Append(verbs.Outcome{Verb: "fence", Holder: fc.Name(), Result: verbs.ResWhiff,
-			Evidence: fmt.Sprintf("sell click did nothing: cell (%d,%d) px(%d,%d) gold %d→%d", it.GX, it.GY, cx, cy, gold0, gold1)})
+			Evidence: fmt.Sprintf("sell click did nothing: cell (%d,%d) px(%d,%d) gold %d→%d", t.gx, t.gy, t.cx, t.cy, t.gold0, gold1)})
 	}
 	fc.sold++
 	if fc.sold > 40 { // runaway guard
-		closeShop(ctx)
-		fc.e.reset()
-		fc.sold = 0
-		return Abandoned
+		return e.finish(ctx, phase.Abandoned, phase.Refused, "runaway guard: 40 sells")
 	}
-	time.Sleep(400 * time.Millisecond)
-	return Running
+	return e.wait(400 * time.Millisecond)
+}
+
+// putBack: the quick-sell's Ctrl+click LIFTED the item instead of selling it
+// (relay R10: every fence Act put the junk on the cursor — "cursor item" a
+// tick after "shop open", not one "sold cell" line all run — and pre() waited
+// on it until Equip outbid the errand and the gate shut the shop under it).
+// The item is the fence's: it goes back where it came from (the one region
+// certain to fit it, else any free one) through ParkCursor — the bag SEEN
+// open, the measured grid, a real click — and the cursor-empty read judges it.
+// Two lifts in one trip retire the gesture: fencing cools for 10 minutes.
+func (fc *Fence) putBack(ctx *Ctx) Status {
+	e, t := &fc.e, &fc.sell
+	cur := ctx.GR.GetData().Inventory.ByLocation(item.LocationCursor)
+	// SELL BY DROP (R20: the bag sat full of junk, "picked=0", fencing cooled on
+	// every trip). A lifted item set down on the vendor's own window IS a sale in
+	// D2R. Judged by the cursor emptying, the unit leaving the bag and the gold.
+	if t.drop && len(cur) == 0 {
+		t.active = false
+		gold1 := ctx.GR.GetData().PlayerUnit.TotalPlayerGold()
+		if !inBag(ctx, t.target) {
+			fc.sold++
+			ctx.Led.Append(verbs.Outcome{Verb: "fence", Holder: fc.Name(), Result: verbs.ResDone,
+				Evidence: fmt.Sprintf("sold cell (%d,%d) by drop on the vendor window, gold %d→%d", t.gx, t.gy, t.gold0, gold1)})
+			return e.wait(400 * time.Millisecond)
+		}
+		ctx.Led.Append(verbs.Outcome{Verb: "fence", Holder: fc.Name(), Result: verbs.ResWhiff,
+			Evidence: fmt.Sprintf("drop on the vendor window did not sell cell (%d,%d): the item is back in the bag", t.gx, t.gy)})
+		return e.wait(400 * time.Millisecond)
+	}
+	if !t.drop && t.back == 0 && len(cur) > 0 && cur[0].UnitID == t.target && shopOpen(ctx) {
+		cx, cy := shopCellPx(ctx, data.Position{X: 4, Y: 4})
+		ctx.M.RealMenuClick(cx, cy)
+		t.drop, t.at = true, time.Now()
+		return e.wait(450 * time.Millisecond)
+	}
+	if t.drop && len(cur) > 0 && time.Since(t.at) < 450*time.Millisecond {
+		return e.wait(100 * time.Millisecond) // the drop is being judged
+	}
+	if len(cur) == 0 {
+		if t.back == 0 {
+			return e.wait(100 * time.Millisecond) // the snapshot ran ahead of the live read
+		}
+		t.active = false
+		fc.pickups++
+		ctx.Led.Append(verbs.Outcome{Verb: "fence", Holder: fc.Name(), Result: verbs.ResWhiff,
+			Evidence: fmt.Sprintf("SELL BECAME A PICKUP: the Ctrl+click at px(%d,%d) lifted cell (%d,%d) — put back in %d click(s)", t.cx, t.cy, t.gx, t.gy, t.back)})
+		if fc.pickups >= 2 {
+			fc.coolAt = time.Now().Add(10 * time.Minute)
+			return e.finish(ctx, phase.Abandoned, phase.Deaf, "the Ctrl+click lifts instead of selling (2 pickups, both put back) — fencing cooled 10m")
+		}
+		return e.wait(400 * time.Millisecond)
+	}
+	if t.back > 0 && time.Since(t.at) < 450*time.Millisecond {
+		return e.wait(100 * time.Millisecond) // the place-click is being judged
+	}
+	switch {
+	case cur[0].UnitID != t.target:
+		t.active = false
+		return e.finish(ctx, phase.Abandoned, phase.Deaf,
+			fmt.Sprintf("a different item rides the cursor mid-sell (unit %d, sold %d) — the gate's parker takes it", cur[0].UnitID, t.target))
+	case t.back >= 3:
+		t.active = false
+		return e.finish(ctx, phase.Abandoned, phase.Deaf, "the lifted item would not go back (3 place-clicks) — the gate's parker takes it")
+	case !bagSeen(ctx) && time.Since(t.at) > 2*time.Second:
+		t.active = false
+		return e.finish(ctx, phase.Abandoned, phase.Deaf, "the lifted item: the bag not seen open for 2s — no blind place-click; the gate holds it")
+	}
+	act, ok := ParkCursor(ctx, &data.Position{X: t.gx, Y: t.gy})
+	if !ok {
+		return e.wait(150 * time.Millisecond)
+	}
+	ctx.Led.Append(verbs.Outcome{Verb: "fence", Holder: fc.Name(), Result: verbs.ResDone, Evidence: "put back: " + act})
+	t.back++
+	t.at = time.Now()
+	return e.wait(450 * time.Millisecond)
 }
 
 // ---------------------------------------------------------------- Heal (ClassService)
@@ -1085,14 +1564,23 @@ type Heal struct {
 	coolAt time.Time
 }
 
+var (
+	_ Life   = (*Heal)(nil)
+	_ Phased = (*Heal)(nil)
+)
+
 func NewHeal() *Heal {
-	return &Heal{e: errand{npcID: npc.Akara, act2NPC: npc.Fara,
+	h := &Heal{e: errand{npcID: npc.Akara, act2NPC: npc.Fara, act3NPC: npc.Ormus,
 		ring: []data.Position{{X: 6023, Y: 4933}, {X: 6070, Y: 4960}, {X: 6100, Y: 4990}, {X: 6050, Y: 5010}, {X: 6110, Y: 4930}}}}
+	h.e.initLife(h.Name())
+	return h
 }
 
 func (h *Heal) Name() string { return "heal" }
 
-func (h *Heal) Demand(s *percept.Snapshot) *arbiter.Demand {
+func (h *Heal) Demand(s *percept.Snapshot) *arbiter.Demand { return h.e.keepBid(h.demand(s), s) }
+
+func (h *Heal) demand(s *percept.Snapshot) *arbiter.Demand {
 	if servicesCooled() {
 		return nil
 	}
@@ -1107,30 +1595,43 @@ func (h *Heal) Demand(s *percept.Snapshot) *arbiter.Demand {
 		Commit:  arbiter.Commitment{MinHold: 5 * time.Second}}
 }
 
-func (h *Heal) Step(ctx *Ctx) Verdict {
+func (h *Heal) Needs(*percept.Snapshot) Needs { return h.e.needs() }
+
+func (h *Heal) Begin(ctx *Ctx, resumed bool) {
+	h.e.begin(resumed)
+	if resumed {
+		h.e.resume(ctx)
+		return
+	}
+	h.e.resetTrip()
+	h.talks = 0
+}
+
+func (h *Heal) Suspend(ctx *Ctx, _ phase.Reason) { h.e.suspend(ctx) }
+
+func (h *Heal) End(ctx *Ctx, v phase.Verdict, why phase.Reason) {
+	h.e.end(ctx, v, why)
+	h.e.resetTrip()
+	h.talks = 0
+	coolOnEnd(v, why, &h.coolAt)
+}
+
+func (h *Heal) Step(ctx *Ctx) Status {
+	e := &h.e
+	if st, stop := e.pre(ctx); stop {
+		return st
+	}
 	s := ctx.Snap
-	if !s.Valid {
-		return Running
-	}
-	if s.Me.CursorItem {
-		return Running // WARNING 9: an NPC click with a held item can drop it
-	}
 	if s.Me.HPPct > 90 {
-		if s.MenuOpen {
-			closeShop(ctx)
-		}
-		h.e.reset()
-		h.talks = 0
-		return Done // refilled — the pending clears and the march resumes
+		return e.finish(ctx, phase.Done, phase.Completed, fmt.Sprintf("refilled: hp %d", s.Me.HPPct)) // the pending clears and the march resumes
 	}
-	// The menu byte high = the talk happened = the heal (if this mod kept it) already
-	// landed. Close and read the verdict from a FRESH hp — the snapshot predates the talk.
-	if s.MenuOpen {
-		closeShop(ctx)
+	// The menu byte high after OUR talk click = the talk happened = the heal (if
+	// this mod kept it) already landed. Read the verdict from a FRESH hp — the
+	// snapshot predates the talk. A menu that was up before our click is a
+	// leftover: Clean (and the errand's Talk) close it by sight first.
+	if e.ph.Phase() >= erTalk && s.MenuOpen && talkedRecently(e.clickAt, time.Now()) {
 		if hp := ctx.GR.GetData().PlayerUnit.HPPercent(); hp > 60 {
-			h.e.reset()
-			h.talks = 0
-			return Done
+			return e.finish(ctx, phase.Done, phase.Completed, fmt.Sprintf("talk healed: hp %d", hp))
 		}
 		h.talks++
 		if h.talks >= 2 {
@@ -1139,412 +1640,19 @@ func (h *Heal) Step(ctx *Ctx) Verdict {
 			healerHeals.Store(false)
 			ctx.Led.Append(verbs.Outcome{Verb: "heal", Holder: h.Name(), Result: verbs.ResDeaf,
 				Evidence: "two talks, no HP change — this Akara does not heal; belief retired"})
-			h.e.reset()
-			h.talks = 0
-			return Abandoned
+			return e.finish(ctx, phase.Abandoned, phase.Refused, "two talks, no HP change")
 		}
-		return Running
+		e.clickAt = time.Time{}
+		e.to(erClean, "talk did not heal: close the menu and talk again")
+		return e.running()
 	}
-	// Drive the errand only through the TALK (phases 0-2); the MenuOpen intercept
-	// above fires before e.step could ever advance into trade navigation.
-	if _, dead := h.e.step(ctx, h.Name()); dead {
+	// Drive the errand only through the TALK: the intercept above fires before
+	// the errand could ever advance into trade navigation.
+	st, _, dead := e.drive(ctx, h.Name())
+	if dead {
 		h.coolAt = time.Now().Add(120 * time.Second)
-		h.e.reset()
-		return Abandoned
 	}
-	return Running
-}
-
-// ---------------------------------------------------------------- Identify (ClassService)
-
-// identifyWorks: the live belief that the ID-tome SKILL path identifies items on this
-// mod (select tome skill -> right-click casts -> inventory opens with the identify
-// hand -> click the item). Every step has a readable postcondition; three attempts
-// with no Identified flip retire the belief so she can never grind a dead ritual.
-var identifyWorks atomic.Bool
-
-func init() { identifyWorks.Store(true) }
-
-// Identify burns the ID tome's charges on the unidentified magic+ backlog — the gate
-// between "inventory full of mystery" and the Fence's valuation (the owner: "it won't
-// identify and sell anything... inventory is getting full of things she could use").
-type Identify struct {
-	tries   int // attempts with no count progress — the disproof counter
-	lastN   int
-	clickAt time.Time
-}
-
-func NewIdentify() *Identify { return &Identify{lastN: -1} }
-
-func (idn *Identify) Name() string { return "identify" }
-
-func (idn *Identify) Demand(s *percept.Snapshot) *arbiter.Demand {
-	if servicesCooled() {
-		return nil
-	}
-	if !s.Valid || !s.Me.InTown || s.Me.UnidentCount == 0 || !identifyWorks.Load() {
-		return nil
-	}
-	// AN EMPTY TOME IDENTIFIES NOTHING (the owner watched the loop, 09:50:
-	// the cast fizzles, the follow-up click GRABS the item, the next click
-	// throws it — WARNING 9's mess on repeat). Zero charges: stand down until
-	// Restock refills the tome (P-4.5).
-	if s.Me.IDScrolls <= 0 {
-		return nil
-	}
-	return &arbiter.Demand{Who: idn.Name(), Class: arbiter.ClassService,
-		Urgency: 0.55, // above a routine restock; below Heal and a deep-poverty Fence
-		Commit:  arbiter.Commitment{MinHold: 5 * time.Second}}
-}
-
-func (idn *Identify) Step(ctx *Ctx) Verdict {
-	s := ctx.Snap
-	if !s.Valid {
-		return Running
-	}
-	if s.Me.CursorItem {
-		return Running // WARNING 9: the tome ritual clicks cells — parking first
-	}
-	if s.Me.UnidentCount == 0 {
-		// THE BAG IS BYTE-BLIND (00:19, the owner: "what the hell is he doing
-		// chilling" — identify cast, released 8s later, and the inventory
-		// STOOD because MenuOpen never reads it; the march resumed with half
-		// the screen eating clicks). If this trip CAST, the bag stands
-		// whatever the byte says — close what we know we opened.
-		if s.MenuOpen || !idn.clickAt.IsZero() {
-			closeShop(ctx)
-		}
-		idn.tries, idn.lastN, idn.clickAt = 0, -1, time.Time{}
-		return Done
-	}
-	// Progress audit: the count dropping IS the proof the ritual works.
-	if idn.lastN >= 0 && s.Me.UnidentCount < idn.lastN {
-		idn.tries = 0
-	}
-	idn.lastN = s.Me.UnidentCount
-	if time.Since(idn.clickAt) < 1200*time.Millisecond {
-		return Running // let the previous cast+click land before judging
-	}
-	if ctx.Cap == nil || ctx.Cap.Identify == nil {
-		idn.coolOff(ctx, "no proven ID-tome binding")
-		return Abandoned
-	}
-	idn.tries++
-	if idn.tries > 3 {
-		idn.coolOff(ctx, fmt.Sprintf("3 attempts, count stuck at %d — ritual retired", s.Me.UnidentCount))
-		return Abandoned
-	}
-	it := s.Unid[0]
-	ctx.M.MoveStop()
-	// 1. Select the tome skill — readback-verified (the selection flip is the proof).
-	ctx.M.PressKey(ctx.Cap.Identify.Key)
-	time.Sleep(150 * time.Millisecond)
-	// 2. Cast: a world right-click with the tome selected raises the identify hand
-	//    and opens the inventory. Aim at open ground below her feet — never an NPC.
-	ctx.M.ClickRight(ctx.GR.GameAreaSizeX/2, ctx.GR.GameAreaSizeY/2+180)
-	time.Sleep(500 * time.Millisecond)
-	// 3. Touch the item: the proven inventory-cell click. The postcondition is the
-	//    next snapshot's Identified flag — judged at the top of the next Step.
-	cx, cy := invCell(it.GX, it.GY)
-	ctx.M.UIClick(cx, cy)
-	idn.clickAt = time.Now()
-	return Running
-}
-
-func (idn *Identify) coolOff(ctx *Ctx, why string) {
-	identifyWorks.Store(false)
-	ctx.Led.Append(verbs.Outcome{Verb: "identify", Holder: idn.Name(), Result: verbs.ResDeaf,
-		Evidence: why + " — identify belief retired (drill the ritual manually)"})
-	if ctx.Snap.MenuOpen || !idn.clickAt.IsZero() {
-		closeShop(ctx) // the bag is byte-blind: close what we know we opened (00:19)
-	}
-	idn.tries, idn.lastN, idn.clickAt = 0, -1, time.Time{}
-}
-
-// ---------------------------------------------------------------- Equip (ClassService)
-
-// equipWorks: the live belief that the shift-click auto-equip gesture works here
-// (owner-declared: "shift click and replace items from inventory to equip").
-var equipWorks atomic.Bool
-
-func init() { equipWorks.Store(true) }
-
-// refusedEquips: item type-ids whose shift-click froze the docket three times —
-// the game's silent refusal as an oracle (P-4.4, photographed 10:11: a
-// game-red armor docketed past every readable gate). Session-lifetime.
-var refusedEquips = map[int]bool{}
-
-// equippableCands counts docket items the game has not refused — the number
-// the march treaty and the Equip demand actually care about.
-func equippableCands(s *percept.Snapshot) int {
-	n := 0
-	for _, u := range s.Upgrades {
-		if !refusedEquips[u.ID] {
-			n++
-		}
-	}
-	return n
-}
-
-// Equip dresses her in the upgrades the Identify service unveils — the unique bow
-// rode in her bag while she fought with a starter bow (the owner: "she has armor and
-// a unique bow she could equip but she rolls with her current gear"). Town-only, one
-// shift-click per Step, the equipped-list delta as the postcondition.
-type Equip struct {
-	opened bool // we pressed the inventory toggle (the panel byte is BLIND to it —
-	// 0xF4 proved out for NPC menus only; run 31 retired the belief over that lie)
-	lastN   int
-	fails   int
-	clickAt time.Time
-	strikes map[int]int // per-item silent refusals — three strikes refuse the item (P-4.4)
-}
-
-func NewEquip() *Equip { return &Equip{lastN: -1} }
-
-func (eq *Equip) Name() string { return "equip" }
-
-func (eq *Equip) Demand(s *percept.Snapshot) *arbiter.Demand {
-	if servicesCooled() {
-		return nil
-	}
-	if !s.Valid || !s.Me.InTown {
-		return nil
-	}
-	// WARNING 9: a cursor item paralyzes every service — parking it is Equip's
-	// highest errand, above its own dressing and everyone's shopping.
-	if s.Me.CursorItem {
-		return &arbiter.Demand{Who: eq.Name(), Class: arbiter.ClassService,
-			Urgency: 0.85,
-			Commit:  arbiter.Commitment{MinHold: 5 * time.Second}}
-	}
-	if equippableCands(s) == 0 || !equipWorks.Load() {
-		return nil // an all-refused docket is an empty docket (P-4.4)
-	}
-	// A swap needs LANDING ROOM: the displaced gear returns to the grid, and a full
-	// bag makes the equip fail silently (photographed, run 40: packed grid, the blue
-	// bow stuck). Sell first, dress after — Fence's urgency wins until there's space.
-	if s.Me.InvFree < 6 {
-		return nil
-	}
-	return &arbiter.Demand{Who: eq.Name(), Class: arbiter.ClassService,
-		Urgency: 0.75, // dressing for the fight outranks shopping; Heal still leads
-		Commit:  arbiter.Commitment{MinHold: 5 * time.Second}}
-}
-
-// parkCursor — WARNING 9's recovery: with the panel open, place the cursor
-// item into a free grid region its own footprint fits; the cursor-empty read
-// is the only proof. Returns true when the cursor is clean.
-func (eq *Equip) parkCursor(ctx *Ctx) bool {
-	d := ctx.GR.GetData()
-	cur := d.Inventory.ByLocation(item.LocationCursor)
-	if len(cur) == 0 {
-		return true
-	}
-	w, h := cur[0].Desc().InventoryWidth, cur[0].Desc().InventoryHeight
-	if w <= 0 {
-		w = 1
-	}
-	if h <= 0 {
-		h = 1
-	}
-	var occ [10][4]bool
-	for _, it := range d.Inventory.ByLocation(item.LocationInventory) {
-		iw, ih := it.Desc().InventoryWidth, it.Desc().InventoryHeight
-		if iw <= 0 {
-			iw = 1
-		}
-		if ih <= 0 {
-			ih = 1
-		}
-		for x := it.Position.X; x < it.Position.X+iw && x < 10; x++ {
-			for y := it.Position.Y; y < it.Position.Y+ih && y < 4; y++ {
-				if x >= 0 && y >= 0 {
-					occ[x][y] = true
-				}
-			}
-		}
-	}
-	for gy := 0; gy <= 4-h; gy++ {
-	scan:
-		for gx := 0; gx <= 10-w; gx++ {
-			for x := gx; x < gx+w; x++ {
-				for y := gy; y < gy+h; y++ {
-					if occ[x][y] {
-						continue scan
-					}
-				}
-			}
-			// A place-click aims at the region's CENTER cell (the game anchors
-			// the held item by its center).
-			cx, cy := invCell(gx+(w-1)/2, gy+(h-1)/2)
-			ctx.M.UIClick(cx, cy)
-			time.Sleep(350 * time.Millisecond)
-			return len(ctx.GR.GetData().Inventory.ByLocation(item.LocationCursor)) == 0
-		}
-	}
-	return false // no region fits: the fence must make room first
-}
-
-func (eq *Equip) Step(ctx *Ctx) Verdict {
-	s := ctx.Snap
-	if !s.Valid {
-		return Running
-	}
-	// WARNING 9: parking the cursor item precedes every ritual — including our
-	// own docket. The door opens first if needed; the cursor-empty read is the
-	// only proof; a bag with no room hands the problem to the fence.
-	if s.Me.CursorItem {
-		if dd := ctx.GR.GetData(); len(dd.Inventory.ByLocation(item.LocationVendor)) > 0 && dd.OpenMenus.NPCShop {
-			closeShop(ctx)
-			return Running
-		}
-		if !eq.opened {
-			if ctx.Cap == nil || ctx.Cap.Identify == nil {
-				return Abandoned // no door to open; nothing safe to click
-			}
-			ctx.M.MoveStop()
-			ctx.M.PressKey(ctx.Cap.Identify.Key)
-			time.Sleep(150 * time.Millisecond)
-			ctx.M.ClickRight(ctx.GR.GameAreaSizeX/2, ctx.GR.GameAreaSizeY/2+180)
-			eq.opened = true
-			eq.clickAt = time.Now()
-			return Running
-		}
-		if time.Since(eq.clickAt) < 900*time.Millisecond {
-			return Running
-		}
-		eq.clickAt = time.Now()
-		if eq.parkCursor(ctx) {
-			return Running // clean — the docket resumes next Step
-		}
-		if eq.fails++; eq.fails > 5 {
-			ctx.Led.Append(verbs.Outcome{Verb: "equip", Holder: eq.Name(), Result: verbs.ResDeaf,
-				Evidence: "cursor item would not park (no room or deaf panel) — retiring"})
-			equipWorks.Store(false)
-			eq.closePanel(ctx)
-			eq.lastN, eq.fails = -1, 0
-			return Abandoned
-		}
-		return Running
-	}
-	if equippableCands(s) == 0 {
-		eq.closePanel(ctx)
-		eq.lastN, eq.fails = -1, 0
-		return Done // dressed or all refused — either way the docket is empty (P-4.4)
-	}
-	// Progress audit: the candidate count DROPPING is the only oracle this ritual
-	// gets — the 0xF4 panel byte is blind to the plain inventory (run 31 retired
-	// the belief over that lie). In town a shift-click that misses the panel is
-	// one air swing; the count judges everything.
-	if eq.lastN >= 0 && s.Me.EquipCandCount < eq.lastN {
-		eq.fails = 0
-		eq.strikes = nil // something landed — forgive the whole docket
-	}
-	eq.lastN = s.Me.EquipCandCount
-	if time.Since(eq.clickAt) < 1200*time.Millisecond {
-		return Running // let the last shift-click land before judging
-	}
-	// SAFETY INTERLOCK: shift-click with a VENDOR up means SELL. The vendor-stock
-	// read must be empty before the gesture ever fires.
-	if dd := ctx.GR.GetData(); len(dd.Inventory.ByLocation(item.LocationVendor)) > 0 && dd.OpenMenus.NPCShop {
-		closeShop(ctx)
-		return Running
-	}
-	if !eq.opened {
-		// THE IDENTIFY SIDE DOOR (owner-observed: "it also opens when we use the
-		// identify skill"): FOUR input classes were photographed failing to press
-		// the panel hotkey (message, key-state stub, plain-vk, scancode — runs
-		// 33/37/38/39). The cast path uses only proven gameplay primitives.
-		if ctx.Cap == nil || ctx.Cap.Identify == nil {
-			equipWorks.Store(false)
-			ctx.Led.Append(verbs.Outcome{Verb: "equip", Holder: eq.Name(), Result: verbs.ResDeaf,
-				Evidence: "no ID-tome binding to open the panel with — equip belief retired"})
-			return Abandoned
-		}
-		ctx.M.MoveStop()
-		ctx.M.PressKey(ctx.Cap.Identify.Key)
-		time.Sleep(150 * time.Millisecond)
-		ctx.M.ClickRight(ctx.GR.GameAreaSizeX/2, ctx.GR.GameAreaSizeY/2+180)
-		eq.opened = true
-		eq.clickAt = time.Now()
-		return Running
-	}
-	eq.fails++
-	if eq.fails > 12 {
-		// The absolute breaker: every candidate froze through its whole strike
-		// budget — the gesture itself is broken here, not one item.
-		equipWorks.Store(false)
-		ctx.Led.Append(verbs.Outcome{Verb: "equip", Holder: eq.Name(), Result: verbs.ResDeaf,
-			Evidence: fmt.Sprintf("12 shift-clicks, docket stuck at %d — equip belief retired (is -invkey right?)", s.Me.EquipCandCount)})
-		eq.closePanel(ctx)
-		eq.lastN, eq.fails = -1, 0
-		return Abandoned
-	}
-	// ROTATE the LIVE docket (refused items dropped) — hammering Upgrades[0] let
-	// one stubborn piece starve the wearable ones behind it.
-	cands := make([]percept.InvItem, 0, len(s.Upgrades))
-	for _, u := range s.Upgrades {
-		if !refusedEquips[u.ID] {
-			cands = append(cands, u)
-		}
-	}
-	if len(cands) == 0 {
-		eq.closePanel(ctx)
-		eq.lastN, eq.fails = -1, 0
-		return Done
-	}
-	it := cands[(eq.fails-1)%len(cands)]
-	// THE REFUSAL ORACLE (P-4.4): three silent refusals on one item and the
-	// game has spoken — a hidden requirement the memory read cannot see
-	// (photographed 10:11, the game-red armor). Drop it, dress the rest.
-	if eq.strikes == nil {
-		eq.strikes = map[int]int{}
-	}
-	if eq.strikes[it.ID]++; eq.strikes[it.ID] >= 3 {
-		refusedEquips[it.ID] = true
-		ctx.Led.Append(verbs.Outcome{Verb: "equip", Holder: eq.Name(), Result: verbs.ResBlocked,
-			Evidence: fmt.Sprintf("item %d refused by the game 3 times — dropped from the docket (P-4.4)", it.ID)})
-		return Running
-	}
-	// P-4.4: a candidate equips onto the ACTIVE hands — a bow needs the bow set
-	// out before the click, or the gesture benches the javelins instead of the
-	// white bow. The count audit still judges; a deaf swap burns one rotation.
-	if it.IsBow && s.Me.WeaponKind != "bow" {
-		ctx.M.KeyLane().Press(ctx.SwapKey)
-		eq.clickAt = time.Now()
-		return Running
-	}
-	cx, cy := invCell(it.GX, it.GY)
-	if eq.fails == 1 {
-		snapPNG(ctx, "logs/equip_open.png") // is the panel even up? the photo answers
-	}
-	// Normalize the cursor: the door-opening cast leaves the IDENTIFY HAND up; one
-	// plain click on the (already identified) candidate consumes it harmlessly. If
-	// that click grabbed the item instead, put it straight back — never roam with
-	// an item on the cursor.
-	ctx.M.UIClick(cx, cy)
-	time.Sleep(250 * time.Millisecond)
-	if len(ctx.GR.GetData().Inventory.ByLocation(item.LocationCursor)) > 0 {
-		ctx.M.UIClick(cx, cy)
-		time.Sleep(250 * time.Millisecond)
-	}
-	ctx.M.ShiftClick(cx, cy)
-	if eq.fails == 1 {
-		time.Sleep(300 * time.Millisecond)
-		snapPNG(ctx, "logs/equip_click.png") // did the item move / cursor grab it?
-	}
-	eq.clickAt = time.Now()
-	return Running
-}
-
-// closePanel ESCs the cast-opened inventory shut. Safe: we only get here after the
-// identify cast actually opened something (the pause-menu trap needs NO panel open).
-func (eq *Equip) closePanel(ctx *Ctx) {
-	if eq.opened {
-		ctx.M.KeyLane().Press(0x1B)
-		eq.opened = false
-		time.Sleep(300 * time.Millisecond)
-	}
+	return st
 }
 
 // snapPNG: one screenshot into logs/ — the debugging eye for rituals whose oracles
@@ -1554,265 +1662,6 @@ func snapPNG(ctx *Ctx, path string) {
 		_ = png.Encode(f, ctx.GR.Screenshot())
 		f.Close()
 	}
-}
-
-// ---------------------------------------------------------------- Spend (ClassService)
-
-// spendWorks: the live belief that the New-Stats screen button and the panel's
-// plus buttons spend points here. Retired on frozen counts, like equipWorks.
-var spendWorks atomic.Bool
-
-func init() { spendWorks.Store(true) }
-
-// Spend — P-8 POINTS ARE ORDNANCE. Banked stat points buy the wardrobe's
-// requirement gates first (P-8.3: exactly to the gate, strength before
-// dexterity; the owner's unique bow is the standing customer), the rest go to
-// vitality. The panel opens by its SCREEN BUTTON (P-8.2 — WARNING 5, panel
-// hotkeys are deaf); every click is judged by the StatPoints delta (SPEND,
-// Lexicon); ESC fires only after a VERIFIED spend proves a panel was open
-// (WARNING 4 — the pause trap).
-type Spend struct {
-	opened   bool
-	verified int // clicks proven by a points delta since the panel opened
-	frozen   int // consecutive clicks with no delta
-	clickAt  time.Time
-	doorAt   time.Time // when the New Stats door was clicked — the settle clock
-	// P-8.7 skill phase state
-	treeOpen   bool
-	skVerified int
-	skFrozen   int
-}
-
-// skillSpendWorks: the live belief that the tree door + calibrated grid spend
-// skill points here (P-8.7). Retired on frozen counts.
-var skillSpendWorks atomic.Bool
-
-func init() { skillSpendWorks.Store(true) }
-
-// farmbot's calibrated skill-tree grid, client pixels — PROVEN on this repack
-// (-autoskill spent Benji's banked points into Teeth, 2026-07-18). Page 1 is
-// the RIGHTMOST tab. Data with provenance, not class knowledge (rule 5).
-var (
-	skillTabX = map[int]int{1: 1668, 2: 1523, 3: 1380}
-	skillColX = [4]int{0, 1397, 1524, 1651}
-	skillRowY = [7]int{0, 279, 365, 449, 529, 625, 711}
-)
-
-const skillTabY = 201
-
-// Screen geometry, client pixels (1920x1050): the New Stats button photographed
-// live 2026-07-19 08:21 (logs/shot.png, physical 475,793 / 1.2); the plus
-// buttons are farmbot's proven -statalloc coords on this same window.
-const (
-	newStatsBtnX, newStatsBtnY = 397, 662
-	// Photographed at 12:20 with a CLEAN HUD (logs/talk_fail.png): the button's
-	// home is right of the belt; the 12:12 left-side reading was its panel-open
-	// relocation (D2R moves it clear of an open inventory).
-	newSkillBtnX, newSkillBtnY = 1377, 763
-	strBtnX, strBtnY           = 347, 305
-	dexBtnX, dexBtnY           = 347, 428
-	vitBtnX, vitBtnY           = 347, 552
-)
-
-func NewSpend() *Spend { return &Spend{} }
-
-func (sp *Spend) Name() string { return "spend" }
-
-func (sp *Spend) Demand(s *percept.Snapshot) *arbiter.Demand {
-	if servicesCooled() {
-		return nil
-	}
-	if !s.Valid || !s.Me.InTown {
-		return nil
-	}
-	wantStats := s.Me.StatPoints > 0 && spendWorks.Load()
-	wantSkills := s.Me.SkillPoints > 0 && skillSpendWorks.Load()
-	if !wantStats && !wantSkills {
-		return nil
-	}
-	urg := 0.35 // vitality dump: below Identify — the docket may still reveal a gate
-	if wantSkills {
-		urg = 0.6 // P-8.7: skill points ARE the dps — above the vitality dump
-	}
-	if wantStats && (s.Me.NeedStr > s.Me.Str || s.Me.NeedDex > s.Me.Dex) {
-		urg = 0.8 // a gate is buyable: clear it BEFORE Equip (0.75) runs this visit (P-8.1)
-	}
-	return &arbiter.Demand{Who: sp.Name(), Class: arbiter.ClassService,
-		Urgency: urg,
-		Commit:  arbiter.Commitment{MinHold: 4 * time.Second}}
-}
-
-func (sp *Spend) Step(ctx *Ctx) Verdict {
-	s := ctx.Snap
-	if !s.Valid {
-		return Running
-	}
-	if s.Me.CursorItem {
-		return Running // WARNING 9: no clicks while an item rides the cursor
-	}
-	if s.Me.StatPoints <= 0 || !spendWorks.Load() {
-		sp.closePanel(ctx)
-		// P-8.7: skill points next — the dps ordnance.
-		if s.Me.SkillPoints <= 0 || !skillSpendWorks.Load() {
-			sp.closeTree(ctx)
-			return Done // all ordnance spent or retired
-		}
-		return sp.stepSkills(ctx, s)
-	}
-	if time.Since(sp.clickAt) < 450*time.Millisecond {
-		return Running // let the last click land before judging
-	}
-	// SAFETY INTERLOCK (Equip's law): panel clicks with a VENDOR up are trades.
-	if dd := ctx.GR.GetData(); len(dd.Inventory.ByLocation(item.LocationVendor)) > 0 && dd.OpenMenus.NPCShop {
-		closeShop(ctx)
-		return Running
-	}
-	if !sp.opened {
-		ctx.M.MoveStop()
-		snapPNG(ctx, "logs/spend_pre.png") // is the New Stats button even there?
-		ctx.M.UIClick(newStatsBtnX, newStatsBtnY)
-		sp.opened = true
-		sp.clickAt, sp.doorAt = time.Now(), time.Now()
-		return Running
-	}
-	// SPEND (Lexicon): door settle 1 s — the panel's slide-in eats early clicks
-	// (measured 08:41: two clicks into the animation retired the whole belief).
-	if time.Since(sp.doorAt) < 1100*time.Millisecond {
-		return Running
-	}
-	if sp.frozen == 0 && sp.verified == 0 {
-		snapPNG(ctx, "logs/spend_door.png") // did the New Stats click open anything?
-	}
-	// The recipient (P-8.3): strength to the gate, then dexterity, then vitality.
-	bx, by := vitBtnX, vitBtnY
-	if s.Me.NeedStr > s.Me.Str {
-		bx, by = strBtnX, strBtnY
-	} else if s.Me.NeedDex > s.Me.Dex {
-		bx, by = dexBtnX, dexBtnY
-	}
-	before := s.Me.StatPoints
-	ctx.M.UIClick(bx, by)
-	time.Sleep(300 * time.Millisecond)
-	if sp.frozen == 1 && sp.verified == 0 {
-		snapPNG(ctx, "logs/spend_click.png") // where did the plus click actually land?
-	}
-	after := before
-	if v, ok := ctx.GR.GetData().PlayerUnit.BaseStats.FindStat(stat.StatPoints, 0); ok {
-		after = v.Value
-	}
-	if after < before {
-		sp.verified++
-		sp.frozen = 0
-	} else {
-		sp.frozen++
-		// PLAN B DOOR after the first frozen click: the New Stats button comes
-		// and goes (photographed present 08:21, absent 09:35) — but farmbot's
-		// -statalloc PROVED the 'c' hotkey opens the char panel on this build,
-		// BaseStats-delta-verified. WARNING 5's dead hotkeys were the
-		// inventory key; 'c' has its own proof. One press, then judge again.
-		if sp.frozen == 1 {
-			ctx.M.PressKey(0x43) // 'C'
-			sp.doorAt = time.Now()
-			sp.clickAt = time.Now()
-			return Running
-		}
-		if sp.frozen >= 3 {
-			// Frozen through both doors: retire for the session (SPEND, Lexicon).
-			spendWorks.Store(false)
-			ctx.Led.Append(verbs.Outcome{Verb: "spend", Holder: sp.Name(), Result: verbs.ResDeaf,
-				Evidence: fmt.Sprintf("count frozen at %d through both doors (verified %d) — belief retired", before, sp.verified)})
-			sp.closePanel(ctx) // ESC only if a spend ever verified — WARNING 4
-			return Abandoned
-		}
-	}
-	sp.clickAt = time.Now()
-	return Running
-}
-
-// closePanel ESCs shut ONLY when a verified spend proved a panel was open —
-// an unproven ESC is the pause trap (WARNING 4).
-func (sp *Spend) closePanel(ctx *Ctx) {
-	if sp.opened && sp.verified > 0 {
-		ctx.M.KeyLane().Press(0x1B)
-	}
-	sp.opened, sp.verified, sp.frozen = false, 0, 0
-}
-
-// stepSkills — P-8.7: one skill point per Step into the proven REACH TOOL's
-// skill, tree seat from the skill's own Desc against farmbot's proven grid.
-// Judged by the SkillPoints delta; the 'T' toggle is the door both ways.
-func (sp *Spend) stepSkills(ctx *Ctx, s *percept.Snapshot) Verdict {
-	// RETIRE, don't just Done: a bare Done leaves SkillPoints>0 so Demand
-	// re-bids the same instant — 88k grants/min hot-spin, measured 12:32.
-	// A can't-spend verdict must silence the bid for the session.
-	if ctx.Cap == nil || ctx.Cap.Reach == nil {
-		skillSpendWorks.Store(false)
-		ctx.Led.Append(verbs.Outcome{Verb: "spend", Holder: sp.Name(), Result: verbs.ResRefused,
-			Evidence: "no proven REACH TOOL — skill points banked (P-8.5)"})
-		return Done
-	}
-	sk := ctx.Cap.Reach.Skill
-	desc := sk.Desc()
-	if desc.Page < 1 || desc.Page > 3 || desc.Row < 1 || desc.Row > 6 || desc.Column < 1 || desc.Column > 3 {
-		skillSpendWorks.Store(false)
-		ctx.Led.Append(verbs.Outcome{Verb: "spend", Holder: sp.Name(), Result: verbs.ResRefused,
-			Evidence: fmt.Sprintf("skill %d has no tree seat (page/row/col) — banked, never click blind", int(sk))})
-		return Done
-	}
-	if time.Since(sp.clickAt) < 700*time.Millisecond {
-		return Running
-	}
-	if !sp.treeOpen {
-		ctx.M.MoveStop()
-		// The NEW SKILL button is the primary door (photographed live at
-		// client (755,661), 12:12 — P-8.2: screen buttons over hotkeys);
-		// farmbot's 'T' toggle waits as plan B on the first frozen read.
-		ctx.M.UIClick(newSkillBtnX, newSkillBtnY)
-		sp.treeOpen = true
-		sp.clickAt = time.Now()
-		return Running
-	}
-	if sp.skVerified == 0 && sp.skFrozen == 0 {
-		snapPNG(ctx, "logs/skilltree.png") // first knock: the door photographs itself
-	}
-	before := s.Me.SkillPoints
-	ctx.M.UIClick(skillTabX[desc.Page], skillTabY)
-	time.Sleep(250 * time.Millisecond)
-	ctx.M.UIClick(skillColX[desc.Column], skillRowY[desc.Row])
-	time.Sleep(350 * time.Millisecond)
-	after := before
-	if v, ok := ctx.GR.GetData().PlayerUnit.BaseStats.FindStat(stat.SkillPoints, 0); ok {
-		after = v.Value
-	}
-	if after < before {
-		sp.skVerified++
-		sp.skFrozen = 0
-	} else {
-		sp.skFrozen++
-		if sp.skFrozen == 1 {
-			ctx.M.PressKey(0x54) // plan B: farmbot's 'T' toggle
-			sp.clickAt = time.Now()
-			return Running
-		}
-		if sp.skFrozen >= 3 {
-			skillSpendWorks.Store(false)
-			ctx.Led.Append(verbs.Outcome{Verb: "spend", Holder: sp.Name(), Result: verbs.ResDeaf,
-				Evidence: fmt.Sprintf("skill points frozen at %d through both doors (verified %d) — tree belief retired", before, sp.skVerified)})
-			sp.closeTree(ctx)
-			return Abandoned
-		}
-	}
-	sp.clickAt = time.Now()
-	return Running
-}
-
-// closeTree presses the 'T' toggle shut ONLY when a verified spend proved the
-// tree was open — a blind toggle on a closed tree would OPEN it.
-func (sp *Spend) closeTree(ctx *Ctx) {
-	if sp.treeOpen && sp.skVerified > 0 {
-		ctx.M.PressKey(0x54)
-	}
-	sp.treeOpen, sp.skVerified, sp.skFrozen = false, 0, 0
 }
 
 // ---------------------------------------------------------------- Repair (ClassService)
@@ -1830,48 +1679,77 @@ type Repair struct {
 	coolAt  time.Time
 }
 
+var (
+	_ Life   = (*Repair)(nil)
+	_ Phased = (*Repair)(nil)
+)
+
 func NewRepair() *Repair {
-	return &Repair{lastDur: -1, e: errand{npcID: npc.Charsi, act2NPC: npc.Fara, trade: true,
+	rp := &Repair{lastDur: -1, e: errand{npcID: npc.Charsi, act2NPC: npc.Fara, act3NPC: npc.Hratli, trade: true,
 		ring: []data.Position{{X: 6020, Y: 4952}, {X: 5992, Y: 4941}, {X: 5963, Y: 5001}, {X: 5962, Y: 4956}, {X: 5952, Y: 4944}}}}
+	rp.e.initLife(rp.Name())
+	return rp
 }
 
 func (rp *Repair) Name() string { return "repair" }
 
-func (rp *Repair) Demand(s *percept.Snapshot) *arbiter.Demand {
+func (rp *Repair) Demand(s *percept.Snapshot) *arbiter.Demand { return rp.e.keepBid(rp.demand(s), s) }
+
+func (rp *Repair) demand(s *percept.Snapshot) *arbiter.Demand {
 	if servicesCooled() {
 		return nil
 	}
-	if !s.Valid || !s.Me.InTown || s.Me.Gold < 10 || s.Me.MinDurPct > 25 || time.Now().Before(rp.coolAt) {
+	// Owner: "repair obsessively" — every town visit with anything below 90%.
+	if !s.Valid || !s.Me.InTown || s.Me.Gold < 10 || s.Me.MinDurPct >= inventory.TownRepairPct || time.Now().Before(rp.coolAt) {
 		return nil
 	}
 	return &arbiter.Demand{Who: rp.Name(), Class: arbiter.ClassService,
-		Urgency: 0.5 + (25-float64(s.Me.MinDurPct))/50, // outranks a routine restock
+		Urgency: 0.5 + (90-float64(s.Me.MinDurPct))/180, // broken gear outranks the shopping
 		Commit:  arbiter.Commitment{MinHold: 5 * time.Second}}
 }
 
-func (rp *Repair) Step(ctx *Ctx) Verdict {
+func (rp *Repair) Needs(*percept.Snapshot) Needs { return rp.e.needs() }
+
+func (rp *Repair) Begin(ctx *Ctx, resumed bool) {
+	rp.e.begin(resumed)
+	if resumed {
+		rp.e.resume(ctx)
+		return
+	}
+	rp.e.resetTrip()
+	rp.lastDur, rp.stale = -1, 0
+	rp.e.adoptHandoff(ctx)
+}
+
+func (rp *Repair) Suspend(ctx *Ctx, _ phase.Reason) { rp.e.suspend(ctx) }
+
+func (rp *Repair) End(ctx *Ctx, v phase.Verdict, why phase.Reason) {
+	rp.e.handOff(v, rp.Name())
+	rp.e.end(ctx, v, why)
+	rp.e.resetTrip()
+	rp.lastDur, rp.stale = -1, 0
+	coolOnEnd(v, why, &rp.coolAt)
+}
+
+func (rp *Repair) Step(ctx *Ctx) Status {
+	e := &rp.e
+	if st, stop := e.pre(ctx); stop {
+		return st
+	}
 	s := ctx.Snap
-	if !s.Valid {
-		return Running
-	}
 	if s.Me.MinDurPct > 90 { // repaired — the durability delta happened
-		if rp.e.phase >= 3 {
-			closeShop(ctx)
-		}
-		rp.reset()
-		return Done
+		return e.finish(ctx, phase.Done, phase.Completed, fmt.Sprintf("durability %d%%", s.Me.MinDurPct))
 	}
-	open, dead := rp.e.step(ctx, rp.Name())
+	st, open, dead := e.drive(ctx, rp.Name())
 	if dead {
 		// P-4.2a: the abandoned trip stays abandoned (04:36: 'never loaded on
 		// the whole ring' re-bid three times a SECOND while he wall-hugged —
 		// Charsi lives elsewhere on this seed; retry when the world changes).
 		rp.coolAt = time.Now().Add(120 * time.Second)
-		rp.reset()
-		return Abandoned
+		return st
 	}
 	if !open {
-		return Running
+		return st
 	}
 	if rp.lastDur >= 0 {
 		if s.Me.MinDurPct <= rp.lastDur {
@@ -1882,21 +1760,58 @@ func (rp *Repair) Step(ctx *Ctx) Verdict {
 		if rp.stale >= 2 {
 			// The button no longer buys durability (unrepairable piece or a ghost
 			// window): the errand is over — cool off so the demand can't re-loop.
-			ctx.Led.Append(verbs.Outcome{Verb: "repair", Holder: rp.Name(), Result: verbs.ResTimeout,
-				Evidence: fmt.Sprintf("durability frozen at %d%% after repairs — leaving with what we got", s.Me.MinDurPct)})
-			closeShop(ctx)
-			rp.reset()
+			ev := fmt.Sprintf("durability frozen at %d%% after repairs — leaving with what we got", s.Me.MinDurPct)
+			ctx.Led.Append(verbs.Outcome{Verb: "repair", Holder: rp.Name(), Result: verbs.ResTimeout, Evidence: ev})
 			rp.coolAt = time.Now().Add(3 * time.Minute)
-			return Done
+			return e.finish(ctx, phase.Abandoned, phase.Refused, ev)
 		}
 	}
 	rp.lastDur = s.Me.MinDurPct
-	ctx.M.UIClick(repairBtnX, repairBtnY)
-	time.Sleep(500 * time.Millisecond)
-	return Running
+	ctx.M.RealMenuClick(repairBtnX, repairBtnY) // trade panels honor only real input (a posted UIClick never repaired)
+	return e.wait(500 * time.Millisecond)
 }
 
-func (rp *Repair) reset() {
-	rp.e.reset()
-	rp.lastDur, rp.stale = -1, 0
+// npcNeighbour: where to look for a town NPC the map oracle does not place — a
+// neighbour it does (owner, 2026-09-25: "hratli is near meshif").
+var npcNeighbour = map[npc.ID]npc.ID{
+	npc.Hratli: npc.Meshif2, // Kurast Docks: the smith stands by the boat
+}
+
+// townCircles: two rings (40 and 80 tiles, 8 points each) around a town spot —
+// the seek of last resort for an NPC the map does not place.
+func townCircles(g *game.Grid, c data.Position) []data.Position {
+	var out []data.Position
+	for _, r := range []int{25, 50, 75} {
+		for _, d := range [][2]int{{1, 0}, {1, 1}, {0, 1}, {-1, 1}, {-1, 0}, {-1, -1}, {0, -1}, {1, -1}} {
+			p := data.Position{X: c.X + d[0]*r, Y: c.Y + d[1]*r}
+			if q, ok := nearestWalkable(g, p, 20); ok {
+				out = append(out, q)
+			} else if g == nil {
+				out = append(out, p)
+			}
+		}
+	}
+	return out
+}
+
+// nearestWalkable: the walkable cell nearest p within reach (R80: the Docks are
+// a strip — circle points 80 tiles out sat in water, every one NoPath in 0.2s).
+func nearestWalkable(g *game.Grid, p data.Position, reach int) (data.Position, bool) {
+	if g == nil {
+		return p, false
+	}
+	for r := 0; r <= reach; r++ {
+		for dx := -r; dx <= r; dx++ {
+			for dy := -r; dy <= r; dy++ {
+				if max(absInt(dx), absInt(dy)) != r {
+					continue
+				}
+				q := data.Position{X: p.X + dx, Y: p.Y + dy}
+				if g.IsWalkable(q) {
+					return q, true
+				}
+			}
+		}
+	}
+	return p, false
 }

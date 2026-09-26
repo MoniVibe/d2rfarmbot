@@ -132,6 +132,16 @@ func (s *Store) Scribe(stop <-chan struct{}) {
 	}
 }
 
+// Close flushes, fsyncs and closes the WAL (stop the Scribe first). Windows
+// holds an open file against deletion, so a store that is done must close.
+func (s *Store) Close() error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.w.Flush()
+	s.wal.Sync()
+	return s.wal.Close()
+}
+
 // DropScope removes all facts at or below the given scope (e.g. new game session drops
 // ScopeGame and tighter). The WAL keeps history; Compact would rewrite it (later).
 func (s *Store) DropScope(max Scope) {

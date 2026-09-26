@@ -61,15 +61,14 @@ func (v Vault) Do(m *motor.Motor, gr *game.MemoryReader, p *percept.Perceptor, l
 	}
 	bx := int(float32((v.To.X-me.X)-(v.To.Y-me.Y))*19.8) + gr.GameAreaSizeX/2
 	by := int(float32((v.To.X-me.X)+(v.To.Y-me.Y))*9.9) + gr.GameAreaSizeY/2
-	if bx < 20 {
-		bx = 20
-	} else if bx > gr.GameAreaSizeX-20 {
-		bx = gr.GameAreaSizeX - 20
-	}
-	if by < 20 {
-		by = 20
-	} else if by > gr.GameAreaSizeY-20 {
-		by = gr.GameAreaSizeY - 20
+	// Off the frame and the HUD along the leap's own ray (a right-click on the
+	// bottom bar is a skill-picker click, not a leap).
+	bx, by, ok := ClampClickLogical(gr, bx, by)
+	if !ok {
+		o.Result = ResRefused
+		o.Evidence = "leap point has no clickable ground on its ray (HUD)"
+		led.Append(o)
+		return o
 	}
 	mpBefore := gr.GetData().PlayerUnit.MPPercent()
 	me = gr.GetData().PlayerUnit.Position // the honest origin: sampled at the click, not before the clamp math

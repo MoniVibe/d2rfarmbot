@@ -105,6 +105,13 @@ func (m *Motor) Disengage() {
 	m.log.Warn("MOTOR DISENGAGED — Diablo is yours; input patches healed")
 }
 
+// StartDisengaged is the -disengaged start: actuation is dead before the first
+// tick, with nothing to release (the caller never loaded the injector's
+// stubs). The kill-switch's Reengage (F10) arms it exactly as after a toggle.
+func (m *Motor) StartDisengaged() {
+	m.Engage.engaged.Store(false)
+}
+
 // Reengage: re-arms actuation. The injector reloads its stubs; override pokes are
 // idempotent and re-applied per action, so nothing else is needed.
 func (m *Motor) Reengage() {
@@ -354,6 +361,33 @@ func (m *Motor) RealMenuRightClick(shotX, shotY int) bool {
 	return true
 }
 
+// RealMenuShiftClick: RealMenuClick with Shift held (by scancode) — the stash
+// transfer: a bag item Shift+clicked with the stash open moves to its open tab.
+func (m *Motor) RealMenuShiftClick(shotX, shotY int) bool {
+	if !m.Engage.Engaged() {
+		return false
+	}
+	m.ReleasePanelCursor()
+	m.hid.FocusGame()
+	if !m.hid.GameFocused() {
+		return false
+	}
+	time.Sleep(250 * time.Millisecond)
+	sx := int(float64(shotX)/m.panelScale) + m.hid.WindowLeftX()
+	sy := int(float64(shotY)/m.panelScale) + m.hid.WindowTopY()
+	// THE HOOKS ANSWER FOR THE KEYBOARD (owner, R35: "i wonder if its
+	// overridden"): azbot patches the game's GetKeyState/GetAsyncKeyState, so
+	// a real modifier press is invisible to it while the patch is live — the
+	// click read as a plain click (the lift). The resident stub is told the
+	// modifier is held for the click, then disabled again.
+	_ = m.gi.OverrideGetKeyState(0x10)
+	_ = m.gi.OverrideGetAsyncKeyState(0x10)
+	game.SendShiftClickRealScreen(sx, sy)
+	_ = m.gi.RestoreGetKeyState()
+	_ = m.gi.RestoreGetAsyncKeyState()
+	return true
+}
+
 // RealMenuCtrlClick: RealMenuClick with Ctrl held — the vendor quick-sell.
 func (m *Motor) RealMenuCtrlClick(shotX, shotY int) bool {
 	if !m.Engage.Engaged() {
@@ -367,7 +401,16 @@ func (m *Motor) RealMenuCtrlClick(shotX, shotY int) bool {
 	time.Sleep(250 * time.Millisecond)
 	sx := int(float64(shotX)/m.panelScale) + m.hid.WindowLeftX()
 	sy := int(float64(shotY)/m.panelScale) + m.hid.WindowTopY()
+	// THE HOOKS ANSWER FOR THE KEYBOARD (owner, R35: "i wonder if its
+	// overridden"): azbot patches the game's GetKeyState/GetAsyncKeyState, so
+	// a real modifier press is invisible to it while the patch is live — the
+	// click read as a plain click (the lift). The resident stub is told the
+	// modifier is held for the click, then disabled again.
+	_ = m.gi.OverrideGetKeyState(0x11)
+	_ = m.gi.OverrideGetAsyncKeyState(0x11)
 	game.SendCtrlClickRealScreen(sx, sy)
+	_ = m.gi.RestoreGetKeyState()
+	_ = m.gi.RestoreGetAsyncKeyState()
 	return true
 }
 

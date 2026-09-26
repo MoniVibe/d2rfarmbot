@@ -12,6 +12,7 @@ import (
 	"github.com/hectorgimenez/d2go/pkg/data"
 	"github.com/hectorgimenez/d2go/pkg/data/object"
 	"github.com/hectorgimenez/koolo/internal/azbot/arbiter"
+	"github.com/hectorgimenez/koolo/internal/azbot/moveto"
 	"github.com/hectorgimenez/koolo/internal/azbot/percept"
 	"github.com/hectorgimenez/koolo/internal/azbot/verbs"
 )
@@ -39,6 +40,9 @@ func (im *Imbibe) rite(s *percept.Snapshot, ob data.Object) float64 {
 	if !ob.Selectable { // the freshness oracle: spent rites read false
 		return 0
 	}
+	if isQuestChest(ob.Name) {
+		return 0.95 // the quest artifact outranks every rite, whatever the bag room (quest.go)
+	}
 	switch {
 	case ob.IsShrine() && percept.GivingShrines[ob.Shrine.ShrineType]:
 		if ob.Shrine.ShrineType == object.ExperienceShrine {
@@ -65,7 +69,11 @@ func (im *Imbibe) find(ctx *Ctx) (data.Object, float64, bool) {
 	var best data.Object
 	bestW := 0.0
 	for _, ob := range ctx.GR.GetData().Objects {
-		if ob.ID == 0 || chebyshev(s.Me.Pos, ob.Position) > 25 {
+		reach := 25
+		if isQuestChest(ob.Name) {
+			reach = questReach
+		}
+		if ob.ID == 0 || chebyshev(s.Me.Pos, ob.Position) > reach {
 			continue
 		}
 		if until, banned := im.ban[ob.ID]; banned && time.Now().Before(until) {
@@ -106,7 +114,7 @@ func (im *Imbibe) Step(ctx *Ctx) Verdict {
 	ob, _, ok := im.find(ctx)
 	if !ok {
 		im.coolAt = time.Now().Add(45 * time.Second) // the flag lied: cool before re-bidding
-		return Done // nothing worth a detour (or all spent/banned)
+		return Done                                  // nothing worth a detour (or all spent/banned)
 	}
 	d := chebyshev(s.Me.Pos, ob.Position)
 	if d > 5 {
@@ -114,12 +122,16 @@ func (im *Imbibe) Step(ctx *Ctx) Verdict {
 		if im.walkFor != ob.ID {
 			im.walkFor, im.walkAt = ob.ID, time.Now()
 		}
-		if time.Since(im.walkAt) > 30*time.Second {
+		pilgrimage := 30 * time.Second
+		if isQuestChest(ob.Name) {
+			pilgrimage = 90 * time.Second
+		}
+		if time.Since(im.walkAt) > pilgrimage {
 			im.ban[ob.ID] = time.Now().Add(5 * time.Minute)
 			im.walkFor = 0
 			return Running
 		}
-		slideStride(ctx, ob.Position, 1200*time.Millisecond, 1, im.Name())
+		moveTo(ctx, ob.Position, moveto.Opts{Holder: im.Name(), Purpose: moveto.Approach, Arrive: 5, MaxHold: 1200 * time.Millisecond})
 		return Running
 	}
 	if time.Since(im.clickAt) < 1500*time.Millisecond {
@@ -127,29 +139,11 @@ func (im *Imbibe) Step(ctx *Ctx) Verdict {
 	}
 	// Hover-confirmed click — the corpse/waypoint recipe: aim the projection,
 	// believe only a hover that names THIS object, then one click.
-	ctx.M.MoveStop()
-	dd := ctx.GR.GetData()
-	me := dd.PlayerUnit.Position
-	bx := int(float32((ob.Position.X-me.X)-(ob.Position.Y-me.Y))*19.8) + ctx.GR.GameAreaSizeX/2
-	by := int(float32((ob.Position.X-me.X)+(ob.Position.Y-me.Y))*9.9) + ctx.GR.GameAreaSizeY/2
-	for dy := -40; dy <= 12; dy += 8 {
-		for _, dx := range []int{0, -10, 10, -20, 20} {
-			cx, cy := bx+dx, by+dy
-			if cx < 20 || cy < 20 || cx > ctx.GR.GameAreaSizeX-20 || cy > ctx.GR.GameAreaSizeY-20 {
-				continue
-			}
-			ctx.M.AimPhysical(cx, cy)
-			time.Sleep(45 * time.Millisecond)
-			hd := ctx.GR.GetData().HoverData
-			if !hd.IsHovered || hd.UnitID != ob.ID {
-				continue
-			}
-			ctx.M.BareClick(cx, cy)
-			im.clickAt, im.clickFor = time.Now(), ob.ID
-			ctx.Led.Append(verbs.Outcome{Verb: "imbibe", Holder: im.Name(), Result: verbs.ResDone,
-				Evidence: fmt.Sprintf("rite clicked: obj=%d type=%d at (%d,%d)", int(ob.Name), int(ob.Shrine.ShrineType), ob.Position.X, ob.Position.Y)})
-			return Running
-		}
+	if clickObject(ctx, ob) {
+		im.clickAt, im.clickFor = time.Now(), ob.ID
+		ctx.Led.Append(verbs.Outcome{Verb: "imbibe", Holder: im.Name(), Result: verbs.ResDone,
+			Evidence: fmt.Sprintf("rite clicked: obj=%d type=%d at (%d,%d)", int(ob.Name), int(ob.Shrine.ShrineType), ob.Position.X, ob.Position.Y)})
+		return Running
 	}
 	im.tries++
 	if im.tries >= 3 {
@@ -157,4 +151,30 @@ func (im *Imbibe) Step(ctx *Ctx) Verdict {
 		im.ban[ob.ID] = time.Now().Add(5 * time.Minute) // hover never confirmed: buried rite
 	}
 	return Running
+}
+
+// clickObject: the hover-confirmed click on a live object — aim the projection,
+// believe only a hover that names THIS unit, then one click (shared by Imbibe's
+// rites and the Socket errand).
+func clickObject(ctx *Ctx, ob data.Object) bool {
+	ctx.M.MoveStop()
+	d := ctx.GR.GetData()
+	me := d.PlayerUnit.Position
+	bx := int(float32((ob.Position.X-me.X)-(ob.Position.Y-me.Y))*19.8) + ctx.GR.GameAreaSizeX/2
+	by := int(float32((ob.Position.X-me.X)+(ob.Position.Y-me.Y))*9.9) + ctx.GR.GameAreaSizeY/2
+	for dy := -60; dy <= 12; dy += 8 {
+		for _, dx := range []int{0, -10, 10, -20, 20} {
+			cx, cy := bx+dx, by+dy
+			if !verbs.ClickableLogical(ctx.GR, cx, cy) {
+				continue
+			}
+			ctx.M.AimPhysical(cx, cy)
+			time.Sleep(45 * time.Millisecond)
+			if hd := ctx.GR.GetData().HoverData; hd.IsHovered && hd.UnitID == ob.ID {
+				ctx.M.BareClick(cx, cy)
+				return true
+			}
+		}
+	}
+	return false
 }

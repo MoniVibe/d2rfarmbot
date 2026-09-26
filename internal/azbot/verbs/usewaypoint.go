@@ -10,6 +10,7 @@ package verbs
 
 import (
 	"fmt"
+	"github.com/hectorgimenez/koolo/internal/azbot/screen"
 	"image/png"
 	"os"
 	"time"
@@ -34,6 +35,26 @@ type UseWaypoint struct {
 // panel — activation was proven and thrown away). Advance reads this to mark
 // the CURRENT pad lit regardless of how the ride went.
 var LastPanelOpenAt time.Time
+
+// LastAvailable: the waypoint panel's claimed-lit list at its last verified
+// open (LastAvailableAt). A hint for a bounded probe, never ledger truth.
+var (
+	LastAvailable   []area.ID
+	LastAvailableAt time.Time
+)
+
+// ClaimedLit: the panel claimed ar lit within the last 30 minutes.
+func ClaimedLit(ar area.ID) bool {
+	if time.Since(LastAvailableAt) > 30*time.Minute {
+		return false
+	}
+	for _, a := range LastAvailable {
+		if a == ar {
+			return true
+		}
+	}
+	return false
+}
 
 func wpCheb(a, b data.Position) int {
 	dx, dy := a.X-b.X, a.Y-b.Y
@@ -151,7 +172,7 @@ func (uw UseWaypoint) Do(m *motor.Motor, gr *game.MemoryReader, p *percept.Perce
 		opened := false
 		clickedEver := false
 		for try := 0; try < 3 && !opened; try++ {
-			if try > 0 && !gr.GetData().OpenMenus.Waypoint {
+			if try > 0 && !wpOpen(gr) {
 				// A prior blind click may have opened the WRONG panel (an NPC
 				// under the projection). Ground-click clears any stray menu so
 				// the retry starts clean; harmless if nothing is open.
@@ -167,7 +188,7 @@ func (uw UseWaypoint) Do(m *motor.Motor, gr *game.MemoryReader, p *percept.Perce
 			for dy := -34; dy <= 34; dy += 6 {
 				for _, dx := range []int{0, -10, 10, -20, 20, -32, 32} {
 					cx, cy := bx+dx, by+dy
-					if cx < 20 || cy < 20 || cx > gr.GameAreaSizeX-20 || cy > gr.GameAreaSizeY-20 {
+					if !ClickableLogical(gr, cx, cy) {
 						continue
 					}
 					m.AimPhysical(cx, cy)
@@ -193,7 +214,7 @@ func (uw UseWaypoint) Do(m *motor.Motor, gr *game.MemoryReader, p *percept.Perce
 				// exact. Click it directly; OpenMenus.Waypoint (memory, not
 				// hover) is the honest confirmation below. Safe: town-only,
 				// portal-guarded (blindOK).
-				if bx >= 20 && by >= 20 && bx <= gr.GameAreaSizeX-20 && by <= gr.GameAreaSizeY-20 {
+				if ClickableLogical(gr, bx, by) {
 					m.ClickLeft(bx, by)
 					clicked = true
 				}
@@ -208,7 +229,7 @@ func (uw UseWaypoint) Do(m *motor.Motor, gr *game.MemoryReader, p *percept.Perce
 				for time.Now().Before(dl) && time.Now().Before(hard) {
 					time.Sleep(150 * time.Millisecond)
 					dd2 := gr.GetData()
-					if dd2.OpenMenus.Waypoint {
+					if wpOpen(gr) {
 						opened = true
 						break
 					}
@@ -226,7 +247,7 @@ func (uw UseWaypoint) Do(m *motor.Motor, gr *game.MemoryReader, p *percept.Perce
 				// portals were eating every pad attempt).
 				m.AimPhysical(bx, by+30)
 				time.Sleep(50 * time.Millisecond)
-				if !gr.GetData().HoverData.IsHovered {
+				if !gr.GetData().HoverData.IsHovered && ClickableLogical(gr, bx, by+30) {
 					m.BareClick(bx, by+30)
 					time.Sleep(700 * time.Millisecond)
 				}
@@ -250,6 +271,12 @@ func (uw UseWaypoint) Do(m *motor.Motor, gr *game.MemoryReader, p *percept.Perce
 	}
 	time.Sleep(300 * time.Millisecond)
 	LastPanelOpenAt = time.Now() // the open is PROVEN: this pad is lit
+	// The panel's list — a CLAIM, never proof (it lied both ways on this mod):
+	// the town ride may probe one claimed-lit row per area (owner, 2026-09-26:
+	// hand-lit pads were unknown to the ledger, so she walked from town).
+	if av := gr.GetData().PlayerUnit.AvailableWaypoints; len(av) > 0 {
+		LastAvailable, LastAvailableAt = append([]area.ID(nil), av...), time.Now()
+	}
 	// Photograph the OPEN panel every session (00:54: the failure photo showed
 	// no panel at all — the first bad row click had closed it, and the picture
 	// that could have named the true rows was taken twenty seconds too late).
@@ -331,7 +358,7 @@ func (uw UseWaypoint) Do(m *motor.Motor, gr *game.MemoryReader, p *percept.Perce
 		}
 		dest = cand
 		for _, dyOff := range []int{0, 12, -12} {
-			if !gr.GetData().OpenMenus.Waypoint {
+			if !wpOpen(gr) {
 				// Evaporated: one quiet re-open (the pad is at her feet), then verify.
 				time.Sleep(400 * time.Millisecond) // let any queued clicks land first
 				reopened := false
@@ -342,12 +369,12 @@ func (uw UseWaypoint) Do(m *motor.Motor, gr *game.MemoryReader, p *percept.Perce
 					rby := int(float32((wp.Position.X-me2.X)+(wp.Position.Y-me2.Y))*9.9) + gr.GameAreaSizeY/2
 					m.AimPhysical(rbx, rby)
 					time.Sleep(60 * time.Millisecond)
-					if hd := gr.GetData().HoverData; hd.IsHovered && hd.UnitID == wp.ID {
+					if hd := gr.GetData().HoverData; hd.IsHovered && hd.UnitID == wp.ID && ClickableLogical(gr, rbx, rby) {
 						m.ClickLeft(rbx, rby)
 						dl := time.Now().Add(2500 * time.Millisecond)
 						for time.Now().Before(dl) {
 							time.Sleep(150 * time.Millisecond)
-							if gr.GetData().OpenMenus.Waypoint {
+							if wpOpen(gr) {
 								reopened = true
 								break
 							}
@@ -360,7 +387,7 @@ func (uw UseWaypoint) Do(m *motor.Motor, gr *game.MemoryReader, p *percept.Perce
 				time.Sleep(250 * time.Millisecond)
 			}
 			ry := rowY(addr.Row) + dyOff
-			if !gr.GetData().OpenMenus.Waypoint {
+			if !wpOpen(gr) {
 				continue // evaporated before the click: never click the void
 			}
 			// One photo per session under a VERIFIED-standing panel — the honest
@@ -416,4 +443,17 @@ func (uw UseWaypoint) Do(m *motor.Motor, gr *game.MemoryReader, p *percept.Perce
 	led.Append(o)
 	_ = p
 	return o
+}
+
+// wpOpen: the waypoint panel stands — the memory flag OR the panel by sight.
+// R42 (owner: "looks like it has trouble with the wp"): the screen oracle saw
+// the WAYPOINT panel every attempt while OpenMenus.Waypoint read false (the
+// memory UI flags are not ground truth on this build, relay R2), so every
+// ride was judged "pad clicked but the panel never opened".
+func wpOpen(gr *game.MemoryReader) bool {
+	if gr.GetData().OpenMenus.Waypoint {
+		return true
+	}
+	img := gr.Screenshot()
+	return img != nil && screen.WaypointSight(img).Seen
 }

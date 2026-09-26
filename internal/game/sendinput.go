@@ -59,15 +59,15 @@ func SendClickClient(hwnd uintptr, clientX, clientY int) {
 }
 
 const (
-	inputMouse       = 0
-	inputKeyboard    = 1
-	keyeventfKeyUp   = 0x0002
+	inputMouse        = 0
+	inputKeyboard     = 1
+	keyeventfKeyUp    = 0x0002
 	keyeventfScancode = 0x0008
 
-	mouseeventfMove     = 0x0001
-	mouseeventfAbsolute = 0x8000
-	mouseeventfLeftDown = 0x0002
-	mouseeventfLeftUp   = 0x0004
+	mouseeventfMove        = 0x0001
+	mouseeventfAbsolute    = 0x8000
+	mouseeventfLeftDown    = 0x0002
+	mouseeventfLeftUp      = 0x0004
 	mouseeventfVirtualDesk = 0x4000
 )
 
@@ -78,12 +78,12 @@ type hwInput struct {
 	_         uint32
 	// union (32 bytes). Interpreted as MOUSEINPUT (dx,dy,mouseData,dwFlags,time,extra)
 	// or KEYBDINPUT (wVk,wScan,dwFlags,time,extra) depending on inputType.
-	a         uint32 // MOUSEINPUT.dx  | KEYBDINPUT{wVk,wScan}
-	b         uint32 // MOUSEINPUT.dy  | KEYBDINPUT.dwFlags
-	c         uint32 // MOUSEINPUT.mouseData | KEYBDINPUT.time
-	d         uint32 // MOUSEINPUT.dwFlags
-	e         uint32 // MOUSEINPUT.time
-	extra     uintptr
+	a     uint32 // MOUSEINPUT.dx  | KEYBDINPUT{wVk,wScan}
+	b     uint32 // MOUSEINPUT.dy  | KEYBDINPUT.dwFlags
+	c     uint32 // MOUSEINPUT.mouseData | KEYBDINPUT.time
+	d     uint32 // MOUSEINPUT.dwFlags
+	e     uint32 // MOUSEINPUT.time
+	extra uintptr
 }
 
 func sendInputs(inputs []hwInput) {
@@ -186,14 +186,42 @@ func SendClickReal(screenX, screenY, virtualLeft, virtualTop, virtualW, virtualH
 	sendInputs([]hwInput{up})
 }
 
-// SendCtrlClickRealScreen: OS-level Ctrl+left-click — the vendor quick-sell
-// gesture (2026-09-23: the posted SellClick never landed on this build; trade
-// panels honor only real input). Ctrl is released even on the way out.
-func SendCtrlClickRealScreen(screenX, screenY int) {
-	const vkControl = 0x11
-	sendInputs([]hwInput{{inputType: inputKeyboard, a: uint32(vkControl), b: 0}})
-	defer sendInputs([]hwInput{{inputType: inputKeyboard, a: uint32(vkControl), b: keyeventfKeyUp}})
-	time.Sleep(60 * time.Millisecond)
-	SendClickRealScreen(screenX, screenY)
-	time.Sleep(60 * time.Millisecond)
+// SendCtrlClickRealScreen: OS-level Ctrl+left-click — the vendor quick-sell.
+func SendCtrlClickRealScreen(screenX, screenY int) { SendModClickRealScreen(0x1D, screenX, screenY) }
+
+// SendShiftClickRealScreen: OS-level Shift+left-click — with the stash open, the
+// transfer gesture: the bag item moves to the open stash tab (owner, 2026-09-24).
+func SendShiftClickRealScreen(screenX, screenY int) { SendModClickRealScreen(0x2A, screenX, screenY) }
+
+// SendModClickRealScreen: a left-click with a modifier held BY SCANCODE. The old
+// Ctrl sender pressed the virtual key only, and the game read a plain click —
+// the fence's "SELL BECAME A PICKUP" (the game reads modifiers by scancode, as
+// every proven key sender here does). The modifier is released on the way out.
+func SendModClickRealScreen(scan uint16, screenX, screenY int) {
+	down := hwInput{inputType: inputKeyboard, a: uint32(scan) << 16, b: keyeventfScancode}
+	up := hwInput{inputType: inputKeyboard, a: uint32(scan) << 16, b: keyeventfScancode | keyeventfKeyUp}
+	// The proven drill order (R33: Ctrl-then-move-click lifted in the bot while
+	// the hand drill transferred): cursor first, settle, modifier, click, release.
+	cx, _, _ := procGetSystemMetrics.Call(0)
+	cy, _, _ := procGetSystemMetrics.Call(1)
+	nx := uint32(float64(screenX) * 65535.0 / float64(cx))
+	ny := uint32(float64(screenY) * 65535.0 / float64(cy))
+	sendInputs([]hwInput{{inputType: inputMouse, a: nx, b: ny, d: mouseeventfMove | mouseeventfAbsolute | mouseeventfVirtualDesk}})
+	time.Sleep(120 * time.Millisecond)
+	sendInputs([]hwInput{down})
+	defer sendInputs([]hwInput{up})
+	time.Sleep(80 * time.Millisecond)
+	sendInputs([]hwInput{{inputType: inputMouse, a: nx, b: ny, d: mouseeventfLeftDown | mouseeventfAbsolute | mouseeventfVirtualDesk}})
+	time.Sleep(70 * time.Millisecond)
+	sendInputs([]hwInput{{inputType: inputMouse, a: nx, b: ny, d: mouseeventfLeftUp | mouseeventfAbsolute | mouseeventfVirtualDesk}})
+	time.Sleep(80 * time.Millisecond)
+}
+
+// OSCursorPos: the desktop cursor as Windows reports it to THIS process (the
+// in-game GetCursorPos patch lives in D2R, not here). Diagnostic only — panel
+// toggles were seen to move the cursor (owner, 2026-09-24).
+func OSCursorPos() (int, int) {
+	var cur winPoint
+	procGetCursorPos.Call(uintptr(unsafe.Pointer(&cur)))
+	return int(cur.X), int(cur.Y)
 }

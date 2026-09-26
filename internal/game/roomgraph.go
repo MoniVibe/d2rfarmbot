@@ -257,32 +257,79 @@ func (gd *MemoryReader) BuildLiveGrid() (*Grid, int, error) {
 	return g, n, err
 }
 
-func (gd *MemoryReader) buildLiveGridInner() (*Grid, []LiveRoom, int, error) {
+// Live layer cell states — the same encoding as the atlas (unknown/walkable/blocked).
+const (
+	LiveUnknown uint8 = iota
+	LiveWalk
+	LiveBlock
+)
+
+// LiveLayer is the RAW live observation before any grid softening: exactly which
+// cells the streamed-in rooms' collision covers (LiveWalk/LiveBlock) and which no
+// loaded room covers (LiveUnknown). The Grid view cannot tell those apart — its
+// unknown cells and its wall-adjacent walkable cells are both LowPriority — so map
+// fusion and the atlas read this instead.
+type LiveLayer struct {
+	Area       int
+	OffX, OffY int
+	W, H       int
+	Cells      []uint8 // row-major W*H
+	Loaded     int     // rooms whose collision was read
+}
+
+// At is the state at world (x,y); LiveUnknown outside the frame.
+func (l *LiveLayer) At(x, y int) uint8 {
+	if l == nil {
+		return LiveUnknown
+	}
+	lx, ly := x-l.OffX, y-l.OffY
+	if lx < 0 || ly < 0 || lx >= l.W || ly >= l.H {
+		return LiveUnknown
+	}
+	return l.Cells[ly*l.W+lx]
+}
+
+// Grid is the legacy navigation view of the layer: unknown = LowPriority (plannable,
+// optimistic), then NewGrid's wall-margin softening.
+func (l *LiveLayer) Grid() *Grid {
+	cg := make([][]CollisionType, l.H)
+	for y := range cg {
+		cg[y] = make([]CollisionType, l.W)
+		row := l.Cells[y*l.W : (y+1)*l.W]
+		for x, c := range row {
+			switch c {
+			case LiveWalk:
+				cg[y][x] = CollisionTypeWalkable
+			case LiveBlock:
+				cg[y][x] = CollisionTypeNonWalkable // loaded truth: a REAL wall
+			default:
+				// UNKNOWN = PLANNABLE (optimistic planning). The old "unknown =
+				// blocked" made every far goal NoPath, and the blind-stride fallback
+				// walked her INTO WALLS. Walls materialize as rooms stream in and the
+				// plan re-routes (map fusion prices these cells; see mapfuse).
+				cg[y][x] = CollisionTypeLowPriority
+			}
+		}
+	}
+	return NewGrid(cg, l.OffX, l.OffY)
+}
+
+// BuildLiveLayer reads the current level's streamed-in room collision as a raw
+// layer, plus the rooms it came from.
+func (gd *MemoryReader) BuildLiveLayer() (*LiveLayer, []LiveRoom, error) {
 	lf, err := gd.ReadLiveLevelFrame()
 	if err != nil {
-		return nil, nil, 0, err
+		return nil, nil, err
 	}
 	if lf.SizeX <= 0 || lf.SizeY <= 0 || lf.SizeX > 4000 || lf.SizeY > 4000 {
-		return nil, nil, 0, fmt.Errorf("implausible live level size %dx%d", lf.SizeX, lf.SizeY)
+		return nil, nil, fmt.Errorf("implausible live level size %dx%d", lf.SizeX, lf.SizeY)
 	}
 	graph, err := gd.ReadCurrentRoomGraph()
 	if err != nil {
-		return nil, nil, 0, err
+		return nil, nil, err
 	}
 	W, H, ox, oy := lf.SizeX, lf.SizeY, lf.OriginX, lf.OriginY
-	cg := make([][]CollisionType, H)
-	for y := range cg {
-		cg[y] = make([]CollisionType, W)
-		// UNKNOWN = PLANNABLE AT A PENALTY (optimistic planning). The old "unknown =
-		// blocked" made every far goal NoPath, and the blind-stride fallback walked
-		// her INTO WALLS — the owner: "it tries to walk through walls often, one of
-		// the main reasons it stops". Now the planner always has a route through
-		// unloaded space; walls materialize as rooms stream in and the plan re-routes.
-		for x := range cg[y] {
-			cg[y][x] = CollisionTypeLowPriority
-		}
-	}
-	loaded := 0
+	l := &LiveLayer{Area: lf.Area, OffX: ox, OffY: oy, W: W, H: H, Cells: make([]uint8, W*H)}
 	usedRooms := make([]LiveRoom, 0, 32)
 	for _, room := range graph.Rooms {
 		if room.Room1Ptr == 0 || int(room.LevelID) != lf.Area {
@@ -308,19 +355,27 @@ func (gd *MemoryReader) buildLiveGridInner() (*Grid, []LiveRoom, int, error) {
 				idx := (ly*c.W + lx) * 2
 				v := uint16(buf[idx]) | uint16(buf[idx+1])<<8
 				if v&1 == 0 { // low bit clear = walkable
-					cg[gy][gx] = CollisionTypeWalkable
+					l.Cells[gy*W+gx] = LiveWalk
 				} else {
-					cg[gy][gx] = CollisionTypeNonWalkable // loaded truth: a REAL wall
+					l.Cells[gy*W+gx] = LiveBlock
 				}
 			}
 		}
-		loaded++
+		l.Loaded++
 		usedRooms = append(usedRooms, room)
 	}
-	if loaded == 0 {
-		return nil, nil, 0, errors.New("no rooms with streamed-in collision")
+	if l.Loaded == 0 {
+		return nil, nil, errors.New("no rooms with streamed-in collision")
 	}
-	return NewGrid(cg, ox, oy), usedRooms, loaded, nil
+	return l, usedRooms, nil
+}
+
+func (gd *MemoryReader) buildLiveGridInner() (*Grid, []LiveRoom, int, error) {
+	l, rooms, err := gd.BuildLiveLayer()
+	if err != nil {
+		return nil, nil, 0, err
+	}
+	return l.Grid(), rooms, l.Loaded, nil
 }
 
 // AdjacentLevelRooms groups the current level's cross-border neighbor rooms by area, as

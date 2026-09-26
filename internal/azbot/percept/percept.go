@@ -8,6 +8,7 @@ package percept
 import (
 	"fmt"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"time"
 
@@ -18,6 +19,11 @@ import (
 	"github.com/hectorgimenez/d2go/pkg/data/npc"
 	"github.com/hectorgimenez/d2go/pkg/data/object"
 	"github.com/hectorgimenez/d2go/pkg/data/stat"
+	"github.com/hectorgimenez/d2go/pkg/data/state"
+	"github.com/hectorgimenez/koolo/internal/azbot/combat"
+	"github.com/hectorgimenez/koolo/internal/azbot/gamedata"
+	"github.com/hectorgimenez/koolo/internal/azbot/inventory"
+	"github.com/hectorgimenez/koolo/internal/azbot/loot"
 	"github.com/hectorgimenez/koolo/internal/game"
 )
 
@@ -65,6 +71,8 @@ type PlayerState struct {
 	// MinDurPct: the worst equipped item's durability percent (100 when nothing
 	// tracks durability) — what the Repair service bids on.
 	MinDurPct int
+	// BrokenGear: equipped pieces at 0 durability (their bonuses stop counting).
+	BrokenGear int
 	// HasBow: a bow rides SOME set (active or secondary) — the march's swap-back
 	// (P-5.9) and the equip oracle's bow judgment key off this, never off which
 	// set happens to be in her hands this tick.
@@ -84,6 +92,8 @@ type PlayerState struct {
 	// service's reason to exist. The classic bots' law: loot → sell → gold →
 	// repair/potions; a bot with an empty purse cannot take care of itself.
 	JunkCount int
+	// StashCount: bag items the plan sends to the stash (loot/plan.go).
+	StashCount int
 	// InvFree: free inventory grid cells (vanilla 10x4 frame; item footprints from
 	// the static Desc table). Loot consults it — a full bag turns every pickup into
 	// a 3-fail ban cycle (the owner: "it tries to pick up things but its full").
@@ -114,6 +124,23 @@ type PlayerState struct {
 	// CursorItem: something rides the cursor (WARNING 9) — every service's
 	// click interlock, and Equip's parking docket.
 	CursorItem bool
+	// CursorUnit: the unit on the cursor (0 = none) — the inventory tracker's swap-loop count.
+	CursorUnit data.UnitID
+	// OwnTraps: her live sentries within 30 (AllyCode); Summons: her live
+	// summons' monster codes within 30 ("shadowwarrior").
+	Corpses    []data.Position // monster corpses within 15 (corpse summons cast here)
+	OwnTraps   int
+	OwnTrapPos []data.Position // where they stand (Traps counts those near its aim)
+	Summons    []string
+	// BossesDead: act bosses (ActBoss) seen dying or dead this tick — the act
+	// transition's evidence (the quest log reads 0 on this build).
+	BossesDead []npc.ID
+	// StashGold: gold in the stash, all tabs (d2go StashedGold) — the Stash
+	// errand withdraws from it when the purse runs low.
+	StashGold int
+	// States: the player's live states (buffs) — the Buff activity recasts
+	// a proven self-buff whose state is missing.
+	States state.States
 }
 
 // EnemyRef is a live hostile: identity, position, and Mode (the honest liveness read —
@@ -130,6 +157,8 @@ type EnemyRef struct {
 	// a walled enemy is ABSENT to proximity counts, crowd bars, and strikes,
 	// and exists only to the planner that walks doors.
 	Walled bool
+	// Reviver: its monster row resurrects or heals (gamedata) — killed first.
+	Reviver bool
 }
 
 // ItemRef is a ground item: identity, position, name (mod-remapped names resolved by
@@ -142,6 +171,26 @@ type ItemRef struct {
 	// Potion: "health"/"mana"/"unknown" by the belt classifier (a ground 603 is the
 	// mod's red potion — vendors and drops share the scrambled "SmallCharm" row).
 	Potion string
+	// Class: the item's ROW number (the type, not the unit) in the mod's own
+	// numbering — what the loot value model (package loot) classifies. Names
+	// are scrambled on this mod; the row is not.
+	Class int
+	// Unique: the unique row (uniqueitems.txt) for a unique, else -1 — the
+	// strong-unique rule reads it on the ground.
+	Unique int
+}
+
+// BagItem is one item in the bag: identity, grid cell, and what the loot
+// policy needs to value it (the swap's victim list, the catalog's bag rows).
+type BagItem struct {
+	Unique  int32 // unique row (UniqueSetID) for quality 7, else -1
+	Unit    data.UnitID
+	ID      int
+	Name    string
+	GX, GY  int
+	Qual    int
+	Ident   bool
+	Upgrade bool // on the Equip docket
 }
 
 // PortalRef is a live portal object: identity AND position. Entering a portal means
@@ -150,6 +199,10 @@ type ItemRef struct {
 type PortalRef struct {
 	ID  data.UnitID
 	Pos data.Position
+	// Dest: the area the portal leads to (0 = unknown).
+	Dest area.ID
+	// Obj: the object row (doors: its selection box comes from the table).
+	Obj object.Name
 }
 
 // MissileRef is a projectile in flight (unit table type 3). No ownership, no velocity —
@@ -177,6 +230,7 @@ type InvItem struct {
 // recorder prove whether that cell held a health potion, mana potion, or a
 // stranger that the classifier did not understand.
 type BeltItemRef struct {
+	Unit data.UnitID
 	ID   int
 	Name string
 	Pos  data.Position
@@ -203,9 +257,16 @@ type Snapshot struct {
 	Junk     []InvItem    // sellable inventory items, grid slots (the Fence's list)
 	Unid     []InvItem    // unidentified magic+ items, grid slots (Identify's list)
 	Upgrades []InvItem    // identified upgrades for worn slots (Equip's list)
+	Bag      []BagItem    // everything in the bag (the loot policy's view)
+	// StoredUniques: unique rows he already owns OUTSIDE the bag — the stash
+	// tabs memory shows and what he wears (owner, 2026-09-25: "not fill it with
+	// low level uniques or duplicates"). A second copy is not a keeper.
+	StoredUniques map[int]bool
 	// RiteNearby: a fresh (Selectable) shrine or well within 25 — Imbibe's
 	// cheap demand signal (P-5R); the Step re-verifies before moving.
 	RiteNearby bool
+	// Doors: closed (selectable) doors within 20 — Door opens the one he is stuck at.
+	Doors []PortalRef
 }
 
 // The roadside-rite tables live HERE (activity imports percept, never the
@@ -242,9 +303,15 @@ var ManaWells = map[object.Name]bool{
 // well, or a CHEST (the owner, 05:32, night orders: "make sure it pops
 // chests"). Chests share the rites' honest machinery: Selectable until
 // opened, hover-clicked, yielded under pressure.
+// QuestChests: the Horadric quest chests (objects.txt rows 354 Cube, 355 Scroll,
+// 356 Staff of Kings). Imbibe opens them from further out and first (activity/quest.go).
+// YetAnotherTome is Horazon's Journal in the Arcane Sanctuary: read after the
+// Summoner dies, it opens the red portal to the Canyon of the Magi.
+var QuestChests = map[object.Name]bool{354: true, 355: true, 356: true, 149: true, object.YetAnotherTome: true, 405: true, 406: true, 407: true} // 149: the Viper altar; 405-407: Khalim's relic chests
+
 func IsRite(ob data.Object) bool {
 	return (ob.IsShrine() && GivingShrines[ob.Shrine.ShrineType]) ||
-		HealthWells[ob.Name] || ManaWells[ob.Name] || ob.IsChest()
+		HealthWells[ob.Name] || ManaWells[ob.Name] || ob.IsChest() || QuestChests[ob.Name]
 }
 
 // AttachReport is the M0 epistemics gate verdict: behavioral probes over the channels
@@ -278,6 +345,36 @@ type Perceptor struct {
 	corpseLatch    data.Position
 	corpseLatched  bool
 	lastAliveArmed bool
+	// Effective max life: the MaxLife stat omits gear/skill bonuses on this
+	// mod (HPPercent read ~127 at full in relay R10), so every HP threshold
+	// fired late. The highest life seen since MaxLife last changed is the
+	// truer denominator.
+	lifeMu             sync.Mutex // the Sentinel reads HP on its own goroutine
+	lifePeak, lifeBase int
+	manaPeak, manaBase int // the mana twin of the life peak (MaxMana omits gear: 209% read)
+}
+
+// hpPct is life over the larger of the MaxLife stat and the peak life seen
+// since that stat last changed (a level-up or gear swap resets the peak).
+func (p *Perceptor) hpPct(pu data.PlayerUnit) int {
+	p.lifeMu.Lock()
+	defer p.lifeMu.Unlock()
+	life, _ := pu.FindStat(stat.Life, 0)
+	maxLife, _ := pu.FindStat(stat.MaxLife, 0)
+	if maxLife.Value != p.lifeBase {
+		p.lifeBase, p.lifePeak = maxLife.Value, 0
+	}
+	if life.Value > p.lifePeak {
+		p.lifePeak = life.Value
+	}
+	den := maxLife.Value
+	if p.lifePeak > den {
+		den = p.lifePeak
+	}
+	if den <= 0 {
+		return pu.HPPercent()
+	}
+	return life.Value * 100 / den
 }
 
 func New(gr *game.MemoryReader) *Perceptor { return &Perceptor{gr: gr} }
@@ -345,11 +442,12 @@ func (p *Perceptor) Capture() *Snapshot {
 	}
 	s.Valid = true
 	s.Me = PlayerState{
-		Pos:   pos,
-		Area:  d.PlayerUnit.Area,
-		Mode:  d.PlayerUnit.Mode,
-		HPPct: d.PlayerUnit.HPPercent(),
-		MPPct: d.PlayerUnit.MPPercent(),
+		Pos:    pos,
+		Area:   d.PlayerUnit.Area,
+		Mode:   d.PlayerUnit.Mode,
+		HPPct:  p.hpPct(d.PlayerUnit),
+		MPPct:  p.mpPct(d.PlayerUnit),
+		States: d.PlayerUnit.States,
 		MaxMana: func() int {
 			// THE FIXED-POINT LIE (11:39: maxmana=0 while the orb held 33 —
 			// the owner: "the bot is still not aware as much as we'd like").
@@ -396,18 +494,63 @@ func (p *Perceptor) Capture() *Snapshot {
 		s.MenuOpen = ub[0xF4] == 1
 	}
 	s.QuitMenu = d.OpenMenus.QuitMenu
-	for _, m := range d.Monsters.Enemies() {
-		if m.Mode == mode.NpcDeath || m.Mode == mode.NpcDead {
+	// THE ASSASSIN'S OWN (2026-09-26, KillaryClinton's Snowlash build): her
+	// sentries and shadows are monster units. d2go knows the shadows as pets
+	// but not the traps (the mod's Snowlash is row 771), so they read as
+	// enemies: packs "of 6" that were her own traps, swings at her sentries.
+	allies := map[data.UnitID]bool{}
+	for _, m := range d.Monsters {
+		mr := gamedata.Get().Monster(int(m.Name))
+		if mr == nil || !AllyCode(mr.Code) || m.Mode == mode.NpcDeath || m.Mode == mode.NpcDead {
 			continue
 		}
-		s.Enemies = append(s.Enemies, EnemyRef{ID: m.UnitID, Pos: m.Position, Mode: uint32(m.Mode), NPC: m.Name})
+		allies[m.UnitID] = true
+		if chebyshev(pos, m.Position) <= 30 {
+			if strings.HasSuffix(mr.Code, "sentry") || mr.Code == "wakeofdestruction" || mr.Code == "bladecreeper" {
+				s.Me.OwnTraps++
+				s.Me.OwnTrapPos = append(s.Me.OwnTrapPos, m.Position)
+			} else {
+				s.Me.Summons = append(s.Me.Summons, mr.Code)
+			}
+		}
+	}
+	for _, m := range d.Monsters.Enemies() {
+		if allies[m.UnitID] {
+			continue
+		}
+		if m.Mode == mode.NpcDeath || m.Mode == mode.NpcDead {
+			if m.Mode == mode.NpcDead && chebyshev(pos, m.Position) <= 15 {
+				s.Me.Corpses = append(s.Me.Corpses, m.Position) // raise skeleton's ground
+			}
+			if ActBoss[m.Name] > 0 {
+				s.Me.BossesDead = append(s.Me.BossesDead, m.Name) // the campaign witness
+			}
+			continue
+		}
+		rev := false
+		if mr := gamedata.Get().Monster(int(m.Name)); mr != nil {
+			rev = mr.Reviver
+		}
+		s.Enemies = append(s.Enemies, EnemyRef{ID: m.UnitID, Pos: m.Position, Mode: uint32(m.Mode), NPC: m.Name, Reviver: rev})
 	}
 	for _, it := range d.Inventory.ByLocation(item.LocationGround) {
+		uq := -1
+		if it.Quality == item.QualityUnique {
+			uq = int(it.UniqueSetID)
+		}
 		s.Items = append(s.Items, ItemRef{ID: it.UnitID, Pos: it.Position, Name: string(it.Name), Quality: int(it.Quality),
-				Potion: PotionKind(it, true)})
+			Potion: PotionKind(it, true), Class: int(it.ID), Unique: uq})
 	}
 	// P-5R roadside rites: a cheap nearby-rite flag for the Imbibe demand —
 	// the Step re-verifies against the live object list before a single step.
+	for _, ob := range d.Objects {
+		if ob.ID != 0 && ob.Selectable && ob.IsDoor() {
+			dx, dy := ob.Position.X-d.PlayerUnit.Position.X, ob.Position.Y-d.PlayerUnit.Position.Y
+			if dx >= -20 && dx <= 20 && dy >= -20 && dy <= 20 {
+				s.Doors = append(s.Doors, PortalRef{ID: ob.ID, Pos: ob.Position, Obj: ob.Name})
+			}
+		}
+	}
 	for _, ob := range d.Objects {
 		if ob.ID != 0 && ob.Selectable && IsRite(ob) {
 			dx, dy := ob.Position.X-d.PlayerUnit.Position.X, ob.Position.Y-d.PlayerUnit.Position.Y
@@ -432,9 +575,20 @@ func (p *Perceptor) Capture() *Snapshot {
 	bowActive, bowSecondary := false, false
 	quivActive, quivSecondary := -2, -2 // -2 = no quiver seen on that set
 	slotQual := map[item.LocationType]int{}
+	// slotScore: GearScore of what each judged slot wears (gearscore.go);
+	// rings keep both, the stronger decides (a quick-equip may swap either).
+	slotScore := map[item.LocationType]float64{}
+	var ringScores []float64
+	class := d.PlayerUnit.Class
 	bowQual := -1
 	for _, eq := range d.Inventory.ByLocation(item.LocationEquipped) {
 		bl := eq.Location.BodyLocation
+		switch bl {
+		case item.LocHead, item.LocTorso, item.LocFeet, item.LocGloves, item.LocNeck:
+			slotScore[bl] = GearScore(eq, class)
+		case item.LocLeftRing, item.LocRightRing:
+			ringScores = append(ringScores, GearScore(eq, class))
+		}
 		switch bl {
 		case item.LocHead, item.LocTorso, item.LocFeet, item.LocGloves:
 			slotQual[bl] = int(eq.Quality)
@@ -493,6 +647,9 @@ func (p *Perceptor) Capture() *Snapshot {
 	}
 	s.Me.HasBow = bowActive || bowSecondary
 	s.Me.CursorItem = len(d.Inventory.ByLocation(item.LocationCursor)) > 0 // WARNING 9
+	if cur := d.Inventory.ByLocation(item.LocationCursor); len(cur) > 0 {
+		s.Me.CursorUnit = cur[0].UnitID
+	}
 	// Belt potions count by a single classifier. The mod scrambles the name table and
 	// also exposes the belt's flattened slot index in Position.X (0..7/0..15), so
 	// relying on one custom ID or Position.Y made variants such as health potion 2
@@ -500,7 +657,7 @@ func (p *Perceptor) Capture() *Snapshot {
 	for _, bp := range d.Inventory.Belt.Items {
 		kind := potionKindForBeltItem(bp)
 		s.Me.BeltItems = append(s.Me.BeltItems, BeltItemRef{
-			ID: bp.ID, Name: string(bp.Name), Pos: bp.Position,
+			Unit: bp.UnitID, ID: bp.ID, Name: string(bp.Name), Pos: bp.Position,
 			Kind: potionKindName(kind),
 		})
 		switch kind {
@@ -540,6 +697,19 @@ func (p *Perceptor) Capture() *Snapshot {
 	// fitsSlot: the piece would improve a slot she wears (or fill an empty one) —
 	// judged on quality alone, requirements NOT yet consulted.
 	fitsSlot := func(it data.Item) bool {
+		// THE GEAR SCORE (2026-09-26): armor and jewelry are judged by their
+		// stats against what the slot wears — an empty slot takes anything.
+		if slot := GearSlot(it.Desc().Type); slot != item.LocNone {
+			sc := GearScore(it, class)
+			if slot == item.LocLeftRing {
+				if len(ringScores) < 2 {
+					return sc > 0
+				}
+				return upgradeBeats(sc, max(ringScores[0], ringScores[1]))
+			}
+			worn, ok := slotScore[slot]
+			return !ok || upgradeBeats(sc, worn)
+		}
 		switch it.Desc().Type {
 		case "bow":
 			// P-9.3: judged against the bow set WHEREVER it rides. The Equip
@@ -601,21 +771,45 @@ func (p *Perceptor) Capture() *Snapshot {
 		}
 		return fitsSlot(it)
 	}
-	occupied := 0
-	potSpares := map[potionKind]int{} // bag potions per kind — the reserve audit (P-4.5)
-	for _, it := range d.Inventory.ByLocation(item.LocationInventory) {
-		id := int(it.ID)
-		if w, h := it.Desc().InventoryWidth, it.Desc().InventoryHeight; w > 0 && h > 0 {
-			occupied += w * h
-		} else {
-			occupied++ // unknown footprint: count one cell rather than none
+	// THE BAG IS 10x8 ON THIS MOD (the Fence's measured grid; the R2 bag
+	// capture): the old 40-cell frame read "full" in 67% of recorded frames
+	// and every unique waited on InvFree>=2. Occupancy is the UNION of the
+	// footprints clipped to the grid — footprints from the loot model, which
+	// undoes the mod's +15 misc shift (the d2go row for the cube, 564, is a
+	// 1x1 topaz).
+	bag := d.Inventory.ByLocation(item.LocationInventory)
+	occupied := loot.Occupied(len(bag), func(i int) (int, int, int) {
+		return int(bag[i].ID), bag[i].Position.X, bag[i].Position.Y
+	})
+	policy := loot.Active()
+	bagPots := map[inventory.Potion]int{} // bag potions per family — the reserve audit (P-4.5)
+	planner := policy.NewPlanner(loot.BagCells - occupied)
+	planner.Level = s.Me.Level
+	planner.UsesBow = s.Me.HasBow
+	s.StoredUniques = map[int]bool{}
+	for _, loc := range []item.LocationType{item.LocationStash, item.LocationSharedStash, item.LocationEquipped} {
+		for _, it := range d.Inventory.ByLocation(loc) {
+			if it.Quality == item.QualityUnique && it.UniqueSetID >= 0 {
+				s.StoredUniques[int(it.UniqueSetID)] = true
+			}
 		}
-		if isUpgrade(it) {
+	}
+	planner.Owned = func(row int) bool { return s.StoredUniques[row] }
+	for _, it := range bag {
+		id := int(it.ID)
+		up := isUpgrade(it)
+		uq := int32(-1)
+		if it.Quality == item.QualityUnique {
+			uq = it.UniqueSetID
+		}
+		s.Bag = append(s.Bag, BagItem{Unique: uq, Unit: it.UnitID, ID: id, Name: string(it.Name), GX: it.Position.X, GY: it.Position.Y,
+			Qual: int(it.Quality), Ident: it.Identified, Upgrade: up})
+		if up {
 			s.Upgrades = append(s.Upgrades, InvItem{ID: id, GX: it.Position.X, GY: it.Position.Y, Qual: int(it.Quality), IsBow: it.Desc().Type == "bow"})
 			continue // an upgrade is never merchandise
 		}
 		switch {
-		case id == 533 || id == 534 || id == 549: // TP/ID tomes + the HORADRIC CUBE
+		case id == 533 || id == 534 || id == 549 || loot.Lifeline(id): // TP/ID tomes + the HORADRIC CUBE (mod 564)
 			if id == 533 || id == 534 { // tome charge counts: the rituals' fuel gauges
 				n := 0
 				if q, ok := it.FindStat(stat.Quantity, 0); ok {
@@ -628,40 +822,51 @@ func (p *Perceptor) Capture() *Snapshot {
 				}
 			}
 			continue
-		case it.Desc().Type == item.TypeQuest:
+		case it.Desc().Type == item.TypeQuest || loot.Classify(id).Kind == loot.KindQuest:
 			// Quest items are IRREPLACEABLE and the audit's old posture — "everything
 			// I don't recognize is stock" — fenced the cube (the owner: "she also lost
 			// her cube somehow, what the hell"). Type by numeric ID cannot be lied to
 			// by the scrambled name table.
 			continue
-		case potionKindForItem(it) != potionNone:
-			// Potions are fuel, not stock — up to a RESERVE of 4 per kind. The
-			// bag is not a cellar (P-4.5): the junky's surplus is merchandise,
-			// or it strangles the landing room the equip ritual needs.
-			kind := potionKindForItem(it)
-			potSpares[kind]++
-			if potSpares[kind] > 4 {
+		case inventory.PotionOf(id) != inventory.PotNone:
+			// Potions are fuel, not stock — a RESERVE per family (hp 4, mp 2, rv 2)
+			// beside the belt; the surplus is merchandise. The family comes from the
+			// MOD's item code (R37: hp2 = row 603 was missing from the old ID list,
+			// so 14 bottles rode the bag as "fuel" forever).
+			fam := inventory.PotionOf(id)
+			bagPots[fam]++
+			if bagPots[fam] > potionReserve[fam] {
 				s.Junk = append(s.Junk, InvItem{ID: id, GX: it.Position.X, GY: it.Position.Y, Qual: int(it.Quality)})
 			}
 			continue
-		case int(it.Quality) >= 4 && !it.Identified:
-			// UNIDENTIFIED goes to the docket FIRST — rares and uniques included.
-			// (The old ordering filed rare+ under 'keeper' before this check ever
-			// ran: the owner's unique bow could never be identified.)
-			s.Unid = append(s.Unid, InvItem{ID: id, GX: it.Position.X, GY: it.Position.Y, Qual: int(it.Quality)})
-			continue
-		case int(it.Quality) >= 6: // identified rare+: keepers (equip/stash decide)
-			continue
-		case int(it.Quality) >= 4:
-			// Identified magic she could actually draw (bow/javelin/quiver types) is
-			// held for the equip flow; identified magic she cannot use is MERCHANDISE.
-			if t := it.Desc().Type; t == "bow" || t == "jave" || t == "bowq" || t == "tpot" {
+		default:
+			// THE BAG PLAN (loot/plan.go): one disposition per item — the sell list
+			// is exactly the plan's "sell" (R27: the old rules kept rares and blues
+			// the plan now sells, and the fence cleared 3-4 items a visit).
+			uq := -1
+			if it.Quality == item.QualityUnique {
+				uq = int(it.UniqueSetID)
+			}
+			disp, _ := planner.Dispose(loot.Carried{Unit: uint32(it.UnitID), Unique: uq, Item: loot.Item{ID: id, Name: string(it.Name), Quality: int(it.Quality)},
+				GX: it.Position.X, GY: it.Position.Y, Identified: it.Identified})
+			switch disp {
+			case loot.DispIdentify:
+				s.Unid = append(s.Unid, InvItem{ID: id, GX: it.Position.X, GY: it.Position.Y, Qual: int(it.Quality)})
+				continue
+			case loot.DispStash:
+				s.Me.StashCount++
+				continue
+			case loot.DispSell:
+			default:
 				continue
 			}
 		}
 		s.Junk = append(s.Junk, InvItem{ID: id, GX: it.Position.X, GY: it.Position.Y, Qual: int(it.Quality)})
 	}
-	s.Me.InvFree = 40 - occupied // vanilla 10x4 frame; a modded larger bag reads conservative
+	for _, g := range d.Inventory.StashedGold {
+		s.Me.StashGold += g
+	}
+	s.Me.InvFree = loot.BagCells - occupied
 	if s.Me.InvFree < 0 {
 		s.Me.InvFree = 0
 	}
@@ -684,11 +889,22 @@ func (p *Perceptor) Capture() *Snapshot {
 		}
 	}
 	s.Me.MinDurPct = 100
+	s.Me.BrokenGear = 0
 	for _, eq := range d.Inventory.ByLocation(item.LocationEquipped) {
+		// A BROKEN piece has NO durability stat (d2go omits zero stats): the old
+		// okD requirement skipped every broken item — owner (R34): "half its items
+		// are broken" while MinDurPct read 37 and Repair never bid.
 		dur, okD := eq.FindStat(stat.Durability, 0)
 		mx, okM := eq.FindStat(stat.MaxDurability, 0)
-		if okD && okM && mx.Value > 0 {
-			pct := dur.Value * 100 / mx.Value
+		if okM && mx.Value > 0 {
+			cur := 0
+			if okD {
+				cur = dur.Value
+			}
+			if cur <= 0 {
+				s.Me.BrokenGear++
+			}
+			pct := cur * 100 / mx.Value
 			if pct < s.Me.MinDurPct {
 				s.Me.MinDurPct = pct
 			}
@@ -696,7 +912,7 @@ func (p *Perceptor) Capture() *Snapshot {
 	}
 	for i := range d.Objects {
 		if d.Objects[i].IsPortal() || d.Objects[i].IsRedPortal() {
-			s.Portals = append(s.Portals, PortalRef{ID: d.Objects[i].ID, Pos: d.Objects[i].Position})
+			s.Portals = append(s.Portals, PortalRef{ID: d.Objects[i].ID, Pos: d.Objects[i].Position, Dest: d.Objects[i].PortalData.DestArea})
 		}
 	}
 	if !s.Me.InTown { // town has no hostile fire; skip the read there
@@ -898,8 +1114,77 @@ func (p *Perceptor) SurvivalRead() (m mode.PlayerMode, hp, mp int, a area.ID, va
 	if pos.X == 0 && pos.Y == 0 {
 		return 0, 0, 0, 0, false
 	}
-	return d.PlayerUnit.Mode, d.PlayerUnit.HPPercent(), d.PlayerUnit.MPPercent(), d.PlayerUnit.Area, true
+	return d.PlayerUnit.Mode, p.hpPct(d.PlayerUnit), d.PlayerUnit.MPPercent(), d.PlayerUnit.Area, true
 }
 
 // Last returns the most recent snapshot (may be nil before the first Capture).
 func (p *Perceptor) Last() *Snapshot { return p.last.Load() }
+
+// potionReserve: bottles per family the bag keeps beside a full belt.
+var potionReserve = map[inventory.Potion]int{inventory.PotHP: 4, inventory.PotMP: 2, inventory.PotRV: 2}
+
+// mpPct: the mana percent against the true pool. MaxMana on this build omits the
+// gear's +mana — the pool read 209% (R76, owner: "mana potions exist for that
+// reason" — the drink-at-25% reflex and the leap's mana gate never fired). The
+// denominator is the larger of MaxMana and the highest mana ever held (a full
+// pool reveals the real maximum), re-based when MaxMana itself changes.
+func (p *Perceptor) mpPct(pu data.PlayerUnit) int {
+	p.lifeMu.Lock()
+	defer p.lifeMu.Unlock()
+	mana, _ := pu.FindStat(stat.Mana, 0)
+	maxMana, _ := pu.FindStat(stat.MaxMana, 0)
+	if maxMana.Value != p.manaBase {
+		p.manaBase, p.manaPeak = maxMana.Value, 0
+	}
+	if mana.Value > p.manaPeak {
+		p.manaPeak = mana.Value
+	}
+	den := maxMana.Value
+	if p.manaPeak > den {
+		den = p.manaPeak
+	}
+	if den <= 0 {
+		return 0
+	}
+	pct := mana.Value * 100 / den
+	if pct > 100 {
+		pct = 100
+	}
+	return pct
+}
+
+// ActBoss: the boss whose death ends each act's required quest chain.
+var ActBoss = map[npc.ID]int{
+	npc.Andariel: 1,
+	npc.Duriel:   2,
+	npc.Mephisto: 3,
+	npc.Diablo:   4,
+	npc.BaalCrab: 5,
+}
+
+// AllyCode: monstats codes of the player's own traps and summons (assassin
+// sentries — vanilla and the mod's Snowlash/Glacial Burst — and every summon
+// in combat's summon table: skeletons, golems, ravens, wolves, spirits...).
+func AllyCode(code string) bool {
+	switch code {
+	case "wakeofdestruction", "bladecreeper", "dopplezon":
+		return true
+	}
+	return strings.HasSuffix(code, "sentry") || summonCodes[code]
+}
+
+var summonCodes = combat.SummonCodes()
+
+func chebyshev(a, b data.Position) int {
+	dx, dy := a.X-b.X, a.Y-b.Y
+	if dx < 0 {
+		dx = -dx
+	}
+	if dy < 0 {
+		dy = -dy
+	}
+	if dx > dy {
+		return dx
+	}
+	return dy
+}

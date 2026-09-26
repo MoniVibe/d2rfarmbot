@@ -1,0 +1,20 @@
+[
+    {
+        "id": 90000,
+        "Key": "Test Fields",
+        "enUS": "The Test Fields",
+        "deDE": "The Test Fields (de)"
+    },
+    {
+        "id": 90001,
+        "Key": "To The Test Fields",
+        "enUS": "To The Test Fields",
+        "deDE": "To The Test Fields (de)"
+    },
+    {
+        "id": 90002,
+        "Key": "Test Camp",
+        "enUS": "Test Camp",
+        "deDE": "Test Camp (de)"
+    }
+]

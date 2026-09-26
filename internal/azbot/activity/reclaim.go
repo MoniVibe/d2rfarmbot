@@ -11,13 +11,12 @@ import (
 	"github.com/hectorgimenez/d2go/pkg/data"
 	"github.com/hectorgimenez/d2go/pkg/data/area"
 	"github.com/hectorgimenez/koolo/internal/azbot/arbiter"
-	"github.com/hectorgimenez/koolo/internal/azbot/journey"
+	"github.com/hectorgimenez/koolo/internal/azbot/moveto"
 	"github.com/hectorgimenez/koolo/internal/azbot/percept"
 	"github.com/hectorgimenez/koolo/internal/azbot/verbs"
 )
 
 type Reclaim struct {
-	j       *journey.Journey
 	clickAt time.Time
 	tries   int
 	rounds  int // failed hover-sweep rounds at the body
@@ -41,7 +40,7 @@ func (rc *Reclaim) Demand(s *percept.Snapshot) *arbiter.Demand {
 		return nil
 	}
 	// In town, bid only for a body that is HERE (the relog materializes it at the
-	// spawn); a far body from town is Relog's problem — Recover outranks Travel, so
+	// spawn); a far body from town is Relog's problem (a session relog) — Recover outranks Travel, so
 	// bidding on an unreachable corpse would deadlock her at the gate.
 	if s.Me.InTown && chebyshev(s.Me.Pos, s.Me.CorpsePos) > 150 {
 		return nil
@@ -60,7 +59,8 @@ func (rc *Reclaim) Step(ctx *Ctx) Verdict {
 		return Running
 	}
 	if !s.Me.CorpseFound {
-		rc.j, rc.tries = nil, 0
+		rc.tries = 0
+		forgetMove(rc.Name())
 		return Done // the body is reclaimed (or despawned) — capability recalibrates on the armed flip
 	}
 	me := s.Me.Pos
@@ -73,7 +73,7 @@ func (rc *Reclaim) Step(ctx *Ctx) Verdict {
 	}
 	if time.Since(rc.bestAt) > 75*time.Second {
 		rc.bestD, rc.bestAt = 0, time.Time{}
-		rc.j = nil
+		forgetMove(rc.Name()) // come at it fresh
 		rc.coolAt = time.Now().Add(20 * time.Second)
 		return Abandoned
 	}
@@ -98,23 +98,14 @@ func (rc *Reclaim) Step(ctx *Ctx) Verdict {
 		if hop != 0 && ctx.Mem.GetJSON(BorderKey(ctx.GR.MapSeed(), s.Me.Area, hop), &gate) && gate.X != 0 {
 			if chebyshev(me, gate) <= 10 {
 				// At the gate mouth: the wall is behind — push through the ribbon
-				// on the body's own bearing.
-				slideStride(ctx, s.Me.CorpsePos, 1200*time.Millisecond, 1, rc.Name())
+				// on the body's own bearing (the body lies beyond this grid's
+				// frame: MoveTo strides off its edge, or takes a clear step).
+				moveTo(ctx, s.Me.CorpsePos, moveto.Opts{Holder: rc.Name(), Purpose: moveto.Travel, MaxHold: 1200 * time.Millisecond, Fallback: true})
 				return Running
 			}
-			if ctx.Grid != nil {
-				goal := clampToGrid(gate, ctx.Grid)
-				if rc.j == nil || chebyshev(rc.j.Goal, goal) > 8 {
-					rc.j = journey.New(ctx.GR, ctx.Grid, goal, rc.Name())
-				}
-				st := rc.j.Step(ctx.M, ctx.P, ctx.Led)
-				if st.State == journey.NoPath || st.State == journey.Stalled {
-					slideStride(ctx, gate, 1200*time.Millisecond, 1, rc.Name())
-					rc.j = nil
-				}
-			} else {
-				slideStride(ctx, gate, 1200*time.Millisecond, 1, rc.Name())
-			}
+			// March the gate by planner; a refusal takes nav's best clear step
+			// toward it (the old wall-slide's job). No grid: dead reckoning.
+			moveTo(ctx, gate, moveto.Opts{Holder: rc.Name(), Purpose: moveto.Travel, Arrive: 5, MaxHold: 1200 * time.Millisecond, Fallback: true})
 			return Running
 		}
 		// No route or no learned gate: fall through to the direct journey —
@@ -132,33 +123,21 @@ func (rc *Reclaim) Step(ctx *Ctx) Verdict {
 	}
 	if guards >= 2 && d < 25 {
 		away := data.Position{X: me.X + (me.X-s.Me.CorpsePos.X)*3 + 7, Y: me.Y + (me.Y-s.Me.CorpsePos.Y)*3 - 7}
-		slideStride(ctx, away, 1500*time.Millisecond, 2, rc.Name())
+		moveTo(ctx, away, moveto.Opts{Holder: rc.Name(), Purpose: moveto.Flee, MaxHold: 1500 * time.Millisecond, MinGain: 2})
 		return Running
 	}
 	if d < 1 {
 		// Standing ON the body: her own sprite owns the cursor — a corpse under her
 		// feet never hovers (measured: pinned 0x0 sweeping forever). Step off first.
-		verbs.Stride{To: data.Position{X: me.X + 3, Y: me.Y + 3}, Hold: 600 * time.Millisecond, MinGain: 1}.
-			Do(ctx.M, ctx.GR, ctx.P, ctx.Led, rc.Name())
+		moveTo(ctx, data.Position{X: me.X + 3, Y: me.Y + 3}, moveto.Opts{Holder: rc.Name(), Purpose: moveto.Escape, MaxHold: 600 * time.Millisecond})
 		return Running
 	}
 	if d > 2 {
 		// TRUE adjacency required: chebyshev proximity counts THROUGH walls — she once
 		// hover-swept a corpse 5 tiles away on the far side of a trap-fence (the owner's
 		// screenshot). Arrive=2 makes the planner route AROUND the fence to really reach it.
-		if ctx.Grid != nil {
-			if rc.j == nil || chebyshev(rc.j.Goal, s.Me.CorpsePos) > 5 {
-				rc.j = journey.New(ctx.GR, ctx.Grid, s.Me.CorpsePos, rc.Name())
-				rc.j.Arrive = 2
-			}
-			st := rc.j.Step(ctx.M, ctx.P, ctx.Led)
-			if st.State == journey.NoPath || st.State == journey.Stalled {
-				slideStride(ctx, s.Me.CorpsePos, 1200*time.Millisecond, 1, rc.Name())
-				rc.j = nil
-			}
-		} else {
-			slideStride(ctx, s.Me.CorpsePos, 1200*time.Millisecond, 1, rc.Name())
-		}
+		// A refusal takes nav's best clear step toward the body (the old slide).
+		moveTo(ctx, s.Me.CorpsePos, moveto.Opts{Holder: rc.Name(), Purpose: moveto.Loot, Arrive: 2, MaxHold: 1200 * time.Millisecond, Fallback: true})
 		return Running
 	}
 	// At the body: hover-confirm and click. The corpse unit's own IsHovered is the
@@ -173,7 +152,7 @@ func (rc *Reclaim) Step(ctx *Ctx) Verdict {
 	by := int(float32((cp.X-cur.PlayerUnit.Position.X)+(cp.Y-cur.PlayerUnit.Position.Y))*9.9) + ctx.GR.GameAreaSizeY/2
 	for _, off := range []data.Position{{X: 0, Y: 0}, {X: 0, Y: -10}, {X: -10, Y: 0}, {X: 10, Y: 0}, {X: 0, Y: 10}, {X: 0, Y: -20}} {
 		cx, cy := bx+off.X, by+off.Y
-		if cx < 20 || cy < 20 || cx > ctx.GR.GameAreaSizeX-20 || cy > ctx.GR.GameAreaSizeY-20 {
+		if !verbs.ClickableLogical(ctx.GR, cx, cy) {
 			continue
 		}
 		ctx.M.AimPhysical(cx, cy)
@@ -194,7 +173,11 @@ func (rc *Reclaim) Step(ctx *Ctx) Verdict {
 			// Hover refuses to confirm and NOTHING stands on the body — corpses are
 			// BIG targets: click the projection blind. With any guard present a blind
 			// click is a punch, never a pickup.
-			ctx.M.BareClick(bx, by)
+			// Pulled off the HUD along the ray from her (step 11: a body just
+			// south of the bar made this a mini-menu click).
+			if cx, cy, ok := verbs.ClampClickLogical(ctx.GR, bx, by); ok {
+				ctx.M.BareClick(cx, cy)
+			}
 			rc.clickAt = time.Now()
 		case rc.rounds >= 4:
 			// This angle is spent: give the grant back honestly, cool briefly, and
@@ -204,8 +187,7 @@ func (rc *Reclaim) Step(ctx *Ctx) Verdict {
 			return Abandoned
 		default:
 			// Round 1: step off and re-approach from a new angle.
-			verbs.Stride{To: data.Position{X: me.X + 6, Y: me.Y - 6}, Hold: 800 * time.Millisecond}.
-				Do(ctx.M, ctx.GR, ctx.P, ctx.Led, rc.Name())
+			moveTo(ctx, data.Position{X: me.X + 6, Y: me.Y - 6}, moveto.Opts{Holder: rc.Name(), Purpose: moveto.Escape, MaxHold: 800 * time.Millisecond})
 		}
 	}
 	return Running

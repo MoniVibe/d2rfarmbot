@@ -8,6 +8,12 @@ const (
 	CollisionTypeLowPriority
 	CollisionTypeMonster
 	CollisionTypeObject
+	// Fused-map cell types (cmd/azbot map fusion; prices in azbot/mapfuse). The
+	// first three are walkable at a per-step surcharge; PriorBlocked is a wall.
+	CollisionTypeUnknown      // no source knows: optimistic, penalized
+	CollisionTypeUnknownWall  // unknown, and an UNTRUSTED prior says wall: penalized harder
+	CollisionTypePriorWalk    // unobserved, a TRUSTED prior says walkable: lightly penalized
+	CollisionTypePriorBlocked // unobserved, a TRUSTED prior says wall: not walkable
 )
 
 type CollisionType uint8
@@ -62,7 +68,12 @@ func (g *Grid) RelativePosition(p data.Position) data.Position {
 
 func (g *Grid) IsWalkable(p data.Position) bool {
 	p = g.RelativePosition(p)
-	return p.X >= 0 && p.X < g.Width && p.Y >= 0 && p.Y < g.Height && g.CollisionGrid[p.Y][p.X] != CollisionTypeNonWalkable
+	return p.X >= 0 && p.X < g.Width && p.Y >= 0 && p.Y < g.Height && g.CollisionGrid[p.Y][p.X].Walkable()
+}
+
+// Walkable: everything but a wall (observed, or a trusted prior's).
+func (c CollisionType) Walkable() bool {
+	return c != CollisionTypeNonWalkable && c != CollisionTypePriorBlocked
 }
 
 func (g *Grid) Copy() *Grid {

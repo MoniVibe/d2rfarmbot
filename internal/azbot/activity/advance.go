@@ -11,21 +11,29 @@
 //     every crossing she ever makes, both sides of the door, however she made it.
 //  2. The live room graph's cross-level border rooms (walkable borders, readable from
 //     anywhere in the area).
-//  3. Nothing known → SEARCH: tour the area on a persistent heading and walk through
-//     unknown entrance units on sight — the wrong cave teaches its own way back.
+//  3. Nothing known → SEARCH: walk the coverage frontier (the one coverage model,
+//     coverage.go — nearest-by-path unseen ground, leaning toward the projected exit)
+//     and through unknown entrance units on sight — the wrong cave teaches its own
+//     way back.
 package activity
 
 import (
 	"fmt"
 	"math"
+	"sort"
 	"time"
 
 	"github.com/hectorgimenez/d2go/pkg/data"
 	"github.com/hectorgimenez/d2go/pkg/data/area"
+	"github.com/hectorgimenez/d2go/pkg/data/mode"
+	"github.com/hectorgimenez/d2go/pkg/data/npc"
 	"github.com/hectorgimenez/koolo/internal/azbot/arbiter"
-	"github.com/hectorgimenez/koolo/internal/azbot/journey"
+	"github.com/hectorgimenez/koolo/internal/azbot/coverage"
+	"github.com/hectorgimenez/koolo/internal/azbot/gamedata"
 	"github.com/hectorgimenez/koolo/internal/azbot/memory"
+	"github.com/hectorgimenez/koolo/internal/azbot/moveto"
 	"github.com/hectorgimenez/koolo/internal/azbot/percept"
+	"github.com/hectorgimenez/koolo/internal/azbot/route"
 	"github.com/hectorgimenez/koolo/internal/azbot/verbs"
 	"github.com/hectorgimenez/koolo/internal/game"
 )
@@ -102,6 +110,14 @@ var areaMlvl = map[area.ID]int{
 func ExpWorthwhile(clvl int, ar area.ID) bool {
 	ml, ok := areaMlvl[ar]
 	if !ok {
+		// The mod's levels.txt knows every area (owner, R44: "it then went to rampage
+		// on the map" — Act 2 areas were missing from the table, so every Act 2 fight
+		// read as worth the 45-tile hunt at clvl 30 against mlvl 16-18).
+		if lv := gamedata.Get().Level(int(ar)); lv != nil && lv.MonLvl[0] > 0 {
+			ml, ok = lv.MonLvl[0], true
+		}
+	}
+	if !ok {
 		return true // unknown ground: assume it pays
 	}
 	return clvl-ml <= 3
@@ -128,7 +144,8 @@ func Act1Itinerary() []Leg {
 func Act2Itinerary() []Leg {
 	return []Leg{
 		{area.LutGholein, 1},
-		{area.SewersLevel1Act2, 22}, {area.SewersLevel2Act2, 22}, {area.SewersLevel3Act2, 22},
+		// The Sewers (Radament) are optional — a skill book, not the campaign:
+		// dropped 2026-09-26 for speed (owner: "the least amount of time").
 		{area.RockyWaste, 23}, {area.DryHills, 24},
 		{area.HallsOfTheDeadLevel1, 24}, {area.HallsOfTheDeadLevel2, 25}, {area.HallsOfTheDeadLevel3, 25},
 		{area.FarOasis, 25},
@@ -137,7 +154,7 @@ func Act2Itinerary() []Leg {
 		{area.ClawViperTempleLevel1, 28}, {area.ClawViperTempleLevel2, 29},
 		{area.HaremLevel1, 29}, {area.HaremLevel2, 29},
 		{area.PalaceCellarLevel1, 29}, {area.PalaceCellarLevel2, 30}, {area.PalaceCellarLevel3, 30},
-		{area.ArcaneSanctuary, 30}, {area.CanyonOfTheMagi, 31},
+		{area.ArcaneSanctuary, 30}, {area.CanyonOfTheMagi, 30},
 	}
 }
 
@@ -145,6 +162,43 @@ func Act2Itinerary() []Leg {
 // supported now; later acts intentionally fall back to Act 1 until their quest
 // gates and area-specific route are modeled instead of being guessed.
 func CampaignItinerary(start area.ID) []Leg {
+	return gateByMonsterLevel(campaignLegs(start))
+}
+
+// gateSlack: a leg opens at its monster level + this (normal difficulty).
+const gateSlack = 3
+
+// gateByMonsterLevel lowers each leg's level gate to the mod's own monster
+// level + gateSlack (2026-09-26: Inner Cloister's monsters are level 10 and the
+// gate was 21 — a level-20 trapper wandered Jail 3 for half an hour "grinding"
+// for a door she could have taken). Gates only ever go down; without the
+// tables the hand-set gates stand.
+func gateByMonsterLevel(legs []Leg) []Leg {
+	db := gamedata.Get()
+	out := append([]Leg(nil), legs...)
+	for i := range out {
+		if db == nil {
+			break
+		}
+		if lv := db.Level(int(out[i].Area)); lv != nil && lv.MonLvl[0] > 0 {
+			if g := lv.MonLvl[0] + gateSlack; g < out[i].MinLevel {
+				out[i].MinLevel = g
+			}
+		}
+	}
+	return out
+}
+
+func campaignLegs(start area.ID) []Leg {
+	switch start.Act() {
+	case 5:
+		return Act5Itinerary()
+	case 4:
+		return Act4Itinerary()
+	}
+	if start.Act() == 3 {
+		return Act3Itinerary()
+	}
 	if start.Act() == 2 {
 		return Act2Itinerary()
 	}
@@ -152,8 +206,20 @@ func CampaignItinerary(start area.ID) []Leg {
 }
 
 type Advance struct {
-	Itinerary   []Leg
-	campaignAct int // saved frontier namespace; prevents Act 1 indices leaking into Act 2
+	wpProg     padProgress      // the pad approach's progress clock (fights excluded)
+	claimTried map[area.ID]bool // panel-claimed pads already probed this run
+	bossHunt   bool             // Demand saw a living act boss on this level (huntBoss)
+	bossNoted  area.ID          // the boss hunt was ledgered in this area
+	wpWalkArea area.ID          // the area whose pad wpWalkAt is walking to
+	// quest legs (quest.go): per seed.area, when the hold began and whether it ended.
+	questSince   map[string]time.Time
+	questDone    map[string]bool
+	questForever map[area.ID]bool // quest legs ended in this save (persisted: quest.go)
+	relogAsked   map[area.ID]bool // a new game was requested for this quest area
+	questSeed    uint             // map seed the quest maps belong to (set in Step)
+	questCap     int              // first unfinished quest leg index at or behind the frontier; -1 none (refreshed each Step)
+	Itinerary    []Leg
+	campaignAct  int // saved frontier namespace; prevents Act 1 indices leaking into Act 2
 
 	idx int // current position on the itinerary (highest adopted)
 	// frontier: THE CAMPAIGN'S FRONT LINE (the owner, 02:16: "should we have
@@ -165,13 +231,13 @@ type Advance struct {
 	frontier     int
 	frontierRead bool
 	tgtFromMap   bool // current border target came from the LYING map oracle (strike accounting)
-	// visited: search's coverage ledger — 20-boxes walked, per area, process-
-	// lifetime (survives town re-entries; the same-spots loop, 21:50).
-	visited   map[area.ID]map[[2]int]int
+	// cov: search's walker on THE ONE COVERAGE MODEL (coverage.go) — the
+	// 20-box least-visited ledger it replaced lived here (the same-spots
+	// loop, 21:50); seen tiles now persist per seed and area in the store.
+	cov       covWalker
 	burstAt   time.Time // one-shot door burst rate limit (22:44)
 	huntLogAt time.Time // unfiltered-hover naming rate limit (23:00)
 	legStart  data.Position
-	j         *journey.Journey
 	grid      *game.Grid // regrown grid (rooms stream in as she walks)
 	regridAt  time.Time
 	bestDist  int
@@ -185,7 +251,16 @@ type Advance struct {
 	memoryEntranceAt time.Time
 	memoryEntranceID data.UnitID
 	memoryEntranceN  int
-	heading          int // search-mode tour bearing
+	// clicks: the per-entrance click budget, reset per leg (hop) — the trace's
+	// cap of 3 never reset and a door "deaf" at 1.4s was a door forever.
+	clicks route.ClickBudget
+	// seenArea/arrival: THE ARRIVAL DOOR (trace of 2ad968d: the stairs back up
+	// to Lair L1 were taken for the L3 exit; the Far Oasis door walked into by
+	// the search) — every area entry records where she landed and from where.
+	seenArea area.ID
+	arrival  arrivalDoor
+	pickNote string // last door-pick evidence logged (dedupe)
+	heading  int    // search-mode tour bearing
 	// border-room cache (the room-graph read is a few hundred RPMs; 2s is plenty fresh)
 	extRooms map[area.ID][]game.TileRect
 	extAt    time.Time
@@ -203,11 +278,30 @@ type Advance struct {
 	// P-10 waypoint state: wpAt cools failed/spent ride attempts; wpWalkAt
 	// bounds the walk-to-the-pad detour so an unreachable pad cannot own the
 	// march forever; wpTouched cools the field TOUCH ritual per area.
-	wpAt        time.Time
-	wpWalkAt    time.Time
-	wpHoldUntil time.Time // failed town ride quarantines the gate march until a retry is due
-	wpFailN     int
-	wpTouched   map[area.ID]time.Time
+	wpAt           time.Time
+	wpWalkAt       time.Time
+	wpHoldUntil    time.Time // failed town ride quarantines the gate march until a retry is due
+	wpFailN        int
+	wpTouched      map[area.ID]time.Time
+	wpNoted        area.ID          // the area whose waypoint objective was last announced
+	staffNoted     bool             // the Horadric Staff was seen held (the artifact legs are over)
+	townNoted      bool             // the leaving-town diagnostic was logged this visit
+	tombTried      bool             // the true-tomb pick ran (R66: it never did in the Canyon)
+	wpDead         map[area.ID]bool // areas whose map pad preset proved empty (persisted per seed)
+	tombSeed       uint
+	tombWrong      map[area.ID]bool       // tombs swept without a live Orifice (persisted per seed)
+	tombAt         time.Time              // when the current tomb sweep began
+	tombSettled    bool                   // a live Orifice was found
+	hopClickAt     time.Time              // the last portal-hop click (a 2s beat)
+	hopNoted       string                 // the portal-hop objective last announced
+	journalTried   map[data.Position]bool // map guesses for the journal already stood at
+	journalWalkFor data.Position
+	journalWalkAt  time.Time
+	wingCenter     data.Position // the Sanctuary pad the wing search radiates from
+	wingIdx        int
+	wingAt         time.Time
+	wingDone       map[int]bool // wings searched on this seed (persisted)
+	arcaneSeed     uint
 	// P-5.3a THE CROSSING DRIVE: between the door facts the area read is
 	// NOISE — while driving, geometry is the only truth.
 	driving   bool
@@ -255,9 +349,20 @@ type Advance struct {
 	// escalation ladder (escalate.go) — how Advance CONSUMES repeated
 	// stalls / watchdog verdicts for one committed intent, climbing to a
 	// different remedy each time instead of just being cooled. Flag-gated.
-	ladRung ladderRung
-	ladKey  string
-	ladAt   time.Time
+	lad        route.Ladder
+	ladPending bool // climbed but not yet acted on (applyRung)
+	// disbelief: doors the ladder convicted, each with an expiry — never
+	// session-long, so a hint gets a second look as rooms stream in.
+	disbelief route.Disbelief
+	// door bookkeeping for the ledger: the source last marched, implausible
+	// hints already reported this area, and the exploration bias a lying map
+	// hint still offers (its relative place in the level).
+	doorSrc  string
+	doorPos  data.Position
+	rejSeen  map[string]bool
+	exitBias data.Position
+	biasHop  area.ID
+	extGrid  *game.Grid // the grid extRooms was read against; a regrow re-reads now
 }
 
 // FrontierFor is the P-5F hint: the itinerary leg the march owns at this
@@ -289,16 +394,19 @@ func NewAdvance(legs []Leg) *Advance {
 	if len(legs) > 0 && legs[0].Area != 0 {
 		act = legs[0].Area.Act()
 	}
-	return &Advance{Itinerary: legs, campaignAct: act, bestDist: 1 << 30, bestAt: time.Now()}
+	return &Advance{Itinerary: legs, campaignAct: act, bestDist: 1 << 30, bestAt: time.Now(), questCap: -1}
 }
 
 func (a *Advance) Name() string { return "advance" }
 
 func (a *Advance) resetLeg(at data.Position) {
-	a.j, a.grid = nil, nil
+	forgetMove(a.Name()) // the next march step plans afresh
+	a.grid = nil
 	a.bestDist, a.bestAt = 1<<30, time.Now()
 	a.contactAt, a.clickTry = time.Time{}, 0
 	a.memoryEntranceAt, a.memoryEntranceID, a.memoryEntranceN = time.Time{}, 0, 0
+	a.clicks.Reset()
+	a.pickNote = ""
 	a.legStart = at
 	a.extRooms, a.extAt = nil, time.Time{}
 	// NIGHT-2 AUDIT FINDING 6: roadS was monotonic per key and never reset —
@@ -319,8 +427,28 @@ func (a *Advance) place(ar area.ID) int {
 }
 
 func (a *Advance) Demand(s *percept.Snapshot) *arbiter.Demand {
+	sanctuaryClock(s, time.Now())
+	a.followAct(s)
+	// A pad approach belongs to its area (2026-09-26: the Outer Cloister touch
+	// was preempted by the ride home; its clock rode into town, read as a
+	// spent town-pad deadline, and she walked out through Blood Moor).
+	if s.Valid && !a.wpWalkAt.IsZero() && s.Me.Area != a.wpWalkArea {
+		a.wpWalkAt = time.Time{}
+	}
+	// R66: in the Canyon the itinerary ended there, Advance never bid, and the
+	// true-tomb pick (in Step) never ran. One bid lets Step append the tomb leg.
+	if s.Valid && (!a.tombTried && (s.Me.Area == area.CanyonOfTheMagi || isTomb(s.Me.Area)) || isTomb(s.Me.Area) && !a.tombSettled) {
+		return &arbiter.Demand{Who: a.Name(), Class: arbiter.ClassTravel, Urgency: 0.4,
+			Commit: arbiter.Commitment{MinHold: time.Second}}
+	}
 	if !s.Valid || len(a.Itinerary) < 2 {
 		return nil
+	}
+	// A quest area with its quest unfinished: bid, so Step runs the quest hook
+	// (R17: the capped march "reached" Maggot Lair 3 and never bid again).
+	if !s.Me.InTown && s.Me.HPPct >= 50 && a.questWanted(s.Me.Area) {
+		return &arbiter.Demand{Who: a.Name(), Class: arbiter.ClassTravel, Urgency: 0.4,
+			Commit: arbiter.Commitment{MinHold: 2 * time.Second}}
 	}
 	// A naked amazon with a corpse out there has ONE job and it is not marching —
 	// the recovery activities own her until the gear is back (run 24's near-miss).
@@ -331,9 +459,19 @@ func (a *Advance) Demand(s *percept.Snapshot) *arbiter.Demand {
 	// anywhere — seed-independent, unlike the hand-piloted road): bid unless the town
 	// errands are waiting. Town is safe, so the HP floor drops (no regen in town; a
 	// 58%-HP amazon once idled at the well forever waiting to feel better).
+	if !s.Me.InTown {
+		a.townNoted = false
+	}
 	if s.Me.InTown {
 		if ServicesPending(s) || s.Me.HPPct < 30 {
 			return nil
+		}
+		// R59 left town with the TP tome at 0 and no "scrolls" docket line: say
+		// what the docket saw each time the march takes the town (once per visit).
+		if !a.townNoted {
+			a.townNoted = true
+			townLog(fmt.Sprintf("leaving town: tp=%d id=%d gold=%d scrollsWork=%v cooled=%v free=%d",
+				s.Me.TPScrolls, s.Me.IDScrolls, s.Me.Gold, scrollWorks.Load(), servicesCooled(), s.Me.InvFree))
 		}
 		// A waypoint panel that stood but did not transition is a control-plane
 		// failure, not permission to walk out through Blood Moor. Keep Advance's
@@ -351,12 +489,23 @@ func (a *Advance) Demand(s *percept.Snapshot) *arbiter.Demand {
 		idx = a.frontier // the campaign's front line outranks his feet (02:16)
 	}
 	if idx >= len(a.Itinerary)-1 && s.Me.Area == a.Itinerary[len(a.Itinerary)-1].Area {
+		// THE BOSS HUNT (2026-09-26: at Catacombs 4 nobody bid — the grind
+		// finds no paying monster at level 22 and Andariel was never sought).
+		// On an act's boss level with the boss alive, the march IS the boss.
+		if _, ok := bossOf[s.Me.Area]; ok && campaignMode && !BossDown(s.Me.Area.Act()) {
+			a.bossHunt = true
+			// No march stamp: the evasive march would forbid Fight at the boss.
+			return &arbiter.Demand{Who: a.Name(), Class: arbiter.ClassTravel, Urgency: 0.4,
+				Commit: arbiter.Commitment{MinHold: 2 * time.Second}}
+		}
+		grindUntil = time.Now().Add(2 * time.Second)
 		return nil // the march is complete — grind the summit
 	}
 	if idx >= len(a.Itinerary)-1 {
 		idx = len(a.Itinerary) - 2 // off-itinerary at the last leg: still route back
 	}
 	if s.Me.Level < a.Itinerary[idx+1].MinLevel {
+		grindUntil = time.Now().Add(2 * time.Second)
 		return nil // under-leveled for the next leg: grind here (Fight/Loot/Explore bid on)
 	}
 	urg := 0.2 // above Explore's wander; Fight preempts by class — that IS the rampage
@@ -395,10 +544,20 @@ func (a *Advance) Demand(s *percept.Snapshot) *arbiter.Demand {
 // campIdx: the campaign index — the deeper of where he STANDS and where the
 // war has REACHED. Targets derive from this; routing still starts from his feet.
 func (a *Advance) campIdx() int {
-	if a.frontier > a.idx {
-		return a.frontier
+	c := a.idx
+	if a.frontier > c {
+		c = a.frontier
 	}
-	return a.idx
+	// An unfinished quest leg caps the campaign (quest.go): a frontier saved past
+	// Maggot Lair 3 must not skip the Staff of Kings chest.
+	// Targets are campIdx+1, so the cap sits one BEFORE the quest leg.
+	if a.questCap >= 0 && a.questCap-1 < c {
+		c = a.questCap - 1
+		if c < 0 {
+			c = 0
+		}
+	}
+	return c
 }
 
 func (a *Advance) campaignKey(char string) string {
@@ -439,6 +598,10 @@ func (a *Advance) syncFrontier(ctx *Ctx) {
 }
 
 func (a *Advance) Step(ctx *Ctx) Verdict {
+	if qc := a.questCapFor(ctx); qc != a.questCap {
+		a.questCap = qc
+		a.logQuestCap(ctx)
+	}
 	s := ctx.Snap
 	if !s.Valid {
 		return Running
@@ -447,10 +610,17 @@ func (a *Advance) Step(ctx *Ctx) Verdict {
 	if s.Me.InTown && time.Now().Before(a.wpHoldUntil) {
 		return Running
 	}
+	if a.bossHunt {
+		a.bossHunt = false
+		if v, ok := a.huntBoss(ctx); ok {
+			return v
+		}
+	}
 	CarryReach(ctx) // P-5.9: the march walks with the bow out
 	if a.lastArea == 0 {
 		a.lastArea = s.Me.Area
 	}
+	a.noteArrival(ctx, s.Me.Area, s.Me.Pos, s.Me.InTown)
 	// P-5.3a THE CROSSING DRIVE: between the door facts the AREA READ IS
 	// NOISE — the seam flickers faster than any push escapes it, and every
 	// read-driven reaction becomes an oscillator (00:58: push-pong, path 233,
@@ -469,7 +639,7 @@ func (a *Advance) Step(ctx *Ctx) Verdict {
 		default:
 			crossingBracketUntil = time.Now().Add(3 * time.Second)
 			NavDebug(ctx, a.driveTgt, "drive")
-			clickStride(ctx, a.driveTgt, 900*time.Millisecond, a.Name())
+			moveTo(ctx, a.driveTgt, marchOpts(ctx, a.Name(), 900*time.Millisecond))
 			return Running
 		}
 	}
@@ -502,6 +672,12 @@ func (a *Advance) Step(ctx *Ctx) Verdict {
 		}
 		a.idx = i
 		a.resetLeg(s.Me.Pos)
+		// A crossing is progress: the ladder, the convictions and the door
+		// bookkeeping all belonged to the area left behind.
+		a.lad, a.ladPending = route.Ladder{}, false
+		a.disbelief.Clear()
+		a.doorSrc, a.doorPos, a.rejSeen = "", data.Position{}, nil
+		a.exitBias, a.biasHop = data.Position{}, 0
 		a.lastArea, a.pendN = s.Me.Area, 0
 		// CROSSING IS NOT ARRIVAL (Travel's ribbon law, finally ported): before the
 		// next leg gets a thought, push CLEAR of the door — onward, in the crossing's
@@ -538,11 +714,12 @@ func (a *Advance) Step(ctx *Ctx) Verdict {
 			return Done // adopted AND geometrically clear — the next leg re-bids fresh
 		}
 		out := data.Position{X: me.X + a.clearDir.X*14, Y: me.Y + a.clearDir.Y*14}
-		// item 4: the planner knows the fences the raw click walks into; keep the
-		// click-stride only when there is no grid (or the flag is off).
-		if !a.journeyPush(ctx, out) {
-			clickStride(ctx, out, 1200*time.Millisecond, a.Name())
-		}
+		// item 4: the planner knows the fences the raw click walks into.
+		a.push(ctx, out, 1200*time.Millisecond)
+		return Running
+	}
+	// A quest leg holds its area until the artifact is taken (quest.go).
+	if a.questHold(ctx) {
 		return Running
 	}
 	if a.idx >= len(a.Itinerary)-1 && s.Me.Area == a.Itinerary[a.idx].Area {
@@ -616,8 +793,7 @@ func (a *Advance) Step(ctx *Ctx) Verdict {
 				}
 				if bd < 1<<30 {
 					if bd > 20 {
-						verbs.Stride{To: best.Pos, Hold: 1200 * time.Millisecond, MinGain: 1}.
-							Do(ctx.M, ctx.GR, ctx.P, ctx.Led, a.Name())
+						moveTo(ctx, best.Pos, moveto.Opts{Holder: a.Name(), Purpose: moveto.Travel, MaxHold: 1200 * time.Millisecond})
 					} else {
 						verbs.EnterPortal{Target: best.ID, TargetPos: best.Pos}.Do(ctx.M, ctx.GR, ctx.P, ctx.Led, a.Name())
 					}
@@ -645,6 +821,7 @@ func (a *Advance) Step(ctx *Ctx) Verdict {
 	// level-lawful campaign leg; intentLeg holds a committed target against a
 	// shallower recomputation. Flag OFF → rawIdx unchanged (legacy path).
 	rawIdx := minInt(a.campIdx()+1, len(a.Itinerary)-1)
+	rawIdx = a.skipHeldQuestLegs(ctx, rawIdx)
 	next := a.Itinerary[a.intentLeg(ctx, s, rawIdx)]
 
 	// P-10 THE NETWORK BEATS THE ROAD (the owner, 23:35: "she's not taking
@@ -652,6 +829,33 @@ func (a *Advance) Step(ctx *Ctx) Verdict {
 	// pad — the deepest level-lawful itinerary stop the panel shows lit. The
 	// panel's own list is the activation oracle; a spent or failed attempt
 	// cools 90 s and the gate march resumes unharmed.
+	// PORTAL FIRST (trace 2ad968d: after the unstick TP the return rode the
+	// waypoint and left her own portal standing): a live own portal in town
+	// goes back to where she was — the waypoint is only the fallback.
+	if s.Me.InTown && a.rerouteBegan.IsZero() && s.Me.HPPct >= 70 && !committedSeamHold() &&
+		!(s.Me.WeaponKind == "none" && s.Me.CorpseFound) { // Return's own guards
+		var best percept.PortalRef
+		bd := 1 << 30
+		fwd := minInt(a.campIdx()+1, len(a.Itinerary)-1)
+		for _, pt := range s.Portals {
+			if verbs.IsDeadDoor(pt.ID) || a.portalLeadsBack(s, pt, fwd) {
+				continue
+			}
+			if dd := chebyshev(s.Me.Pos, pt.Pos); dd < bd {
+				best, bd = pt, dd
+			}
+		}
+		if route.PortalFirst(true, bd != 1<<30, time.Now().Before(hotPortalUntil), ServicesPending(s), false) {
+			if bd > 20 {
+				moveTo(ctx, best.Pos, moveto.Opts{Holder: a.Name(), Purpose: moveto.Travel, MaxHold: 1200 * time.Millisecond})
+				return Running
+			}
+			ctx.Led.Append(verbs.Outcome{Verb: "door", Holder: a.Name(), Result: verbs.ResDone,
+				Evidence: fmt.Sprintf("portal-first: own portal id=%d at %d to area %d — entering before any waypoint", int(best.ID), bd, int(best.Dest))})
+			verbs.EnterPortal{Target: best.ID, TargetPos: best.Pos}.Do(ctx.M, ctx.GR, ctx.P, ctx.Led, a.Name())
+			return Running
+		}
+	}
 	if s.Me.InTown && time.Since(a.wpAt) > 90*time.Second {
 		dd := ctx.GR.GetData()
 		// THE MAP ORACLE NAMES THE PAD (00:04: run 88 never rode — live
@@ -699,7 +903,15 @@ func (a *Advance) Step(ctx *Ctx) Verdict {
 					if ctx.Mem != nil {
 						ctx.Mem.GetJSON(LitKey(charName, a.Itinerary[i].Area), &lit)
 					}
-					if lit {
+					if lit && !hotLanding(a.Itinerary[i].Area) {
+						wants = append(wants, a.Itinerary[i].Area)
+					} else if verbs.ClaimedLit(a.Itinerary[i].Area) && !a.claimTried[a.Itinerary[i].Area] && !hotLanding(a.Itinerary[i].Area) {
+						// The panel CLAIMS it lit (the owner lit it by hand): one probe
+						// ride per area per run; the landing alone records it lit.
+						if a.claimTried == nil {
+							a.claimTried = map[area.ID]bool{}
+						}
+						a.claimTried[a.Itinerary[i].Area] = true
 						wants = append(wants, a.Itinerary[i].Area)
 					} else {
 						probe = append(probe, a.Itinerary[i].Area)
@@ -718,6 +930,16 @@ func (a *Advance) Step(ctx *Ctx) Verdict {
 					ctx.Mem.GetJSON(LitKey(charName, a.Itinerary[i].Area), &lit)
 				}
 				if lit && a.Itinerary[i].Area != s.Me.Area {
+					// OFF-ROUTE PAD (R48: the Harem is next and opens from Lut
+					// Gholein itself; the staging ride took him to Lost City and
+					// the march turned around). The on-ramp must lie on the road:
+					// its first hop from here matches the target's.
+					if th, ph := nextHop(dd, s.Me.Area, next.Area), nextHop(dd, s.Me.Area, a.Itinerary[i].Area); th != 0 && ph != 0 && th != ph {
+						break
+					}
+					if hotLanding(a.Itinerary[i].Area) {
+						break // that pad just threw him out: walk
+					}
 					wants = append(wants, a.Itinerary[i].Area)
 					break
 				}
@@ -801,15 +1023,80 @@ func (a *Advance) Step(ctx *Ctx) Verdict {
 		if ad, ok := dd.Areas[s.Me.Area]; ok {
 			mapPads = append(append([]data.Object{}, dd.Objects...), ad.Objects...)
 		}
+		// A LIVE pad (unit id set) outranks the map's preset (owner, 2026-09-25:
+		// "it didnt take spider wp, despite being near it" — the objective walked to
+		// the map's pad 450 tiles north; the presets lie in the randomized areas).
+		sort.SliceStable(mapPads, func(i, j int) bool { return mapPads[i].ID != 0 && mapPads[j].ID == 0 })
 		litHere := false
 		if ctx.Mem != nil {
 			ctx.Mem.GetJSON(LitKey(ctx.GR.GetData().PlayerUnit.Name, s.Me.Area), &litHere)
+		}
+		// THE PAD'S OWN FLAME OUTRANKS THE LEDGER (owner, 2026-09-25: "it did not
+		// take the waypoint in arcane, the level literally starts on it"): the old
+		// proximity witness ledgered the Sanctuary pad lit on arrival, unclicked.
+		// A live pad reading anything but Opened is unlit, whatever the ledger says.
+		for _, ob := range dd.Objects {
+			if ob.IsWaypoint() && ob.ID != 0 && ob.Mode == mode.ObjectModeOpened {
+				notePadLit(s.Me.Area, ob.Position) // the road home by waypoint (Unload)
+			}
+		}
+		if lit, seen := padLitLive(dd.Objects); seen && !lit && litHere {
+			litHere = false
+			if a.wpNoted != s.Me.Area {
+				ctx.Led.Append(verbs.Outcome{Verb: "waypoint", Holder: a.Name(), Result: verbs.ResRefused,
+					Evidence: fmt.Sprintf("ledger said area %d lit, but the pad reads unlit — touching it", int(s.Me.Area))})
+			}
+		}
+		// WAYPOINT OBJECTIVE (the owner, 2026-09-25: "we're missing wp so we need
+		// the bot to be aware of wp taking as we progress" — Dry Hills, Halls 2,
+		// Sewers 2 and the Palace Cellar were walked unlit): an area whose mod
+		// levels.txt row carries a waypoint and which the ledger does not know as
+		// lit makes its pad an OBJECTIVE — any distance on the map, a longer walk
+		// budget — not a 70-tile convenience.
+		wpObjective := !litHere && areaHasWaypoint(s.Me.Area)
+		reach, budget := 70, 60*time.Second
+		if wpObjective {
+			reach, budget = 1<<30, 150*time.Second
+			if a.wpNoted != s.Me.Area {
+				a.wpNoted = s.Me.Area
+				ctx.Led.Append(verbs.Outcome{Verb: "waypoint", Holder: a.Name(), Result: verbs.ResDone,
+					Evidence: fmt.Sprintf("objective: area %d has an unlit waypoint — touching it before the march", int(s.Me.Area))})
+			}
+		}
+		// THE FIELD RIDE FORWARD (2026-09-26: after a town trip she walked
+		// Blood Moor → Outer Cloister past four lit pads): standing in an area
+		// whose pad is lit, with a deeper lit pad ahead on the route, the pad
+		// here is the road forward.
+		if litHere && time.Since(a.wpAt) > 60*time.Second {
+			if dest := a.deepestLitAhead(ctx.Mem, ctx.GR.GetData().PlayerUnit.Name, s); dest != 0 {
+				for _, ob := range mapPads {
+					if !ob.IsWaypoint() {
+						continue
+					}
+					if d := chebyshev(s.Me.Pos, ob.Position); d > 6 && d <= 90 {
+						o := marchOpts(ctx, a.Name(), 1200*time.Millisecond)
+						o.AllowLeap = true
+						moveTo(ctx, ob.Position, o)
+						return Running
+					} else if d <= 6 {
+						a.wpAt = time.Now()
+						ctx.Led.Append(verbs.Outcome{Verb: "waypoint", Holder: a.Name(), Result: verbs.ResDone,
+							Evidence: fmt.Sprintf("ride forward: area %d pad -> area %d (the deepest lit pad ahead)", int(s.Me.Area), int(dest))})
+						verbs.UseWaypoint{Want: []area.ID{dest}}.Do(ctx.M, ctx.GR, ctx.P, ctx.Led, a.Name())
+						return Running
+					}
+					break
+				}
+			}
 		}
 		for _, ob := range mapPads {
 			if litHere {
 				break // in the ledger — no ritual needed, ever again
 			}
-			if ob.IsWaypoint() && chebyshev(s.Me.Pos, ob.Position) <= 70 {
+			if ob.IsWaypoint() && ob.ID == 0 && a.padPresetDead(ctx, s.Me.Area) {
+				continue // this map preset proved empty (R83: three walks to a padless spot)
+			}
+			if ob.IsWaypoint() && chebyshev(s.Me.Pos, ob.Position) <= reach {
 				// Radius 40→70, budget 30s→60s (the owner, 13:14: "it also
 				// didn't take the stony waypoint, had enough time to do that"
 				// — he died in the moor an hour later and had to WALK back;
@@ -821,20 +1108,25 @@ func (a *Advance) Step(ctx *Ctx) Verdict {
 					// Bounded approach: 60 s of not reaching the pad concedes it
 					// (a fenced pad must not own the march — the corner lesson).
 					if a.wpWalkAt.IsZero() {
-						a.wpWalkAt = time.Now()
+						a.wpWalkAt, a.wpWalkArea = time.Now(), s.Me.Area
+						a.wpProg = padProgress{}
 					}
-					if time.Since(a.wpWalkAt) > 60*time.Second {
+					if a.wpProg.stalled(chebyshev(s.Me.Pos, ob.Position), time.Now(), budget/3) || time.Since(a.wpWalkAt) > 4*budget {
 						a.wpTouched[s.Me.Area] = time.Now()
 						a.wpWalkAt = time.Time{}
+						ctx.Led.Append(verbs.Outcome{Verb: "waypoint", Holder: a.Name(), Result: verbs.ResRefused,
+							Evidence: fmt.Sprintf("area %d: pad at %d tiles not reached in %s — conceded for 10 min", int(s.Me.Area), chebyshev(s.Me.Pos, ob.Position), budget)})
 					} else {
 						NavDebug(ctx, ob.Position, "wp-touch")
-						if TravelVault(ctx, ob.Position) { // the pad is worth a leap too
-							return Running
-						}
-						clickStride(ctx, ob.Position, 1200*time.Millisecond, a.Name())
+						o := marchOpts(ctx, a.Name(), 1200*time.Millisecond)
+						o.AllowLeap = true // the pad is worth a leap too
+						moveTo(ctx, ob.Position, o)
 						return Running
 					}
 					break
+				}
+				if _, seen := padLitLive(dd.Objects); ob.ID == 0 && !seen {
+					a.markPadPresetDead(ctx, s.Me.Area) // stood at the preset: no live pad
 				}
 				a.wpTouched[s.Me.Area] = time.Now()
 				a.wpWalkAt = time.Time{}
@@ -865,18 +1157,30 @@ func (a *Advance) Step(ctx *Ctx) Verdict {
 					// deaf verdict must never eat a proven activation)
 					ctx.Mem.PutJSON(LitKey(ctx.GR.GetData().PlayerUnit.Name, s.Me.Area), memory.ScopeForever,
 						memory.Provenance{Source: "measured", Evidence: "panel stood at this pad"}, true)
+					ctx.Led.Append(verbs.Outcome{Verb: "waypoint", Holder: a.Name(), Result: verbs.ResDone,
+						Evidence: fmt.Sprintf("lit: area %d pad activated (panel stood) — in the ledger forever", int(s.Me.Area))})
 				}
 				return Running
 			}
 		}
 	}
 
+	// PORTAL HOPS (owner, 2026-09-25: "harem, arcane sanctuary, tomb thing,
+	// duriel"): two Act 2 roads are objects, not level warps — the Sanctuary's
+	// portal in Palace Cellar 3, and the red portal Horazon's Journal opens
+	// once the Summoner is dead (Imbibe reads the journal; Fight kills him).
+	if v, ok := a.portalHop(ctx, routeVia(s.Me.Area, next.Area)); ok {
+		return v
+	}
 	d := ctx.GR.GetData()
-	hop := nextHop(d, s.Me.Area, next.Area)
+	hop := nextHop(d, s.Me.Area, routeVia(s.Me.Area, next.Area))
 	if hop == 0 {
 		return Abandoned // no topological route — honest refusal
 	}
 	me := s.Me.Pos
+	if deliberate {
+		a.applyRung(ctx) // a watchdog verdict climbed the ladder while we were cooled
+	}
 
 	// THE ROAD REPLAY (P-5.2a): a proven walk outranks every derivation —
 	// find the furthest crumb we can still see ourselves near, then walk the
@@ -922,10 +1226,9 @@ func (a *Advance) Step(ctx *Ctx) Verdict {
 					// P-2.11(4): the road is the best possible runway — leap
 					// along it every 6s and walk the gaps (11:20: "run there
 					// and leap it").
-					if TravelVault(ctx, look) {
-						return Running
-					}
-					clickStride(ctx, look, 1100*time.Millisecond, a.Name())
+					o := marchOpts(ctx, a.Name(), 1100*time.Millisecond)
+					o.AllowLeap = true
+					moveTo(ctx, look, o)
 					return Running
 				}
 			}
@@ -934,7 +1237,11 @@ func (a *Advance) Step(ctx *Ctx) Verdict {
 
 	tgt, known := a.borderTarget(ctx, d, hop, me)
 	if !known {
-		a.search(ctx, d, me)
+		// UNKNOWN DOOR (relay R1, run w): never march a zero or a phantom —
+		// explore. The search walks the coverage frontier and any unknown
+		// entrance on sight; a lying map hint still biases which frontier.
+		a.seedSearchBias(ctx, me, hop)
+		a.search(ctx, d, me, hop)
 		return Running
 	}
 	a.marchGoal, a.marchGoalAt = tgt, time.Now() // P-5.7: the retreat may lean on this
@@ -963,14 +1270,14 @@ func (a *Advance) Step(ctx *Ctx) Verdict {
 		// hand-back below (ALTERNATE door → PORTAL reroute → the next itinerary
 		// option), so the hard-won crossing epistemology stays the backstop.
 		if deliberate && a.intent.Active() {
-			switch a.escalate(ctx.Led, a.ladderKey(), fmt.Sprintf("60s stall at (%d,%d)", tgt.X, tgt.Y)) {
-			case rungReplan:
-				a.j, a.grid = nil, nil // force a Journey replan next tick
-				a.bestAt = time.Now()  // one fresh plan gets its own clock
+			r := a.escalate(ctx.Led, a.ladderKey(), fmt.Sprintf("60s stall at (%d,%d)", tgt.X, tgt.Y))
+			a.applyRung(ctx)
+			if r == route.Replan {
+				a.bestAt = time.Now() // one fresh plan gets its own clock
 				return Running
 			}
-			// rung ALTERNATE and above: fall through to the strike + Abandon path,
-			// which disbelieves this exit and hands the march to the next option.
+			// rung ALTERNATE and above: acted on, then the strike + Abandon path
+			// below still runs as the backstop.
 		}
 		// A WASTED LEG IS A STRIKE (the owner, 21:17: "trying to traverse
 		// dark wood from a wrong place, just stuck there"): the map oracle
@@ -1042,14 +1349,9 @@ func (a *Advance) Step(ctx *Ctx) Verdict {
 	// directly — cross() owns the band; the wall-slide handles the posts.
 	if ed > 12 {
 		// THE MAZE SEARCH RELAY: while armed, the coverage search owns the
-		// march — real streamed ground, least-visited bearings, no map lies.
+		// march — real streamed ground, the unseen frontier, no map lies.
 		if time.Now().Before(a.searchUntil) {
-			a.search(ctx, d, me)
-			return Running
-		}
-		// P-2.11(4): the march leaps too — 12 tiles toward the door every 6s
-		// when the pool affords it; the journey walks the gaps.
-		if TravelVault(ctx, tgt) {
+			a.search(ctx, d, me, hop)
 			return Running
 		}
 		// P-5.5b RETIRED AT 01:45 (nav.png: the map grid does not even COVER
@@ -1060,17 +1362,16 @@ func (a *Advance) Step(ctx *Ctx) Verdict {
 		if a.grid == nil {
 			a.grid = ctx.Grid
 		}
-		if a.grid == nil { // no grid at all (build failed): walk by dead reckoning
-			verbs.Stride{To: tgt, Hold: 1200 * time.Millisecond, MinGain: 1}.
-				Do(ctx.M, ctx.GR, ctx.P, ctx.Led, a.Name())
+		// P-2.11(4): the march leaps too — ~12 tiles along the route to the door
+		// every 6s when the pool affords it; the journey walks the gaps. With no
+		// grid at all (build failed) MoveTo walks by dead reckoning; a door off
+		// the grid's frame is planned to the frame's edge.
+		st := moveToOn(ctx, a.grid, tgt, moveto.Opts{Holder: a.Name(), Purpose: moveto.Travel, Arrive: 5,
+			AllowLeap: true, MaxHold: 1200 * time.Millisecond})
+		if a.grid == nil {
 			return Running
 		}
-		goal := clampToGrid(tgt, a.grid)
-		if a.j == nil || chebyshev(a.j.Goal, goal) > 8 {
-			a.j = journey.New(ctx.GR, a.grid, goal, a.Name())
-		}
-		st := a.j.Step(ctx.M, ctx.P, ctx.Led)
-		if st.State == journey.NoPath || st.State == journey.Stalled {
+		if stalled(st) {
 			a.farBlockN++
 			if a.farBlockN >= 4 {
 				// Four refusals through unstreamed rooms: the planner is blind
@@ -1079,15 +1380,16 @@ func (a *Advance) Step(ctx *Ctx) Verdict {
 				a.searchUntil = time.Now().Add(20 * time.Second)
 				ctx.Led.Append(verbs.Outcome{Verb: "nav", Holder: a.Name(), Result: verbs.ResRefused,
 					Evidence: fmt.Sprintf("far journey blind at (%d,%d) — the maze search takes the march 20s", tgt.X, tgt.Y)})
-				a.search(ctx, d, me)
+				a.search(ctx, d, me, hop)
 				return Running
 			}
 			if time.Since(a.regridAt) > 8*time.Second && ctx.Regrid != nil {
 				a.grid = ctx.Regrid()
 				a.regridAt = time.Now()
-				a.j = journey.New(ctx.GR, a.grid, clampToGrid(tgt, a.grid), a.Name())
+				forgetMove(a.Name())
 			}
-			clickStride(ctx, tgt, 1200*time.Millisecond, a.Name())
+			// No route (yet): the click gait — the game's pathfinder walks it.
+			moveToOn(ctx, a.grid, tgt, marchOpts(ctx, a.Name(), 1200*time.Millisecond))
 		} else {
 			a.farBlockN = 0
 		}
@@ -1116,20 +1418,47 @@ func mapWalk(d game.Data, a1, a2 area.ID, p data.Position) bool {
 	return false
 }
 
-// borderTarget resolves the door toward hop: learned fact, then live border rooms.
+// borderTarget resolves the door toward hop: learned fact, map hint (or the live
+// entrance beside it), then live border rooms — the first one that is PLAUSIBLE
+// for the level she stands in (route.PickDoor). None plausible is "unknown", and
+// the caller explores. Relay R1, run w: the 42->56 hint was (15080,6580), 9450
+// tiles outside Dry Hills, and nothing checked it — the march pinned for 20 min.
+// Evaluated every call, never cached: a hint rejected now is re-judged next tick,
+// and the border rooms are re-read as soon as the grid regrows.
 func (a *Advance) borderTarget(ctx *Ctx, d game.Data, hop area.ID, me data.Position) (data.Position, bool) {
-	a.tgtFromMap = false // stamped true only on the map-oracle branch below
+	a.tgtFromMap = false // stamped true only when a map-sourced door wins
+	cur := d.PlayerUnit.Area
+	var cands []route.Candidate
 	if ctx.Mem != nil {
 		var p data.Position
-		if ctx.Mem.GetJSON(BorderKey(ctx.GR.MapSeed(), d.PlayerUnit.Area, hop), &p) && p.X != 0 {
-			return p, true
+		if ctx.Mem.GetJSON(BorderKey(ctx.GR.MapSeed(), cur, hop), &p) && p.X != 0 {
+			cands = append(cands, route.Candidate{Src: "fact", Pos: p})
 		}
 	}
 	// THE MAP NAMES EVERY EXIT — entrances included (01:10: she toured the
 	// Stony border wall-hugging in search of stairs the seed server had
 	// named since attach). Mapped exits lie by a few tiles (the farmbot
 	// law), but the door band's drive and the entrance ritual absorb that.
-	if ad, ok := d.Areas[d.PlayerUnit.Area]; ok {
+	// THE MAP'S WALKABLE BORDER (2026-09-26): for a walk-through neighbour the
+	// true grids name the gap where the two level frames touch.
+	if ca, ok := d.Areas[cur]; ok {
+		if ha, ok := d.Areas[hop]; ok {
+			walk := true
+			for _, lv := range ca.AdjacentLevels {
+				if lv.Area == hop && lv.IsEntrance {
+					walk = false
+				}
+			}
+			if walk {
+				if p, ok := mapEdgeExit(ca.Grid, ha.Grid, me); ok {
+					cands = append(cands, route.Candidate{Src: "map-edge", Pos: p})
+				}
+			}
+		}
+	}
+	var mapHint data.Position
+	goal := a.doorGoal(ctx, d, hop) // destination facts: arrival door, neighbours, wrong landings
+	if ad, ok := d.Areas[cur]; ok {
 		for _, lv := range ad.AdjacentLevels {
 			if lv.Area == hop && (lv.Position.X != 0 || lv.Position.Y != 0) {
 				if CursedNear(lv.Position) {
@@ -1138,7 +1467,7 @@ func (a *Advance) borderTarget(ctx *Ctx, d game.Data, hop area.ID, me data.Posit
 				}
 				if ctx.Mem != nil { // durable strikes (21:52): a proven lie stays proven
 					n := 0
-					ctx.Mem.GetJSON(fmt.Sprintf("badexit.%d.%d.%d", ctx.GR.MapSeed(), int(d.PlayerUnit.Area), int(hop)), &n)
+					ctx.Mem.GetJSON(fmt.Sprintf("badexit.%d.%d.%d", ctx.GR.MapSeed(), int(cur), int(hop)), &n)
 					if n >= 2 {
 						break
 					}
@@ -1147,42 +1476,132 @@ func (a *Advance) borderTarget(ctx *Ctx, d game.Data, hop area.ID, me data.Posit
 				// not a plausible target for this hop. This catches the Sewer 3
 				// return-stairs collision: the map put 49->50 on the exact fact
 				// already measured for 49->48, so marching there simply ascended.
-				if a.mapHintConflictsWithKnownDoor(ctx, d, hop, lv.Position) {
+				if a.mapHintConflictsWithKnownDoor(ctx, d, hop, lv.Position) || goal.NearForeignFact(lv.Position) {
 					break
 				}
-				a.tgtFromMap = true
+				mapHint = lv.Position
 				// The map position is a topology hint, not a clickable doorway.
 				// On this mod the entrance unit can be tens of tiles away from
 				// that hint (Jail 1 -> Jail 2 measured 63 tiles away).  If the
 				// live snapshot already exposes an entrance close to the hint,
 				// steer to that unit so the planner does not pin itself against
 				// the false map point and never reach cross().
-				if ent, ok := nearestLiveEntrance(d.Entrances, lv.Position, 96); ok {
-					return ent.Position, true
+				// DESTINATION-AWARE (trace 2ad968d, Lair L2): the entrance nearest
+				// a false hint was the stairs BACK UP — never pick a door known or
+				// suspected to lead anywhere but the hop.
+				ent, note, ok := route.ChooseEntrance(entranceCands(d.Entrances), lv.Position, 96, goal)
+				if ok {
+					cands = append(cands, route.Candidate{Src: "map-entrance", Pos: ent.Pos})
 				}
-				return lv.Position, true
+				if note != a.pickNote {
+					a.pickNote = note
+					ctx.Led.Append(verbs.Outcome{Verb: "door", Holder: a.Name(), Result: verbs.ResDone,
+						Evidence: fmt.Sprintf("%d->%d %s", int(cur), int(hop), note)})
+				}
+				cands = append(cands, route.Candidate{Src: "map", Pos: lv.Position})
+				break
 			}
 		}
 	}
-	// The live room graph is a fallback for walkable borders when no learned
-	// fact or trustworthy map hint exists. Its coordinates are frame-sensitive
-	// on some streamed rooms, so it must not outrank a measured door/map point.
-	if time.Since(a.extAt) > 2*time.Second {
-		if ext, err := ctx.GR.AdjacentLevelRooms(); err == nil {
-			a.extRooms, a.extAt = ext, time.Now()
+	live := liveFrame(ctx.Grid)
+	now := time.Now()
+	doubted := func(p data.Position) bool { return a.disbelief.Has(p, now) }
+	pick := route.PickDoor(cands, me, live, doubted)
+	if !pick.Known {
+		// The live room graph is a fallback for walkable borders when no learned
+		// fact or trustworthy map hint exists. Its coordinates are frame-sensitive
+		// on some streamed rooms, so it must not outrank a measured door/map point.
+		if ctx.Grid != a.extGrid {
+			a.extGrid, a.extAt = ctx.Grid, time.Time{} // rooms streamed in: re-read now
 		}
-	}
-	if rects := a.extRooms[hop]; len(rects) > 0 {
-		best, bd := data.Position{}, 1<<30
-		for _, r := range rects {
-			p := nearestInRect(me, r)
-			if dd := chebyshev(me, p); dd < bd {
-				best, bd = p, dd
+		if time.Since(a.extAt) > 2*time.Second {
+			if ext, err := ctx.GR.AdjacentLevelRooms(); err == nil {
+				a.extRooms, a.extAt = ext, time.Now()
 			}
 		}
-		return best, true
+		if rects := a.extRooms[hop]; len(rects) > 0 {
+			best, bd := data.Position{}, 1<<30
+			for _, r := range rects {
+				p := nearestInRect(me, r)
+				if dd := chebyshev(me, p); dd < bd {
+					best, bd = p, dd
+				}
+			}
+			rp := route.PickDoor([]route.Candidate{{Src: "rooms", Pos: best}}, me, live, doubted)
+			rp.Rejected = append(pick.Rejected, rp.Rejected...)
+			pick = rp
+		}
 	}
-	return data.Position{}, false
+	a.noteRejects(ctx, d, hop, me, live, pick.Rejected, mapHint)
+	if !pick.Known {
+		a.doorSrc, a.doorPos = "", data.Position{}
+		return data.Position{}, false
+	}
+	a.tgtFromMap = pick.Door.Src == "map" || pick.Door.Src == "map-entrance"
+	if pick.Door.Src != a.doorSrc || chebyshev(pick.Door.Pos, a.doorPos) > 8 {
+		a.doorSrc, a.doorPos = pick.Door.Src, pick.Door.Pos
+		ctx.Led.Append(verbs.Outcome{Verb: "door", Holder: a.Name(), Result: verbs.ResDone,
+			Evidence: fmt.Sprintf("%d->%d src=%s at (%d,%d), %d from me", int(cur), int(hop),
+				pick.Door.Src, pick.Door.Pos.X, pick.Door.Pos.Y, chebyshev(me, pick.Door.Pos))})
+	}
+	return pick.Door.Pos, true
+}
+
+// liveFrame is the current level's live DrlgLevel placement — the executive's
+// grid is built on it, so its bounds are the frame (Empty when there is none).
+func liveFrame(g *game.Grid) route.Rect {
+	if g == nil {
+		return route.Rect{}
+	}
+	return route.Rect{X: g.OffsetX, Y: g.OffsetY, W: g.Width, H: g.Height}
+}
+
+func mapFrame(d game.Data, ar area.ID) route.Rect {
+	if ad, ok := d.Areas[ar]; ok && ad.Grid != nil {
+		return route.Rect{X: ad.Grid.OffsetX, Y: ad.Grid.OffsetY, W: ad.Grid.Width, H: ad.Grid.Height}
+	}
+	return route.Rect{}
+}
+
+// noteRejects ledgers each implausible door hint once per area — with where it
+// actually falls (the current level's map frame, the hop's, or neither), so a
+// laptop log says WHICH lie it was — and keeps a lying map hint's relative
+// place in the level as the exploration bias.
+func (a *Advance) noteRejects(ctx *Ctx, d game.Data, hop area.ID, me data.Position, live route.Rect, rej []route.Candidate, mapHint data.Position) {
+	cur := d.PlayerUnit.Area
+	for _, c := range rej {
+		mf, hf := mapFrame(d, cur), mapFrame(d, hop)
+		if c.Src == "map" && c.Pos == mapHint && live.Contains(me) {
+			if b, ok := route.Project(c.Pos, mf, live); ok {
+				a.exitBias = b
+			}
+		}
+		k := fmt.Sprintf("%d.%s.%d.%d", int(hop), c.Src, c.Pos.X, c.Pos.Y)
+		if a.rejSeen[k] {
+			continue
+		}
+		if a.rejSeen == nil {
+			a.rejSeen = map[string]bool{}
+		}
+		a.rejSeen[k] = true
+		ctx.Led.Append(verbs.Outcome{Verb: "door", Holder: a.Name(), Result: verbs.ResRefused,
+			Evidence: fmt.Sprintf("%d->%d src=%s (%d,%d) implausible: %d from me, live frame %s; in map %d %s=%v, in map %d %s=%v — unknown door, exploring",
+				int(cur), int(hop), c.Src, c.Pos.X, c.Pos.Y, chebyshev(me, c.Pos), live,
+				int(cur), mf, mf.Contains(c.Pos), int(hop), hf, hf.Contains(c.Pos))})
+	}
+}
+
+// seedSearchBias points the coverage search's bearing once per hop at the
+// projected map exit — the "which side of the level" a lying hint still knows.
+func (a *Advance) seedSearchBias(ctx *Ctx, me data.Position, hop area.ID) {
+	if a.exitBias == (data.Position{}) || a.biasHop == hop || a.legStart == me {
+		return
+	}
+	a.biasHop = hop
+	a.heading = bearingFrom(me, a.exitBias) + len(bearings) // non-zero: search reads 0 as unset
+	ctx.Led.Append(verbs.Outcome{Verb: "door", Holder: a.Name(), Result: verbs.ResDone,
+		Evidence: fmt.Sprintf("exploring for %d toward projected map exit (%d,%d), bearing %d",
+			int(hop), a.exitBias.X, a.exitBias.Y, a.heading%len(bearings))})
 }
 
 // mapHintConflictsWithKnownDoor rejects a topology hint whose geometry is
@@ -1222,65 +1641,77 @@ func (a *Advance) mapHintConflictsWithKnownDoor(ctx *Ctx, d game.Data, hop area.
 // search tours the area for an unknown door: walk through any UNKNOWN entrance unit on
 // sight (crossings teach the cartographer both sides), otherwise hold a persistent
 // heading, turning 45° on walls — Explore's law, pointed at discovery.
-func (a *Advance) search(ctx *Ctx, d game.Data, me data.Position) {
+func (a *Advance) search(ctx *Ctx, d game.Data, me data.Position, hop area.ID) {
 	// Opportunistic door: the nearest entrance unit not yet explained by a fact.
 	var ent *data.Entrance
 	bd := 40
+	goal := a.doorGoal(ctx, d, hop)
 	for i := range d.Entrances {
 		e := &d.Entrances[i]
 		if a.knownDoor(ctx, d, e.Position) {
 			continue // already learned where this one goes (and it wasn't the hop)
+		}
+		// Never the way back (trace 2ad968d: the search walked out to Far
+		// Oasis through an unrecorded arrival door) nor a wrong landing.
+		if skip, _ := route.SearchSkip(e.Name, e.Position, goal); skip {
+			continue
 		}
 		if dd := chebyshev(me, e.Position); dd < bd {
 			ent, bd = e, dd
 		}
 	}
 	if ent != nil {
-		a.cross(ctx, d, me, ent.Position, 0) // unknown door: no far-side fact to aim at
+		a.cross(ctx, d, me, ent.Position, hop) // unknown door: a wrong landing is still recorded
 		return
 	}
 	if a.legStart == me || a.heading == 0 && a.legStart != (data.Position{}) {
 		// initial bearing: away from where the leg began — outward, not backtracking
 		a.heading = bearingFrom(a.legStart, me)
 	}
-	// THE VISITED LEDGER (the owner, 21:50: "he might be running the same
-	// spots over and over in underground passage... definitely isn't finding
-	// the dark wood"): a heading tour with 45° wall-turns retraces looping
-	// corridors forever, and every town-trip re-entry restarts the same tour
-	// from the same door. Search now remembers 20-boxes it has walked (per
-	// area, process-lifetime — it survives re-entries) and biases each stride
-	// toward the LEAST-visited probe; ties keep the current heading so the
-	// walk stays a line, not a dither.
-	if a.visited == nil {
-		a.visited = map[area.ID]map[[2]int]int{}
+	// THE ONE COVERAGE MODEL (the owner: "In the cave it goes to already-
+	// explored bits"): the search walks the same frontier picker Explore does
+	// — nearest-by-path unexplored ground, leaning toward the projected exit
+	// (or the tour bearing a FAIL-LEG turned) — instead of its old 20-box
+	// least-visited ledger. Coverage survives the town trip and the restart.
+	if st, ok := a.cov.step(ctx, a.searchBias(me), a.Name()); ok && st == coverage.Exploring {
+		return
 	}
-	av := a.visited[d.PlayerUnit.Area]
-	if av == nil {
-		av = map[[2]int]int{}
-		a.visited[d.PlayerUnit.Area] = av
-	}
-	av[[2]int{me.X / 20, me.Y / 20}]++
-	bestH, bestV := a.heading, 1<<30
-	for hh := a.heading; hh < a.heading+len(bearings); hh++ {
-		o := bearings[hh%len(bearings)]
-		probe := [2]int{(me.X + o.X) / 20, (me.Y + o.Y) / 20} // bearings are ~35-tile strides: one box ahead
-		if v := av[probe]; v < bestV {
-			bestH, bestV = hh, v
-		}
-	}
-	a.heading = bestH
+	// No coverage knowledge (no grid, no tracker) or no reachable frontier
+	// left: hold the heading, one 45° turn per wall — the doors seen so far
+	// were all crossed above, so keep walking the level's rim.
 	o := bearings[a.heading%len(bearings)]
-	res := verbs.Stride{To: data.Position{X: me.X + o.X, Y: me.Y + o.Y}, MinGain: 2}.
-		Do(ctx.M, ctx.GR, ctx.P, ctx.Led, a.Name())
-	if res.Result != verbs.ResDone {
+	st := moveTo(ctx, data.Position{X: me.X + o.X, Y: me.Y + o.Y}, moveto.Opts{Holder: a.Name(), Purpose: moveto.Travel, MinGain: 2})
+	if wallTurned(st) {
 		a.heading++ // walled: one 45° turn, then hold the new line
-		// An UNREACHABLE box is never walked, so its visit count stays 0 — the
-		// least-visited chooser then picked the same walled bearing every tick,
-		// undoing the turn (live 2026-09-23, Rocky Waste: 19s pinned against a
-		// ridge, stride to the same target 35 tiles south, gain=0 each time).
-		// Charge the failed probe as visits so the wall stops looking unexplored.
-		av[[2]int{(me.X + o.X) / 20, (me.Y + o.Y) / 20}] += 3
 	}
+}
+
+// searchBias is the search's lean for the coverage picker: the projected map
+// exit when a lying hint still knows the side, else the tour bearing (set
+// outward at the leg start, turned 135° by each FAIL-LEG) as a far point.
+func (a *Advance) searchBias(me data.Position) coverage.Bias {
+	if a.exitBias != (data.Position{}) {
+		return coverage.Bias{At: a.exitBias, Key: fmt.Sprintf("exit.%d", int(a.biasHop)), OK: true}
+	}
+	if a.heading != 0 {
+		o := bearings[a.heading%len(bearings)]
+		return coverage.Bias{At: data.Position{X: me.X + o.X*4, Y: me.Y + o.Y*4},
+			Key: fmt.Sprintf("bearing.%d", a.heading%len(bearings)), OK: true}
+	}
+	return coverage.Bias{}
+}
+
+// ExploreBias is Explore's lean (the wander on the frontier leg): the
+// projected exit if known, else the fresh march goal. Keys change when the
+// hint does, which re-picks the frontier goal.
+func (a *Advance) ExploreBias() (data.Position, string, bool) {
+	if a.exitBias != (data.Position{}) {
+		return a.exitBias, fmt.Sprintf("exit.%d", int(a.biasHop)), true
+	}
+	if g, ok := a.MarchGoal(); ok {
+		return g, fmt.Sprintf("march.%d.%d", g.X/20, g.Y/20), true
+	}
+	return data.Position{}, "", false
 }
 
 // knownDoor reports whether a fact already explains the door at pos — i.e. we recorded
@@ -1319,10 +1750,8 @@ func (a *Advance) memoryEntranceClick(ctx *Ctx, start, hop area.ID, targetID dat
 	if targetID == 0 || target == (data.Position{}) {
 		return false, false
 	}
-	if a.memoryEntranceID != targetID {
-		a.memoryEntranceID, a.memoryEntranceN = targetID, 0
-	}
-	if a.memoryEntranceN >= 3 || time.Since(a.memoryEntranceAt) < 1200*time.Millisecond {
+	// The budget is per leg (hop) and per entrance: a new leg starts fresh.
+	if !a.clicks.Allow(int(hop), targetID) || time.Since(a.memoryEntranceAt) < 1200*time.Millisecond {
 		return false, false
 	}
 	dd := ctx.GR.GetData()
@@ -1342,11 +1771,22 @@ func (a *Advance) memoryEntranceClick(ctx *Ctx, start, hop area.ID, targetID dat
 	// memory-derived offset; this is a tiny label-depth compensation, not a
 	// cursor hunt over arbitrary screen space.
 	offsets := []data.Position{{X: 0, Y: -28}, {X: 0, Y: -56}, {X: -18, Y: -28}}
-	off := offsets[a.memoryEntranceN]
-	a.memoryEntranceN++
+	aimed := "legacy offset"
+	if box := warpAimOffsets(int(ent.Name)); box != nil {
+		offsets, aimed = box, "warp box"
+	}
+	off := offsets[a.clicks.N%len(offsets)]
+	a.clicks.N++
+	a.memoryEntranceID, a.memoryEntranceN = targetID, a.clicks.N
 	a.memoryEntranceAt = time.Now()
 	cx, cy := bx+off.X, by+off.Y
-	if cx < 20 || cy < 20 || cx > ctx.GR.GameAreaSizeX-20 || cy > ctx.GR.GameAreaSizeY-20 {
+	// Focused, the hover names the exact point inside the box that belongs to
+	// THIS entrance; unfocused it is dark and the box point is clicked as is.
+	ctx.M.MoveStop()
+	if hx, hy, ok := hoverEntrance(ctx, bx, by, offsets, targetID); ok {
+		cx, cy, aimed = hx, hy, "hover-confirmed in the warp box"
+	}
+	if !verbs.ClickableLogical(ctx.GR, cx, cy) {
 		ctx.Led.Append(verbs.Outcome{Verb: "cross", Holder: a.Name(), Result: verbs.ResRefused,
 			Evidence: fmt.Sprintf("memory entrance id=%d projected outside game area (%d,%d)", int(targetID), cx, cy)})
 		return true, false
@@ -1354,27 +1794,34 @@ func (a *Advance) memoryEntranceClick(ctx *Ctx, start, hop area.ID, targetID dat
 	// ClickLeft is the same background-safe world click used by Pickup. It sends
 	// the message to D2R and never calls FocusGame/RealMenuClick.
 	ctx.M.ClickLeft(cx, cy)
-	deadline := time.Now().Add(1400 * time.Millisecond)
-	for time.Now().Before(deadline) {
+	// THE VERDICT IS 3s (trace: a click logged deaf at 1.4s changed area ~2s
+	// later): poll the area until it changes or the window lapses.
+	clickAt := time.Now()
+	for {
 		time.Sleep(140 * time.Millisecond)
 		nowArea := ctx.GR.GetData().PlayerUnit.Area
-		if nowArea == 0 || nowArea == start {
+		done, _ := route.DoorVerdict(clickAt, time.Now(), nowArea != 0 && nowArea != start)
+		if !done {
 			continue
+		}
+		if nowArea == 0 || nowArea == start {
+			break
 		}
 		if hop != 0 && nowArea != hop {
 			// A transition is still real, but naming the wrong-way landing makes
 			// the route defect diagnosable instead of calling it a successful hop.
 			ctx.Led.Append(verbs.Outcome{Verb: "cross", Holder: a.Name(), Result: verbs.ResRefused,
-				Evidence: fmt.Sprintf("memory entrance id=%d landed wrong area %d (wanted %d)", int(targetID), int(nowArea), int(hop))})
+				Evidence: fmt.Sprintf("memory entrance id=%d landed wrong area %d (wanted %d) — recorded, never retaken", int(targetID), int(nowArea), int(hop))})
+			a.recordWrongDoor(ctx, start, nowArea, ent.Position)
 		} else {
 			ctx.Led.Append(verbs.Outcome{Verb: "cross", Holder: a.Name(), Result: verbs.ResDone,
-				Evidence: fmt.Sprintf("memory entrance id=%d transitioned %d -> %d", int(targetID), int(start), int(nowArea))})
+				Evidence: fmt.Sprintf("memory entrance id=%d warp=%d transitioned %d -> %d (aim=%s, try %d)", int(targetID), int(ent.Name), int(start), int(nowArea), aimed, a.clicks.N)})
 		}
 		return true, true
 	}
 	ctx.Led.Append(verbs.Outcome{Verb: "cross", Holder: a.Name(), Result: verbs.ResDeaf,
-		Evidence: fmt.Sprintf("memory entrance click deaf id=%d name=%d pos=(%d,%d) offset=(%d,%d) hop=%d",
-			int(targetID), int(ent.Name), ent.Position.X, ent.Position.Y, off.X, off.Y, int(hop))})
+		Evidence: fmt.Sprintf("memory entrance click deaf id=%d warp=%d pos=(%d,%d) click=(%d,%d) base=(%d,%d) aim=%s hop=%d",
+			int(targetID), int(ent.Name), ent.Position.X, ent.Position.Y, cx, cy, bx, by, aimed, int(hop))})
 	return true, false
 }
 
@@ -1386,27 +1833,45 @@ func (a *Advance) memoryEntranceClick(ctx *Ctx, start, hop area.ID, targetID dat
 func (a *Advance) cross(ctx *Ctx, d game.Data, me data.Position, tgt data.Position, hop area.ID) {
 	// Steer at the LIVE entrance unit when one is near the target; else the target.
 	var memoryID data.UnitID
+	memoryWarp := -1
 	for i := range d.Entrances {
 		if chebyshev(d.Entrances[i].Position, tgt) <= 15 {
 			tgt = d.Entrances[i].Position
 			memoryID = d.Entrances[i].ID
+			memoryWarp = int(d.Entrances[i].Name)
 			break
 		}
 	}
-	if td := chebyshev(me, tgt); td > 3 {
+	if td := chebyshev(me, tgt); !route.ContactReady(td, false) {
 		if td > 12 { // generous: a BOUNCE off the mouth must not zero the ritual timer
 			a.contactAt, a.clickTry = time.Time{}, 0
 		}
-		// item 4: walk the APPROACH to the door through the planner where a grid
-		// exists — the contact push below (td<=3, warp ritual) is untouched.
-		if !a.journeyPush(ctx, tgt) {
-			verbs.Stride{To: tgt, Hold: 500 * time.Millisecond, MinGain: 1}.
-				Do(ctx.M, ctx.GR, ctx.P, ctx.Led, a.Name())
+		// item 4: walk the APPROACH to the door through the planner — the
+		// contact push below (warp ritual) is a separate step. THE DEAD ZONE
+		// (trace 2ad968d: pinned 19s, 0 cross lines): a stairs unit's own tile
+		// is unwalkable and the planner reports Arrived at the nearest walkable
+		// 4-5 tiles off — that IS contact; fall through to the push/click.
+		st := moveTo(ctx, tgt, moveto.Opts{Holder: a.Name(), Purpose: moveto.Travel, Arrive: 3, MaxHold: 500 * time.Millisecond, Fallback: true})
+		if st.State != moveto.Arrived {
+			return
 		}
-		return
+		me = ctx.GR.GetData().PlayerUnit.Position
+		if !route.ContactReady(chebyshev(me, tgt), true) {
+			return
+		}
+		ctx.Led.Append(verbs.Outcome{Verb: "cross", Holder: a.Name(), Result: verbs.ResDone,
+			Evidence: fmt.Sprintf("arrived %d from door (%d,%d) (%s) — contact", chebyshev(me, tgt), tgt.X, tgt.Y, st.Why)})
 	}
 	if a.contactAt.IsZero() {
 		a.contactAt = time.Now()
+	}
+	// A CLICKED WARP IS CLICKED AT ONCE (2026-09-26): its lvlwarp row says it
+	// has a select box and is not walk-in — the 5 s contact push only walked
+	// her into the cave wall before the first click.
+	if memoryID != 0 && warpInteractive(memoryWarp) {
+		if attempted, _ := a.memoryEntranceClick(ctx, d.PlayerUnit.Area, hop, memoryID, tgt); attempted {
+			return
+		}
 	}
 	if time.Since(a.contactAt) < 5*time.Second {
 		// CONTACT PUSH — direction by knowledge ladder:
@@ -1474,8 +1939,10 @@ func (a *Advance) cross(ctx *Ctx, d game.Data, me data.Position, tgt data.Positi
 			through = data.Position{X: tgt.X + dir.X*8, Y: tgt.Y + dir.Y*8}
 		}
 		// MinGain 1: a 300ms push covers 2-3 tiles by design — the default 4 branded
-		// every honest push "blocked" (cosmetic, but the log must not lie).
-		verbs.Stride{To: through, Hold: 300 * time.Millisecond, MinGain: 1}.Do(ctx.M, ctx.GR, ctx.P, ctx.Led, a.Name())
+		// every honest push "blocked" (cosmetic, but the log must not lie). Through
+		// MoveTo: a far side beyond the grid's frame is one stride off its edge;
+		// a walled line takes the best clear step instead of rubbing the wall.
+		moveTo(ctx, through, moveto.Opts{Holder: a.Name(), Purpose: moveto.Travel, Arrive: 1, MaxHold: 300 * time.Millisecond, Fallback: true})
 		return
 	}
 	// SPIRAL HOVER-CLICK for the rare click-to-open stairs — STAIRS ONLY: a
@@ -1495,7 +1962,10 @@ func (a *Advance) cross(ctx *Ctx, d game.Data, me data.Position, tgt data.Positi
 	// there was seam-leap and re-arm. The unit list lies by omission; the
 	// owner's own crossing at this spot is stronger evidence than its silence.)
 	learnedDoor := false
-	if hop != 0 && ctx.Mem != nil {
+	// ...but an OPEN BORDER is never an entrance (2026-09-26, Outer Cloister
+	// -> Barracks: the learned crossing of a walk-through seam armed the
+	// entrance hover hunt — "3 ground clicks deaf" — at a border you walk).
+	if hop != 0 && ctx.Mem != nil && !openBorder(d.PlayerUnit.Area, hop) {
 		var p data.Position
 		if ctx.Mem.GetJSON(BorderKey(ctx.GR.MapSeed(), d.PlayerUnit.Area, hop), &p) && p.X != 0 &&
 			chebyshev(p, tgt) <= 8 {
@@ -1557,7 +2027,7 @@ func (a *Advance) cross(ctx *Ctx, d game.Data, me data.Position, tgt data.Positi
 		for _, dy := range []int{-40, -80, 0, -120, -160, -200, 40} {
 			for dx := -320; dx <= 320 && !found; dx += 32 {
 				cx, cy := bx+dx, by+dy
-				if cx < 20 || cy < 20 || cx > ctx.GR.GameAreaSizeX-20 || cy > ctx.GR.GameAreaSizeY-20 {
+				if !verbs.ClickableLogical(ctx.GR, cx, cy) {
 					continue
 				}
 				ctx.M.AimPhysical(cx, cy)
@@ -1567,8 +2037,9 @@ func (a *Advance) cross(ctx *Ctx, d game.Data, me data.Position, tgt data.Positi
 				// and their POSITION field can lie while the flag tells truth;
 				// HoverData never named this door because entrance hover lives
 				// HERE, position-blind).
-				for ei := range ctx.GR.GetData().Entrances {
-					if ctx.GR.GetData().Entrances[ei].IsHovered {
+				ents := ctx.GR.GetData().Entrances // ONE read: a re-read per index raced a shrinking list (panic 22:12)
+				for ei := range ents {
+					if ents[ei].IsHovered {
 						found = true
 						ctx.Led.Append(verbs.Outcome{Verb: "cross", Holder: a.Name(), Result: verbs.ResDone,
 							Evidence: fmt.Sprintf("entrance flag HOVERED at offset (%d,%d) — clicking the door", dx, dy)})
@@ -1577,7 +2048,7 @@ func (a *Advance) cross(ctx *Ctx, d game.Data, me data.Position, tgt data.Positi
 						if ctx.GR.GetData().PlayerUnit.Area != d.PlayerUnit.Area {
 							return
 						}
-						ctx.M.RealMenuClick(cx, cy)
+						realWorldClick(ctx, cx, cy)
 						time.Sleep(1400 * time.Millisecond)
 						if ctx.GR.GetData().PlayerUnit.Area != d.PlayerUnit.Area {
 							return
@@ -1605,7 +2076,7 @@ func (a *Advance) cross(ctx *Ctx, d game.Data, me data.Position, tgt data.Positi
 					if ctx.GR.GetData().PlayerUnit.Area != d.PlayerUnit.Area {
 						return // THE DOOR OPENED
 					}
-					ctx.M.RealMenuClick(cx, cy) // posted click deaf: one hardware click at the PROVEN spot
+					realWorldClick(ctx, cx, cy) // posted click deaf: one hardware click at the PROVEN spot
 					time.Sleep(1200 * time.Millisecond)
 					if ctx.GR.GetData().PlayerUnit.Area != d.PlayerUnit.Area {
 						return
@@ -1629,7 +2100,13 @@ func (a *Advance) cross(ctx *Ctx, d game.Data, me data.Position, tgt data.Positi
 			// FLIPS, past the visual door. Click the DOORWAY, not the fact.
 			for _, off := range []data.Position{{X: -290, Y: -10}, {X: -260, Y: -30},
 				{X: -310, Y: 10}, {X: 0, Y: 0}, {X: -20, Y: 10}} {
-				ctx.M.BareClick(bx+off.X, by+off.Y)
+				// Blind ground clicks up to ~310px out: pulled back along the
+				// ray from her until they are world, never HUD (step 11).
+				cx, cy, ok := verbs.ClampClickLogical(ctx.GR, bx+off.X, by+off.Y)
+				if !ok {
+					continue
+				}
+				ctx.M.BareClick(cx, cy)
 				time.Sleep(1400 * time.Millisecond)
 				if ctx.GR.GetData().PlayerUnit.Area != d.PlayerUnit.Area {
 					return // WALKED IN — the game pathed him through
@@ -1644,10 +2121,13 @@ func (a *Advance) cross(ctx *Ctx, d game.Data, me data.Position, tgt data.Positi
 	}
 	sp := spiral(a.clickTry)
 	a.clickTry++
-	ctx.M.AimPhysical(bx+sp.X, by+sp.Y)
+	spOK := verbs.ClickableLogical(ctx.GR, bx+sp.X, by+sp.Y) // the spiral never probes the HUD
+	if spOK {
+		ctx.M.AimPhysical(bx+sp.X, by+sp.Y)
+	}
 	time.Sleep(120 * time.Millisecond)
 	hd := ctx.GR.GetData().HoverData
-	if hd.IsHovered && (hd.UnitType == 5 || hd.UnitType == 2) {
+	if spOK && hd.IsHovered && (hd.UnitType == 5 || hd.UnitType == 2) {
 		ctx.M.BareClick(bx+sp.X, by+sp.Y)
 		time.Sleep(1000 * time.Millisecond) // the click starts a walk-and-enter
 	}
@@ -1686,7 +2166,8 @@ func (a *Advance) cross(ctx *Ctx, d game.Data, me data.Position, tgt data.Positi
 		for _, off := range []data.Position{{X: 0, Y: 0}, {X: 0, Y: -30}, {X: 0, Y: -60},
 			{X: -30, Y: -30}, {X: 30, Y: -30}, {X: -30, Y: 0}, {X: 30, Y: 0},
 			{X: -20, Y: -55}, {X: 20, Y: -55}} {
-			if !ctx.M.RealMenuClick(bx+off.X, by+off.Y) {
+			fired, focused := realWorldClick(ctx, bx+off.X, by+off.Y)
+			if !focused {
 				// The RealEsc law (20:54): with the owner at the desktop these
 				// hardware clicks were landing in THEIR windows — the "deaf
 				// mouth" was partly clicks that never reached the game. Waits
@@ -1694,6 +2175,9 @@ func (a *Advance) cross(ctx *Ctx, d game.Data, me data.Position, tgt data.Positi
 				ctx.Led.Append(verbs.Outcome{Verb: "cross", Holder: a.Name(), Result: verbs.ResRefused,
 					Evidence: "arch burst: foreground refused — the owner holds the desktop"})
 				break
+			}
+			if !fired {
+				continue // this arch point is HUD, not world
 			}
 			time.Sleep(700 * time.Millisecond)
 			if ctx.GR.GetData().PlayerUnit.Area != d.PlayerUnit.Area {
@@ -1704,6 +2188,25 @@ func (a *Advance) cross(ctx *Ctx, d game.Data, me data.Position, tgt data.Positi
 	if a.clickTry > 40 { // a full spiral with no confirmed hover: restart the ritual
 		a.contactAt, a.clickTry = time.Time{}, 0
 	}
+}
+
+// realWorldClick fires ONE hardware click (RealMenuClick) at a LOGICAL world-aim
+// point — the verbs' projection space. RealMenuClick takes SCREENSHOT px and
+// divides by the display scale; the door rituals used to hand it logical px, so
+// every "hardware click at the PROVEN spot" landed at ~80% of the aim (1/1.25,
+// toward the client's top-left) — nowhere near the door. verbs.ShotOfLogical
+// applies the same map the posted click's cursor goes through. A point on the
+// HUD is never fired. fired: the click went out; focused: false only when the
+// game could not be foregrounded (the RealEsc law — the caller stops).
+func realWorldClick(ctx *Ctx, x, y int) (fired, focused bool) {
+	if !verbs.ClickableLogical(ctx.GR, x, y) {
+		return false, true
+	}
+	sx, sy := verbs.ShotOfLogical(ctx.GR, x, y)
+	if !ctx.M.RealMenuClick(sx, sy) {
+		return false, false
+	}
+	return true, true
 }
 
 // nextHop BFSes the map-data area graph for the first hop on the route cur → to.
@@ -1799,24 +2302,20 @@ func clampToGrid(p data.Position, g *game.Grid) data.Position {
 	return data.Position{X: x, Y: y}
 }
 
-// journeyPush routes a short travel push through the clearance-inflated A*
-// follower (item 4: the raw clickStride/verbs.Stride in clearing and cross
-// bypassed Journey and walked into the mod's fences). It reuses a.j with the
-// same clamp + rebuild-on-move discipline as the far-march, and reports whether
-// the planner OWNED the move this tick. It returns false — leaving the caller's
-// legacy stride to run — when the flag is off, when Grid==nil (the ONLY case
-// the brief keeps the stride fallback for), or when the planner itself refuses
-// (NoPath/Stalled through unstreamed rooms). Inert unless the flag is armed.
-func (a *Advance) journeyPush(ctx *Ctx, tgt data.Position) bool {
-	if !deliberate || ctx.Grid == nil {
-		return false
+// push routes a short travel push (the post-crossing clear) through MoveTo
+// (item 4: the raw clickStride/verbs.Stride in clearing and cross bypassed
+// Journey and walked into the mod's fences). The deliberate marcher walks it
+// by planned strides; otherwise by the click gait on the route. A planner
+// refusal still pushes: the click (or nav's best clear step) carries it.
+func (a *Advance) push(ctx *Ctx, tgt data.Position, hold time.Duration) moveto.Status {
+	if !deliberate {
+		return moveTo(ctx, tgt, marchOpts(ctx, a.Name(), hold))
 	}
-	goal := clampToGrid(tgt, ctx.Grid)
-	if a.j == nil || chebyshev(a.j.Goal, goal) > 8 {
-		a.j = journey.New(ctx.GR, ctx.Grid, goal, a.Name())
+	st := moveTo(ctx, tgt, moveto.Opts{Holder: a.Name(), Purpose: moveto.Travel, MaxHold: hold, Fallback: true})
+	if stalled(st) && !st.Issued {
+		st = moveTo(ctx, tgt, marchOpts(ctx, a.Name(), hold))
 	}
-	st := a.j.Step(ctx.M, ctx.P, ctx.Led)
-	return st.State != journey.NoPath && st.State != journey.Stalled
+	return st
 }
 
 // stepDir reduces a→b to a unit step {-1,0,1} per axis — the leg's travel direction.
@@ -1940,8 +2439,7 @@ func (r *Return) Step(ctx *Ctx) Verdict {
 		return Abandoned // it closed while we walked to it — or died as a door
 	}
 	if bd > 20 {
-		verbs.Stride{To: best.Pos, Hold: 1200 * time.Millisecond, MinGain: 1}.
-			Do(ctx.M, ctx.GR, ctx.P, ctx.Led, r.Name())
+		moveTo(ctx, best.Pos, moveto.Opts{Holder: r.Name(), Purpose: moveto.Travel, MaxHold: 1200 * time.Millisecond})
 		return Running
 	}
 	verbs.EnterPortal{Target: best.ID, TargetPos: best.Pos}.Do(ctx.M, ctx.GR, ctx.P, ctx.Led, r.Name())
@@ -1954,25 +2452,291 @@ func (r *Return) Step(ctx *Ctx) Verdict {
 // and hands the march back to the gate.
 func (a *Advance) walkToPad(ctx *Ctx, padPos data.Position) bool {
 	if a.wpWalkAt.IsZero() {
-		a.wpWalkAt = time.Now()
+		a.wpWalkAt, a.wpWalkArea = time.Now(), ctx.Snap.Me.Area
 	}
 	if time.Since(a.wpWalkAt) > 60*time.Second {
 		a.wpAt, a.wpWalkAt = time.Now(), time.Time{}
 		return false
 	}
-	if ctx.Grid != nil {
-		goal := clampToGrid(padPos, ctx.Grid)
-		if a.j == nil || chebyshev(a.j.Goal, goal) > 6 {
-			a.j = journey.New(ctx.GR, ctx.Grid, goal, a.Name())
-			a.j.Arrive = 4
-		}
-		st := a.j.Step(ctx.M, ctx.P, ctx.Led)
-		if st.State == journey.Stalled || st.State == journey.NoPath {
-			clickStride(ctx, padPos, 1200*time.Millisecond, a.Name())
-			a.j = nil
-		}
-	} else {
-		clickStride(ctx, padPos, 1200*time.Millisecond, a.Name())
+	// By planner first (MoveTo drops the trip on a refusal); a refused plan —
+	// or no grid at all — walks by the click gait.
+	o := moveto.Opts{Holder: a.Name(), Purpose: moveto.Travel, Arrive: 4, MaxHold: 1200 * time.Millisecond}
+	if ctx.Grid == nil {
+		o = marchOpts(ctx, a.Name(), 1200*time.Millisecond)
+		o.Arrive = 4
+	}
+	if st := moveTo(ctx, padPos, o); stalled(st) {
+		o = marchOpts(ctx, a.Name(), 1200*time.Millisecond)
+		o.Arrive = 4
+		moveTo(ctx, padPos, o)
 	}
 	return true
+}
+
+// areaHasWaypoint: the mod's levels.txt gives the area a waypoint (towns excluded:
+// their pads are lit by walking in). Without the tables: unknown, no objective.
+func areaHasWaypoint(ar area.ID) bool {
+	db := gamedata.Get()
+	if db == nil {
+		return false
+	}
+	lv := db.Level(int(ar))
+	return lv != nil && lv.Waypoint >= 0 && !lv.IsTown
+}
+
+// portalLeadsBack: an own portal whose destination is an itinerary leg behind
+// the next one he may lawfully march to (R47: the owner's old portal stood in
+// town to Maggot Lair 3 — the finished staff leg — while the Harem was next;
+// portal-first rode it straight back into 298 maggots). Unknown destinations,
+// and any portal while the next leg is above his level (the camp grind), keep
+// the old rule.
+func (a *Advance) portalLeadsBack(s *percept.Snapshot, pt percept.PortalRef, fwd int) bool {
+	if pt.Dest == 0 || fwd < 0 || fwd >= len(a.Itinerary) || s.Me.Level < a.Itinerary[fwd].MinLevel {
+		return false
+	}
+	for i := 0; i < fwd; i++ {
+		if a.Itinerary[i].Area == pt.Dest {
+			return true
+		}
+	}
+	return false
+}
+
+// padLitLive reads the live pad's own state: an activated waypoint stands
+// Opened (mode 2 — measured on Lut Gholein's lit pad); an unlit one idles.
+// seen=false: no live pad (unit ID set) in the object list.
+func padLitLive(obs []data.Object) (lit, seen bool) {
+	for _, ob := range obs {
+		if ob.IsWaypoint() && ob.ID != 0 {
+			return ob.Mode == mode.ObjectModeOpened, true
+		}
+	}
+	return false, false
+}
+
+// townLog: a Demand-time diagnostic line through the loot brain's log sink (the
+// executive wires it at startup; nil = silent).
+func townLog(msg string) {
+	theLoot.mu.Lock()
+	defer theLoot.mu.Unlock()
+	theLoot.say("town", "why", msg)
+}
+
+// Act3Itinerary (owner, 2026-09-25: "we can begin running act 3"): the spine
+// from Kurast Docks to Travincal, with the dead-end dungeons that hold Khalim's
+// eye (Spider Cavern), brain (Flayer Dungeon 3) and heart (Kurast Sewers 2) on
+// the road — each a quest leg (quest.go) held until its chest is opened. It stops
+// at Travincal: the Durance opens only to Khalim's Will smashing the Compelling
+// Orb (a cube transmute and an orb click, not built yet).
+func Act3Itinerary() []Leg {
+	return []Leg{
+		{area.KurastDocks, 1},
+		{area.SpiderForest, 28}, {area.SpiderCavern, 29},
+		{area.GreatMarsh, 29}, {area.FlayerJungle, 29},
+		{area.FlayerDungeonLevel1, 30}, {area.FlayerDungeonLevel2, 30}, {area.FlayerDungeonLevel3, 30},
+		{area.LowerKurast, 30}, {area.KurastBazaar, 31},
+		{area.SewersLevel1Act3, 31}, {area.SewersLevel2Act3, 31},
+		{area.UpperKurast, 31}, {area.KurastCauseway, 32}, {area.Travincal, 32},
+		// The Durance opens once Khalim's Will smashes the Compelling Orb in
+		// Travincal; Mephisto waits in level 3 (his red portal is Act 4).
+		{area.DuranceOfHateLevel1, 32}, {area.DuranceOfHateLevel2, 33}, {area.DuranceOfHateLevel3, 33},
+	}
+}
+
+// Act4Itinerary: Pandemonium to the Chaos Sanctuary (the seals and Diablo).
+// Level gates sit ~3 under the normal-difficulty monster levels.
+func Act4Itinerary() []Leg {
+	return []Leg{
+		{area.ThePandemoniumFortress, 1},
+		{area.OuterSteppes, 24}, {area.PlainsOfDespair, 25}, {area.CityOfTheDamned, 26},
+		{area.RiverOfFlame, 27}, {area.ChaosSanctuary, 28},
+	}
+}
+
+// Act5Itinerary: Harrogath to Baal. The Ancients guard the Summit's way into
+// the Worldstone Keep; the Throne's waves precede the Chamber.
+func Act5Itinerary() []Leg {
+	return []Leg{
+		{area.Harrogath, 1},
+		{area.BloodyFoothills, 25}, {area.FrigidHighlands, 26}, {area.ArreatPlateau, 27},
+		{area.CrystallinePassage, 28}, {area.GlacialTrail, 29}, {area.FrozenTundra, 29},
+		{area.TheAncientsWay, 30}, {area.ArreatSummit, 33},
+		{area.TheWorldStoneKeepLevel1, 35}, {area.TheWorldStoneKeepLevel2, 36}, {area.TheWorldStoneKeepLevel3, 37},
+		{area.ThroneOfDestruction, 38}, {area.TheWorldstoneChamber, 38},
+	}
+}
+
+// padDeadKey: the map's waypoint preset for an area proved empty on a seed.
+func padDeadKey(seed uint, ar area.ID) string { return fmt.Sprintf("wpdead.%d.%d", seed, int(ar)) }
+
+// padPresetDead: he stood at this area's pad preset and no live pad was there
+// (R83: the Spider Forest preset, walked to three times). Persisted per seed.
+func (a *Advance) padPresetDead(ctx *Ctx, ar area.ID) bool {
+	if a.wpDead[ar] {
+		return true
+	}
+	dead := false
+	if ctx.Mem != nil && ctx.Mem.GetJSON(padDeadKey(uint(ctx.GR.MapSeed()), ar), &dead) && dead {
+		if a.wpDead == nil {
+			a.wpDead = map[area.ID]bool{}
+		}
+		a.wpDead[ar] = true
+	}
+	return dead
+}
+
+func (a *Advance) markPadPresetDead(ctx *Ctx, ar area.ID) {
+	if a.wpDead == nil {
+		a.wpDead = map[area.ID]bool{}
+	}
+	a.wpDead[ar] = true
+	if ctx.Mem != nil {
+		ctx.Mem.PutJSON(padDeadKey(uint(ctx.GR.MapSeed()), ar), memory.ScopeForever,
+			memory.Provenance{Source: "measured", Evidence: "stood at the map's pad: no live waypoint"}, true)
+	}
+	ctx.Led.Append(verbs.Outcome{Verb: "waypoint", Holder: a.Name(), Result: verbs.ResRefused,
+		Evidence: fmt.Sprintf("area %d: the map's pad spot is empty on this seed — only a live pad counts now", int(ar))})
+}
+
+// campaignMode: the executive runs -goal campaign (the itinerary follows the
+// act); farm/rampage keep the itinerary they were built with.
+var campaignMode bool
+
+// SetCampaignMode is called by the executive at startup.
+func SetCampaignMode(on bool) { campaignMode = on }
+
+// followAct: arriving in a new act's town (a voyage, a red portal, a relog
+// into a later save) swaps in that act's itinerary and its saved frontier —
+// the itinerary used to be chosen once, at process start.
+func (a *Advance) followAct(s *percept.Snapshot) {
+	if !campaignMode || s == nil || !s.Valid || !s.Me.InTown {
+		return
+	}
+	act := s.Me.Area.Act()
+	if act == a.campaignAct || act < 1 || act > 5 {
+		return
+	}
+	a.Itinerary = CampaignItinerary(s.Me.Area)
+	a.campaignAct = act
+	a.idx, a.frontier, a.frontierRead = 0, 0, false
+	a.questCap = -1
+}
+
+// padProgress: a pad approach concedes only when it stops closing in (owner,
+// 2026-09-26: "it skipped stony, wood and black marsh" — the wall-clock 150s
+// budget was spent in fights at Reimagined density, 72 and 87 tiles out,
+// while every march tick still gained ground). Time preempted by other
+// holders (a gap between approach ticks) does not count.
+type padProgress struct {
+	best   int
+	bestAt time.Time
+	last   time.Time
+}
+
+const padTickGap = 3 * time.Second // longer than this between ticks = someone else held
+
+// stalled records this approach tick and reports whether the approach made no
+// progress (3+ tiles closer) for window of approach time.
+func (p *padProgress) stalled(dist int, now time.Time, window time.Duration) bool {
+	if p.bestAt.IsZero() {
+		p.best, p.bestAt, p.last = dist, now, now
+		return false
+	}
+	if gap := now.Sub(p.last); gap > padTickGap {
+		p.bestAt = p.bestAt.Add(gap) // preempted: the clock did not run for us
+	}
+	p.last = now
+	if dist <= p.best-3 {
+		p.best, p.bestAt = dist, now
+		return false
+	}
+	return now.Sub(p.bestAt) > window
+}
+
+// deepestLitAhead: the deepest itinerary area past the one he stands in whose
+// pad the ledger knows lit, that his level allows and that did not just
+// throw him out (0 = none).
+func (a *Advance) deepestLitAhead(mem *memory.Store, char string, s *percept.Snapshot) area.ID {
+	if mem == nil {
+		return 0
+	}
+	here := a.place(s.Me.Area)
+	for i := len(a.Itinerary) - 1; i > here; i-- {
+		lg := a.Itinerary[i]
+		if s.Me.Level < lg.MinLevel || hotLanding(lg.Area) {
+			continue
+		}
+		lit := false
+		mem.GetJSON(LitKey(char, lg.Area), &lit)
+		if lit {
+			return lg.Area
+		}
+	}
+	return 0
+}
+
+// bossOf: the act boss each boss level holds.
+var bossOf = map[area.ID]npc.ID{
+	area.CatacombsLevel4:      npc.Andariel,
+	area.DurielsLair:          npc.Duriel,
+	area.DuranceOfHateLevel3:  npc.Mephisto,
+	area.ChaosSanctuary:       npc.Diablo,
+	area.TheWorldstoneChamber: npc.BaalCrab,
+}
+
+// huntBoss walks to the act boss: the live unit when it streams in, else its
+// map/DRLG preset (true since the seed fix), else a coverage sweep. Fight and
+// Traps preempt by class the moment it is in reach.
+func (a *Advance) huntBoss(ctx *Ctx) (Verdict, bool) {
+	s := ctx.Snap
+	boss, ok := bossOf[s.Me.Area]
+	if !ok {
+		return 0, false
+	}
+	d := ctx.GR.GetData()
+	var at data.Position
+	for _, m := range d.Monsters {
+		if m.Name == boss {
+			at = m.Position
+			break
+		}
+	}
+	if at == (data.Position{}) {
+		if np, ok := d.NPCs.FindOne(boss); ok && len(np.Positions) > 0 {
+			at = np.Positions[0]
+		}
+	}
+	if at == (data.Position{}) {
+		if st, ok := a.cov.step(ctx, coverage.Bias{}, a.Name()); ok && st == coverage.Exploring {
+			return Running, true
+		}
+		return 0, false
+	}
+	if a.bossNoted != s.Me.Area {
+		a.bossNoted = s.Me.Area
+		ctx.Led.Append(verbs.Outcome{Verb: "quest", Holder: a.Name(), Result: verbs.ResDone,
+			Evidence: fmt.Sprintf("boss hunt: npc %d at (%d,%d), %d from me", int(boss), at.X, at.Y, chebyshev(s.Me.Pos, at))})
+	}
+	if chebyshev(s.Me.Pos, at) > 6 {
+		o := marchOpts(ctx, a.Name(), 1200*time.Millisecond)
+		o.AllowLeap = true
+		moveTo(ctx, at, o)
+	}
+	return Running, true
+}
+
+// skipHeldQuestLegs passes over quest legs whose artifact she already holds
+// (2026-09-26: a restart in Halls 2 walked her down to Halls 3 for a cube in
+// her bag, then back up for Far Oasis). The router reaches the next leg by
+// the map graph, so a dead-end quest level is simply not visited.
+func (a *Advance) skipHeldQuestLegs(ctx *Ctx, idx int) int {
+	d := ctx.GR.GetData()
+	for idx < len(a.Itinerary)-1 {
+		q, ok := questLegs[a.Itinerary[idx].Area]
+		if !ok || !questItemHeld(d.Data, q.item) || a.Itinerary[idx].Area == ctx.Snap.Me.Area {
+			break
+		}
+		idx++
+	}
+	return idx
 }

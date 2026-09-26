@@ -15,6 +15,7 @@ import (
 	"os/signal"
 	"sort"
 	"strings"
+	"sync/atomic"
 	"syscall"
 	"time"
 	"unsafe"
@@ -22,17 +23,24 @@ import (
 	"github.com/hectorgimenez/d2go/pkg/data"
 	"github.com/hectorgimenez/d2go/pkg/data/area"
 	"github.com/hectorgimenez/d2go/pkg/data/item"
+	"github.com/hectorgimenez/d2go/pkg/data/mode"
 	"github.com/hectorgimenez/d2go/pkg/data/npc"
 	"github.com/hectorgimenez/d2go/pkg/data/skill"
 	"github.com/hectorgimenez/d2go/pkg/data/stat"
 	"github.com/hectorgimenez/koolo/internal/azbot/activity"
 	"github.com/hectorgimenez/koolo/internal/azbot/arbiter"
 	"github.com/hectorgimenez/koolo/internal/azbot/combat"
+	"github.com/hectorgimenez/koolo/internal/azbot/exec"
 	"github.com/hectorgimenez/koolo/internal/azbot/journey"
 	"github.com/hectorgimenez/koolo/internal/azbot/memory"
 	"github.com/hectorgimenez/koolo/internal/azbot/motor"
+	"github.com/hectorgimenez/koolo/internal/azbot/moveto"
 	"github.com/hectorgimenez/koolo/internal/azbot/percept"
+	"github.com/hectorgimenez/koolo/internal/azbot/phase"
+	"github.com/hectorgimenez/koolo/internal/azbot/screen"
 	"github.com/hectorgimenez/koolo/internal/azbot/sentinel"
+	"github.com/hectorgimenez/koolo/internal/azbot/trace"
+	"github.com/hectorgimenez/koolo/internal/azbot/unstick"
 	"github.com/hectorgimenez/koolo/internal/azbot/verbs"
 	"github.com/hectorgimenez/koolo/internal/azbot/watchdog"
 	"github.com/hectorgimenez/koolo/internal/config"
@@ -40,6 +48,13 @@ import (
 	"github.com/lxn/win"
 	"golang.org/x/sys/windows"
 )
+
+// drillMove is the manual drills' locomotion: MoveTo, the one mover, with the
+// grid the drill holds (nil = dead reckoning, the way the town drills always
+// walked — no grid is built for them).
+func drillMove(m *motor.Motor, gr *game.MemoryReader, p *percept.Perceptor, led *verbs.Ledger, grid *game.Grid, goal data.Position, o moveto.Opts) moveto.Status {
+	return moveto.Default.MoveTo(moveto.Game(m, gr, p, led, grid), goal, o)
+}
 
 func chebyshev(a, b data.Position) int {
 	dx, dy := a.X-b.X, a.Y-b.Y
@@ -103,30 +118,30 @@ func runReplay(logger *slog.Logger, path string, legs []activity.Leg) {
 		return
 	}
 	defer f.Close()
-	radv := activity.NewAdvance(legs)
-	acts := []activity.Activity{&activity.Breakout{}, &activity.Flee{}, activity.NewDodge(),
-		&activity.Respawn{}, activity.NewRelog(), activity.NewReclaim(), activity.NewFight(),
-		activity.NewLoot(), activity.NewImbibe(), activity.NewFence(), activity.NewRestock(), activity.NewRepair(),
-		activity.NewHeal(), activity.NewIdentify(), activity.NewEquip(), radv,
-		&activity.Return{}, &activity.Explore{Frontier: radv.FrontierFor}}
+	// The live executive's own roster: replay bids exactly what the loop bids.
+	roster := activity.Registry(legs, nil)
 	arb := &arbiter.Arbiter{}
 	sc := bufio.NewScanner(f)
 	sc.Buffer(make([]byte, 1024*1024), 1024*1024)
-	frame, last := 0, ""
+	frame, last, live := 0, "", "-"
 	for sc.Scan() {
+		// Decision frames ride beside the snapshots (newer files): they name the
+		// live holder for comparison and are not frames to decide on.
+		if df, ok := trace.IsFrame(sc.Bytes()); ok {
+			live = df.Holder
+			if live == "" {
+				live = "-"
+			}
+			continue
+		}
 		frame++
 		var s percept.Snapshot
 		if err := json.Unmarshal(sc.Bytes(), &s); err != nil {
 			continue
 		}
-		var demands []arbiter.Demand
-		for _, a := range acts {
-			if d := a.Demand(&s); d != nil {
-				demands = append(demands, *d)
-			}
-		}
-		grant, changed := arb.Decide(demands)
-		if changed || (grant == nil && last != "-") {
+		demands := roster.Demands(&s)
+		grant, ch := arb.Decide(demands)
+		if ch.Changed() || (grant == nil && last != "-") {
 			holder, urg := "-", 0.0
 			if grant != nil {
 				holder, urg = grant.Demand.Who, grant.Demand.Urgency
@@ -141,7 +156,7 @@ func runReplay(logger *slog.Logger, path string, legs []activity.Leg) {
 				logger.Info("replay", "frame", frame, "t", s.At.Format("15:04:05"),
 					"grant", holder, "urgency", fmt.Sprintf("%.2f", urg),
 					"hp", s.Me.HPPct, "area", int(s.Me.Area), "near", near,
-					"weapon", s.Me.WeaponKind, "bids", len(demands))
+					"weapon", s.Me.WeaponKind, "bids", len(demands), "why", ch.Why(), "live", live)
 				last = holder
 			}
 		}
@@ -178,7 +193,10 @@ func vkOf(name string) int {
 }
 
 func main() {
-	seconds := flag.Int("seconds", 3600, "run duration in seconds")
+	seconds := flag.Int("seconds", 3600, "run budget in seconds — then the SAFE END: the session winds down (TP to town; outside town never an exit but the confirmed pause menu), then -pausefailsafe, then disengage and hold (see -winddown). logs/stop.now and a first Ctrl-C do the same")
+	windDownF := flag.Duration("winddown", exec.WindCap, "the SAFE END's Recall budget: this long to TP to town before the next rung — the pause (-pausefailsafe) or disengage-and-hold")
+	pauseFailsafeF := flag.Bool("pausefailsafe", true, "the SAFE END's pause rung: when the Recall budget is spent, Recall gives up (no tome / an empty one) or HP falls under the flee floor (33%), open the pause menu (one ESC on a clear screen, seen within 2s, one retry) and exit with it LEFT UP; not confirmed → disengage and hold. Live test R8 verifies the pause freezes the offline world — if it does not, this default flips to false and the ladder goes straight from Recall to disengage-and-hold (tome and HP then do not end the Recall rung)")
+	disengagedF := flag.Bool("disengaged", false, "start DISENGAGED (teaching mode): full perception, screen shadow, trace/state lines and flight recorder, ZERO input — no injector stubs, no attach amnesty, no calibration or startup hygiene — until F10 engages")
 	dpiScale := flag.Float64("dpiscale", 1.25, "display scale (this laptop: 1.25)")
 	fakeFocus := flag.Bool("fakefocus", true, "background play: post WM_ACTIVATE-family messages so D2R keeps its hover oracle alive while another window has the foreground (never takes focus, never clips the cursor)")
 	worldScaleF := flag.Float64("worldscale", 0, "world-aim scale override (logical client px -> world cursor px). 0 = the display scale; the per-client projection correction comes from -aimcal instead")
@@ -192,6 +210,9 @@ func main() {
 	goal := flag.String("goal", "farm", "the Director's current goal: farm (routes+explore+loot) | campaign/rampage (Act 1 march) | gamble (Gheed errand when bankrolled). Goals shape WHICH activities bid; the arbiter still owns every moment.")
 	meleeKeyF := flag.String("meleekey", "", "OWNER-DECLARED melee skill key (e.g. f1 for Jab) — config beats inference on a scrambled mod; overrides calibration")
 	rangedKeyF := flag.String("rangedkey", "", "OWNER-DECLARED bow skill key — overrides calibration (the flinch audit still verifies)")
+	leftSkillF := flag.String("leftskill", "auto", "LEFT-button primary strike (the owner's Carnage, 2026-09-24): auto = primary when calibration reads a non-basic, owned PlayerUnit.LeftSkill | on = force it primary whatever calibration saw | off = never (right-skill strikes only, the pre-Carnage order)")
+	tpKeyF := flag.String("tpkey", "", "OWNER-DECLARED Town Portal (tome) key, e.g. f1 — overrides calibration; none/off = no town portal (Recall, Unstick, Withdraw and Breakout skip their portal paths). Empty = calibration decides")
+	calKeysF := flag.String("calkeys", combat.DefaultExtraCalibrationKeys, "EXTRA skill hotkeys calibration probes after F1-F8 (comma list). Only F1-F11 are ever pressed — never the killswitch, never F12, never a letter/digit/Tab/Enter/Esc (panels, belt, chat)")
 	invKeyF := flag.String("invkey", "i", "inventory-panel toggle key (the Equip service's door; KeyBindings memory is dead, so declare it if rebound)")
 	roadTest := flag.Bool("roadtest", false, "M2 soak: walk the measured town road out and back on Stride verbs, print the outcome histogram, exit")
 	jTest := flag.String("jtest", "", "M3 soak: journey to world x,y on the live grid via the Journey authority, print the verdict, exit")
@@ -210,14 +231,24 @@ func main() {
 	shopMap := flag.String("shopmap", "", "akaratest: hover-sweep the shop panel 'x0,y0,x1,y1,step' and log which stock item the GAME says is hovered at each point — builds the true pixel map empirically")
 	exitProbe := flag.Bool("exitprobe", false, "PURE READ: dump the current area's AdjacentLevels (raw + live-translated), live entrance units, and the BFS hop toward the next Act 1 leg — validates the crossing knowledge before the Advance activity trusts it")
 	missileProbe := flag.Int("missileprobe", 0, "PURE READ: sample the missile table for N seconds and print every projectile with measured velocity — validates the dodge oracle (stand near something that shoots)")
-	relogTest := flag.Bool("relogtest", false, "manual harness, staged: alone = open the pause menu, screenshot it (logs/relog_pausemenu.png), close it. With -exitxy = click Save+Exit, screenshot the main menu (logs/relog_mainmenu.png). With -playxy too = full relog loop, verify the corpse materialized in town")
+	relogTest := flag.Bool("relogtest", false, "RELOG DRILL (in game, hands off): one session relog end to end on the executive's Session FSM — pause menu by sight, Save and Exit, Play, new world — photographing every phase (logs/relog_<phase>.png), then report the seed and the corpse, exit. Live, create logs/relog.now to request one")
 	wpCalTest := flag.Bool("wpcaltest", false, "P-10 phase 1 harness: walk onto the nearest waypoint, click it open, photograph the panel (logs/wp_panel.png), and dump the blueness map — re-derives the compass column and destination rows for THIS client, exit")
 	replayF := flag.String("replay", "", "OFFLINE DECISION REPLAY: path to a flight .jsonl — every frame runs Demand + arbiter and prints the grant timeline. No game needed; live failures become desk-checkable evidence (the STE mentality: verify against recorded reality, not her blood)")
-	exitXY := flag.String("exitxy", "", "relogtest: screenshot x,y of the pause menu's Save and Exit button")
-	playXY := flag.String("playxy", "", "relogtest: screenshot x,y of the main menu's Play button")
+	exitXY := flag.String("exitxy", "", "relogtest: override the pause menu's Save and Exit button, screenshot x,y (default 958,822 on the 1920x1050 client)")
+	playXY := flag.String("playxy", "", "relogtest: override the character screen's Play button, screenshot x,y (default 922,822)")
+	janitorF := flag.Bool("janitor", false, "v2 step 6: the executive GATES every Step on the screen oracle and a janitor closes foreign panels by sight (replaces the pause sentry, startup hygiene, cursor-drop ESC, watchdog ESC probe and the services' blind ESCs). Also AZBOT_JANITOR=1")
+	combatLearnF := flag.String("combatlearn", "on", "DYNAMIC STRIKE (the owner, 2026-09-24: Leap Attack's AoE vs Carnage's single target): on = choose by the learned kills/sec − HP − mana utility per (skill, cluster, distance) bucket, persisted per character+skill set | off = deterministic priors, no exploration (telemetry still measured and stored)")
+	exploreF := flag.Float64("explore", 0.1, "DYNAMIC STRIKE exploration ε at zero samples (decays with the bucket's sample count; never below 50% life); 0 = never explore")
 	logger := slog.New(slog.NewTextHandler(os.Stdout, nil))
 
 	flag.Parse()
+	loadGameData(logger, *moddataF) // cmd/azbot/gamedata.go: the mod's tables, once
+	switch strings.ToLower(*combatLearnF) {
+	case "off", "false", "0", "none":
+		activity.SetCombatLearn(false, 0)
+	default:
+		activity.SetCombatLearn(true, *exploreF)
+	}
 
 	// ---- OFFLINE REPLAY: no attach, no injector, no game — pure decision review ----
 	if *replayF != "" {
@@ -270,31 +301,63 @@ func main() {
 	}
 	logger.Info("world scale", "scale", ws, "client", client, "dpi", *dpiScale)
 	logger.Info("navigation mode", "deliberate", os.Getenv("AZBOT_DELIBERATE") == "1")
+	janitorOn := *janitorF || os.Getenv("AZBOT_JANITOR") == "1"
+	logger.Info("ui mode", "janitor", janitorOn)
 	gi, err := game.InjectorInit(logger, pid)
 	if err != nil {
 		logger.Error("injector init failed", "err", err)
 		return
 	}
-	if err := gi.Load(); err != nil {
+	if *disengagedF {
+		// DISENGAGED START: no stubs are loaded (F10's Reengage loads them); the
+		// unload only heals whatever a prior run may have left patched — the
+		// kill-switch's own heal, no input.
+		_ = gi.Unload()
+	} else if err := gi.Load(); err != nil {
 		logger.Error("injector load failed", "err", err)
 		return
 	}
 	defer func() { gi.Unload(); gi.Close() }()
-	sigCh := make(chan os.Signal, 1)
+	// THE SAFE END (relay R4): the executive's graceful stop requests — the
+	// -seconds budget, logs/stop.now and a first Ctrl-C — all wind the session
+	// down (exec.Session WindDown). A second Ctrl-C, a SIGTERM (console close
+	// gives no time to wind down) or any signal before the executive runs
+	// heals and exits at once, as before.
+	var executiveLive atomic.Bool
+	stopReq := make(chan string, 1)
+	sigCh := make(chan os.Signal, 2)
 	signal.Notify(sigCh, os.Interrupt, syscall.SIGTERM)
 	go func() {
-		<-sigCh
-		logger.Info("signal — healing D2R input and exiting")
-		gi.Unload()
-		gi.Close()
-		os.Exit(0)
+		for sig := range sigCh {
+			if sig == os.Interrupt && executiveLive.Load() {
+				select {
+				case stopReq <- "signal (Ctrl-C)":
+					logger.Warn("signal — winding down safely (town, else pause, else hold); Ctrl-C again exits NOW")
+					continue
+				default:
+				}
+			}
+			logger.Info("signal — healing D2R input and exiting")
+			gi.Unload()
+			gi.Close()
+			os.Exit(0)
+		}
 	}()
 	hid := game.NewHID(gr, gi)
 	// Modifier amnesty at attach AND exit (LIFO: this defer runs before gi.Unload's
 	// heal): clear latched shift/ctrl/alt so nobody inherits a stuck modifier.
-	hid.ModifierAmnesty()
-	game.SendModifierUpReal()
-	defer func() { hid.ModifierAmnesty(); game.SendModifierUpReal() }()
+	// A -disengaged run sends neither until F10 first engages it.
+	neverEngaged := *disengagedF
+	if !neverEngaged {
+		hid.ModifierAmnesty()
+		game.SendModifierUpReal()
+	}
+	defer func() {
+		if !neverEngaged {
+			hid.ModifierAmnesty()
+			game.SendModifierUpReal()
+		}
+	}()
 
 	// ---- M0: epistemics gate ----
 	p := percept.New(gr)
@@ -319,7 +382,7 @@ func main() {
 		// A PAUSED GAME READS AS GARBAGE (2026-09-23: position/stats invalid behind
 		// the ESC menu — two attach failures that day were a stray pause). The
 		// screen identifies it; the cure is a click on Return to Game, never ESC.
-		if i == 4 || i == 10 {
+		if (i == 4 || i == 10) && !*disengagedF { // -disengaged: no input before F10
 			if _, x, y, ok := game.UIBlocker(gr.Screenshot()); ok {
 				hid.FocusGame()
 				time.Sleep(200 * time.Millisecond)
@@ -333,7 +396,7 @@ func main() {
 		time.Sleep(500 * time.Millisecond)
 	}
 	logger.Info("attach report", "verdict", report.String())
-	if !report.OK() && !*relogTest {
+	if !report.OK() {
 		logger.Error("EPISTEMICS GATE FAILED — refusing to run on garbage reads. Is a character in-game?")
 		return
 	}
@@ -350,6 +413,9 @@ func main() {
 	// ---- motor + sentinel ----
 	m := motor.New(logger, hid, gi, hid.GetASCIICode(*moveKey))
 	m.SetPanelScale(*dpiScale)
+	if *disengagedF {
+		m.StartDisengaged() // before the sentinel starts: not one drink, not one key
+	}
 	var beltKeys []byte
 	for _, k := range strings.Split(*belt, ",") {
 		if k = strings.TrimSpace(k); k != "" {
@@ -372,6 +438,9 @@ func main() {
 	} else {
 		logger.Info("map data fetched", "seed", gr.MapSeed(), "areas", len(gr.GetData().Areas))
 	}
+	// MAP FUSION: every navigation grid is live > atlas > trusted prior > priced unknown.
+	fz := newFusion(gr, logger)
+	defer fz.flush()
 
 	if *exitProbe {
 		// The training drill for the leg-walker: read everything Advance would act on,
@@ -499,7 +568,7 @@ func main() {
 			if chebyshev(s.Me.Pos, wp.Position) <= 2 {
 				break
 			}
-			verbs.Stride{To: wp.Position, Hold: 700 * time.Millisecond, MinGain: 1}.Do(m, gr, p, led, "wpcal")
+			drillMove(m, gr, p, led, nil, wp.Position, moveto.Opts{Holder: "wpcal", Purpose: moveto.Approach, MaxHold: 700 * time.Millisecond})
 		}
 		// A WAYPOINT IS A FLAT GROUND PAD, not a tall portal — its clickable
 		// hover sits AT the base, so the sweep centers on the projection
@@ -539,7 +608,7 @@ func main() {
 					}
 				}
 				logger.Info("wpcal: no WP hover this pass, re-approaching", "attempt", tryOpen+1)
-				verbs.Stride{To: wp.Position, Hold: 500 * time.Millisecond, MinGain: 1}.Do(m, gr, p, led, "wpcal")
+				drillMove(m, gr, p, led, nil, wp.Position, moveto.Opts{Holder: "wpcal", Purpose: moveto.Approach, MaxHold: 500 * time.Millisecond})
 			}
 		}()
 		time.Sleep(400 * time.Millisecond)
@@ -589,9 +658,12 @@ func main() {
 	}
 
 	if *relogTest {
-		// THE RELOG RITUAL, drilled in stages (the owner's ask: exit game and relog so
-		// the corpse materializes IN TOWN — no naked suicide runs across the moor).
-		// Menus read hardware-level input only: foreground + SendKeyReal/SendClickRealScreen.
+		// THE RELOG DRILL (docs/AZBOT_V2.md step 8): one relog end to end on the
+		// exact Session FSM and driver the executive runs — every phase judged by
+		// sight or memory validity with a bounded wait, every phase photographed
+		// (logs/relog_<phase>.png). No ESC of its own: the session sends its one
+		// OpenPause ESC only on a clear world screen. -exitxy / -playxy override
+		// the Save and Exit / Play buttons (screenshot px, 1920x1050 physical).
 		shot := func(path string) {
 			if f, err := os.Create(path); err == nil {
 				_ = png.Encode(f, gr.Screenshot())
@@ -599,17 +671,8 @@ func main() {
 				logger.Info("relogtest: screenshot", "path", path)
 			}
 		}
-		// Screenshot pixels are PHYSICAL client px (1920-wide); SendClickRealScreen wants
-		// LOGICAL screen coords (the DPI-unaware process's 1536-wide desktop): divide by
-		// the display scale, then add the logical client origin. Validated against the
-		// gamble-refresh pair: shot(569,744) ↔ logical screen (455,583).
-		toScreen := func(px, py int) (int, int) {
-			return int(float64(px)/(*dpiScale)) + gr.WindowLeftX, int(float64(py)/(*dpiScale)) + gr.WindowTopY
-		}
-		// MENUS DEMAND TRUE FOREGROUND (manager.go's law): a bare
-		// SetForegroundWindow from a background process silently fails —
-		// force it with the AttachThreadInput trick and VERIFY, or the click
-		// lands in whatever app actually holds focus.
+		// A manual drill runs from a terminal that holds the focus; the session
+		// never steals it, so hand it to the game once, verified.
 		for i := 0; i < 12; i++ {
 			if win.GetForegroundWindow() == hwnd {
 				break
@@ -618,76 +681,62 @@ func main() {
 			time.Sleep(300 * time.Millisecond)
 		}
 		logger.Info("relogtest: foreground check", "isForeground", win.GetForegroundWindow() == hwnd)
-		time.Sleep(400 * time.Millisecond)
-		atMenu := !report.OK() // already OUT of the game (character select): skip the exit phase
-		if atMenu && *playXY == "" {
-			shot("logs/relog_mainmenu.png")
-			logger.Info("relogtest: at the menu already — measure Play, rerun with -playxy")
-			close(stop)
-			return
+		dsh := newShadow(logger, gr)
+		dsd := newSessionDriver(logger, m, gr, dsh, activity.NewRelog())
+		if *exitXY != "" {
+			fmt.Sscanf(*exitXY, "%d,%d", &dsd.ses.SaveExit.X, &dsd.ses.SaveExit.Y)
 		}
-		if !atMenu {
-			game.SendKeyReal(0x1B) // ESC — the pause menu
-			time.Sleep(900 * time.Millisecond)
+		if *playXY != "" {
+			fmt.Sscanf(*playXY, "%d,%d", &dsd.ses.Play.X, &dsd.ses.Play.Y)
 		}
-		if !atMenu && *exitXY == "" {
-			shot("logs/relog_pausemenu.png")
-			game.SendKeyReal(0x1B) // close it again — touch nothing else
-			logger.Info("relogtest: stage A done — measure Save+Exit from the screenshot, rerun with -exitxy")
-			close(stop)
-			return
+		dsd.onChange = func(ses string) {
+			shot("logs/relog_" + strings.ReplaceAll(ses, "/", "_") + ".png")
 		}
-		if !atMenu {
-			var ex, ey int
-			fmt.Sscanf(*exitXY, "%d,%d", &ex, &ey)
-			sx, sy := toScreen(ex, ey)
-			logger.Info("relogtest: clicking Save+Exit", "shot", *exitXY, "screen", fmt.Sprintf("(%d,%d)", sx, sy))
-			game.SendClickRealScreen(sx, sy)
-			// Wait for the world to actually unload (position reads go garbage).
-			gone := false
-			for i := 0; i < 40; i++ {
-				time.Sleep(500 * time.Millisecond)
-				pos := gr.GetData().PlayerUnit.Position
-				if pos.X == 0 && pos.Y == 0 {
-					gone = true
-					break
+		var ended *exec.RelogEnd
+		dsd.onEnd = func(e exec.RelogEnd) { ended = &e }
+		requested, invalid := false, false
+		var tick uint64
+		deadline := time.Now().Add(2 * time.Minute)
+		for time.Now().Before(deadline) && (!requested || dsd.ses.Relogging()) {
+			tick++
+			s := p.Capture()
+			dsh.observe(tick, s, "relogtest")
+			invalid = invalid || !s.Valid
+			if s.Valid && invalid && dsd.ses.Relogging() {
+				invalid = false
+				if err := gr.FetchMapData(); err != nil {
+					logger.Warn("relogtest: map data fetch failed", "err", err)
 				}
 			}
-			logger.Info("relogtest: world unloaded", "gone", gone)
-			time.Sleep(3 * time.Second) // let the main menu settle
-			if *playXY == "" {
-				shot("logs/relog_mainmenu.png")
-				logger.Info("relogtest: stage B done — measure Play from the screenshot, rerun with -playxy (game is AT THE MENU)")
-				close(stop)
-				return
+			if !requested && dsd.ses.State() == exec.InGame {
+				requested = dsd.request("drill (-relogtest)")
 			}
+			dsd.step(tick, s)
+			time.Sleep(40 * time.Millisecond)
 		}
-		var px2, py2 int
-		fmt.Sscanf(*playXY, "%d,%d", &px2, &py2)
-		psx, psy := toScreen(px2, py2)
-		logger.Info("relogtest: clicking Play", "shot", *playXY, "screen", fmt.Sprintf("(%d,%d)", psx, psy))
-		game.SendClickRealScreen(psx, psy)
-		// Gate loop: wait for a sane in-game read.
-		ok := false
-		for i := 0; i < 60; i++ {
-			time.Sleep(1 * time.Second)
-			if p.Gate().OK() {
-				ok = true
-				break
-			}
-		}
-		if !ok {
+		switch {
+		case ended == nil:
 			shot("logs/relog_stuck.png")
-			logger.Error("relogtest: never gated back in — screenshot saved")
-			close(stop)
-			return
+			logger.Error("relogtest: the relog never ended inside 2 minutes", "ses", dsd.ses.String())
+		case !ended.OK():
+			logger.Error("relogtest: relog FAILED", "why", ended.Why.String(), "phase", ended.Phase.String(),
+				"churned", ended.Churned, "detail", ended.Detail)
+			if !ended.Churned {
+				// Live, the janitor clicks the now-foreign pause menu away; the
+				// drill has no janitor, so the same click by sight.
+				if n := activity.EnsureWorld(gr, m); n > 0 {
+					logger.Info("relogtest: pause menu clicked away by sight (Return to Game)", "layers", n)
+				}
+			}
+		default:
+			time.Sleep(2 * time.Second)
+			d := gr.GetData()
+			logger.Info("relogtest: BACK IN GAME", "took", ended.Took.Round(100*time.Millisecond), "detail", ended.Detail,
+				"pos", fmt.Sprintf("(%d,%d)", d.PlayerUnit.Position.X, d.PlayerUnit.Position.Y),
+				"area", int(d.PlayerUnit.Area), "seed", gr.MapSeed())
+			logger.Info("relogtest: corpse", "found", d.Corpse.Found,
+				"pos", fmt.Sprintf("(%d,%d)", d.Corpse.Position.X, d.Corpse.Position.Y))
 		}
-		time.Sleep(2 * time.Second)
-		d := gr.GetData()
-		logger.Info("relogtest: BACK IN GAME", "pos", fmt.Sprintf("(%d,%d)", d.PlayerUnit.Position.X, d.PlayerUnit.Position.Y),
-			"area", int(d.PlayerUnit.Area), "seed", gr.MapSeed())
-		logger.Info("relogtest: corpse", "found", d.Corpse.Found,
-			"pos", fmt.Sprintf("(%d,%d)", d.Corpse.Position.X, d.Corpse.Position.Y))
 		close(stop)
 		return
 	}
@@ -922,7 +971,7 @@ func main() {
 					if found || chebyshev(gr.GetData().PlayerUnit.Position, wp) <= 5 {
 						break
 					}
-					verbs.Stride{To: wp, MinGain: 1}.Do(m, gr, p, led, "akaratest/search")
+					drillMove(m, gr, p, led, nil, wp, moveto.Opts{Holder: "akaratest/search", Purpose: moveto.Errand, Arrive: 5})
 				}
 				if found {
 					break
@@ -951,14 +1000,14 @@ func main() {
 				if dist < 4 {
 					me := d.PlayerUnit.Position
 					back := data.Position{X: me.X + (me.X-ak.Position.X)*3, Y: me.Y + (me.Y-ak.Position.Y)*3}
-					verbs.Stride{To: back, Hold: 400 * time.Millisecond}.Do(m, gr, p, led, "akaratest/backoff")
+					drillMove(m, gr, p, led, nil, back, moveto.Opts{Holder: "akaratest/backoff", Purpose: moveto.Errand, MaxHold: 400 * time.Millisecond})
 					continue
 				}
 				hold := 1600 * time.Millisecond
 				if dist < 14 {
 					hold = 500 * time.Millisecond
 				}
-				verbs.Stride{To: ak.Position, Hold: hold, MinGain: 1}.Do(m, gr, p, led, "akaratest/approach")
+				drillMove(m, gr, p, led, nil, ak.Position, moveto.Opts{Holder: "akaratest/approach", Purpose: moveto.Errand, MaxHold: hold, Arrive: 4})
 			}
 			m.MoveStop()
 			time.Sleep(600 * time.Millisecond)
@@ -980,7 +1029,8 @@ func main() {
 		for attempt := 0; attempt < 6 && !shopOpen; attempt++ {
 			if attempt > 0 {
 				d0 := gr.GetData()
-				verbs.Stride{To: data.Position{X: d0.PlayerUnit.Position.X + 8, Y: d0.PlayerUnit.Position.Y + 8}, Hold: 700 * time.Millisecond}.Do(m, gr, p, led, "akaratest/reset")
+				drillMove(m, gr, p, led, nil, data.Position{X: d0.PlayerUnit.Position.X + 8, Y: d0.PlayerUnit.Position.Y + 8},
+					moveto.Opts{Holder: "akaratest/reset", Purpose: moveto.Errand, MaxHold: 700 * time.Millisecond})
 				approach()
 			}
 			d := gr.GetData()
@@ -1315,7 +1365,7 @@ func main() {
 					if found || chebyshev(d.PlayerUnit.Position, wp) <= 5 {
 						break
 					}
-					verbs.Stride{To: wp, MinGain: 1}.Do(m, gr, p, led, "charsitest/search")
+					drillMove(m, gr, p, led, nil, wp, moveto.Opts{Holder: "charsitest/search", Purpose: moveto.Errand, Arrive: 5})
 				}
 				if found {
 					break
@@ -1350,14 +1400,14 @@ func main() {
 				if dist < 4 { // too close — back off a step so her sprite is clickable
 					me := d.PlayerUnit.Position
 					back := data.Position{X: me.X + (me.X-ch.Position.X)*3, Y: me.Y + (me.Y-ch.Position.Y)*3}
-					verbs.Stride{To: back, Hold: 400 * time.Millisecond}.Do(m, gr, p, led, "charsitest/backoff")
+					drillMove(m, gr, p, led, nil, back, moveto.Opts{Holder: "charsitest/backoff", Purpose: moveto.Errand, MaxHold: 400 * time.Millisecond})
 					continue
 				}
 				hold := 1600 * time.Millisecond
 				if dist < 14 {
 					hold = 500 * time.Millisecond // short legs near her: land in the band, don't fly past it
 				}
-				verbs.Stride{To: ch.Position, Hold: hold, MinGain: 1}.Do(m, gr, p, led, "charsitest/approach")
+				drillMove(m, gr, p, led, nil, ch.Position, moveto.Opts{Holder: "charsitest/approach", Purpose: moveto.Errand, MaxHold: hold, Arrive: 4})
 			}
 			m.MoveStop()
 			time.Sleep(600 * time.Millisecond) // let both of us settle out of walk animations
@@ -1416,7 +1466,8 @@ func main() {
 			if attempt > 0 {
 				// The Akara lesson: stale-vantage clicks keep missing — step off and re-approach fresh.
 				d0 := gr.GetData()
-				verbs.Stride{To: data.Position{X: d0.PlayerUnit.Position.X + 8, Y: d0.PlayerUnit.Position.Y + 8}, Hold: 700 * time.Millisecond}.Do(m, gr, p, led, "charsitest/reset")
+				drillMove(m, gr, p, led, nil, data.Position{X: d0.PlayerUnit.Position.X + 8, Y: d0.PlayerUnit.Position.Y + 8},
+					moveto.Opts{Holder: "charsitest/reset", Purpose: moveto.Errand, MaxHold: 700 * time.Millisecond})
 				approach()
 			}
 			d := gr.GetData()
@@ -1594,7 +1645,7 @@ func main() {
 				"unit", int(best.ID), "pos", fmt.Sprintf("(%d,%d)", best.Pos.X, best.Pos.Y),
 				"dist", bd, "area", int(s.Me.Area))
 			if bd > 20 {
-				verbs.Stride{To: best.Pos, MinGain: 1}.Do(m, gr, p, led, "portaltest/approach")
+				drillMove(m, gr, p, led, nil, best.Pos, moveto.Opts{Holder: "portaltest/approach", Purpose: moveto.Travel})
 				continue
 			}
 			attempts++
@@ -1640,7 +1691,7 @@ func main() {
 				if chebyshev(s.Me.Pos, wp) <= 6 {
 					break
 				}
-				verbs.Stride{To: wp}.Do(m, gr, p, led, "fighttest/road")
+				drillMove(m, gr, p, led, nil, wp, moveto.Opts{Holder: "fighttest/road", Purpose: moveto.Travel, Arrive: 6})
 			}
 			if s := p.Capture(); s.Valid && int(s.Me.Area) == 2 {
 				break
@@ -1653,7 +1704,7 @@ func main() {
 			return
 		}
 		logger.Info("fighttest: in Blood Moor — hunting", "pos", fmt.Sprintf("(%d,%d)", s.Me.Pos.X, s.Me.Pos.Y))
-		grid, _, err := gr.BuildLiveGridRooms()
+		grid, err := fz.build()
 		if err != nil {
 			logger.Error("fighttest: grid failed", "err", err)
 			close(stop)
@@ -1693,14 +1744,13 @@ func main() {
 					sweepIdx++
 					continue
 				}
-				verbs.Stride{To: wp}.Do(m, gr, p, led, "fighttest/sweep")
+				drillMove(m, gr, p, led, grid, wp, moveto.Opts{Holder: "fighttest/sweep", Purpose: moveto.Travel, Arrive: 8})
 				continue
 			}
 			if bd > 4 {
-				j := journey.New(gr, grid, best.Pos, "fighttest/approach")
-				st := j.Step(m, p, led)
-				if st.State == journey.Stalled || st.State == journey.NoPath {
-					logger.Info("fighttest: approach verdict", "state", st.State.String())
+				st := drillMove(m, gr, p, led, grid, best.Pos, moveto.Opts{Holder: "fighttest/approach", Purpose: moveto.Approach, Arrive: 4})
+				if st.State == moveto.Stalled || st.State == moveto.NoPath {
+					logger.Info("fighttest: approach verdict", "state", st.State.String(), "why", st.Why)
 				}
 				continue
 			}
@@ -1721,7 +1771,7 @@ func main() {
 		return
 	}
 
-	// ---- M3 journey test: one goal, one authority, honest verdicts ----
+	// ---- M3 journey test: one goal, the one mover (MoveTo), honest verdicts ----
 	if *jTest != "" {
 		var tx, ty int
 		if n, _ := fmt.Sscanf(*jTest, "%d,%d", &tx, &ty); n != 2 {
@@ -1732,24 +1782,24 @@ func main() {
 		led.Sink = func(o verbs.Outcome) {
 			logger.Info("outcome", "verb", o.Verb, "holder", o.Holder, "result", o.Result.String(), "ev", o.Evidence)
 		}
-		grid, _, err := gr.BuildLiveGridRooms()
+		grid, err := fz.build()
 		if err != nil {
 			logger.Error("jtest: live grid failed", "err", err)
 			return
 		}
-		j := journey.New(gr, grid, data.Position{X: tx, Y: ty}, "jtest")
+		goal := data.Position{X: tx, Y: ty}
 		deadline := time.Now().Add(3 * time.Minute)
 		for time.Now().Before(deadline) {
 			if !m.Engage.Engaged() {
 				time.Sleep(500 * time.Millisecond)
 				continue
 			}
-			st := j.Step(m, p, led)
-			if st.Note != "" {
-				logger.Info("journey", "state", st.State.String(), "note", st.Note)
+			st := drillMove(m, gr, p, led, grid, goal, moveto.Opts{Holder: "jtest", Purpose: moveto.Travel, Arrive: 5})
+			if st.Why != "" {
+				logger.Info("journey", "state", st.State.String(), "mode", st.Mode, "note", st.Why)
 			}
-			if st.State == journey.Arrived || st.State == journey.NoPath || st.State == journey.Stalled {
-				logger.Info("jtest: verdict", "state", st.State.String(), "note", st.Note)
+			if st.State == moveto.Arrived || st.State == moveto.NoPath || st.State == moveto.Stalled {
+				logger.Info("jtest: verdict", "state", st.State.String(), "note", st.Why)
 				break
 			}
 		}
@@ -1784,8 +1834,13 @@ func main() {
 					time.Sleep(500 * time.Millisecond) // human has the controls; wait politely
 					continue
 				}
-				o := verbs.Stride{To: wp}.Do(m, gr, p, led, "roadtest")
-				hist[o.Result.String()]++
+				st := drillMove(m, gr, p, led, nil, wp, moveto.Opts{Holder: "roadtest", Purpose: moveto.Travel, Arrive: 6})
+				k := st.State.String()
+				if st.Blocked {
+					k = "blocked"
+				}
+				hist[k]++
+
 			}
 		}
 		logger.Info("roadtest: histogram", "results", fmt.Sprintf("%v", hist))
@@ -1795,13 +1850,37 @@ func main() {
 
 	// ---- THE EXECUTIVE: one arbiter, one activity per cycle, honest grants ----
 	led := verbs.NewLedger(2048)
+	// THE ONE COVERAGE MODEL (activity/coverage.go): the tiles she has SEEN,
+	// per seed and area, persisted at seed scope — a town trip or a restart
+	// comes back to them. Explore and Advance's search share its picker.
+	activity.Cov = activity.NewCovTracker(gr, mem, func(msg string, kv ...any) { logger.Info(msg, kv...) })
+	sh := newShadow(logger, gr)
+	sh.Start()
 	led.Sink = func(o verbs.Outcome) {
 		// done outcomes are the quiet normal; exceptions speak — except the route
 		// owner's decisions, which are the story of WHERE she is going and why.
-		if o.Result != verbs.ResDone || o.Verb == "intent" || o.Verb == "escalate" {
+		// Strike hits and fight summaries are the Carnage run's telemetry
+		// (2026-09-24): every one speaks.
+		// verb=move is MoveTo's status line — written on status changes only.
+		if o.Result != verbs.ResDone || o.Verb == "intent" || o.Verb == "escalate" ||
+			o.Verb == "strike" || o.Verb == "fight" || o.Verb == "move" ||
+			o.Verb == "quest" || o.Verb == "stash" || o.Verb == "identify" || o.Verb == "fence" || o.Verb == "belt" || o.Verb == "door" || o.Verb == "stand" || o.Verb == "waypoint" || o.Verb == "loot" || o.Verb == "buff" || o.Verb == "trap" || o.Verb == "voyage" || o.Verb == "cross" || o.Verb == "enterportal" || o.Verb == "pickup" { // the new objectives and errands speak (R19: all silent)
 			logger.Info("outcome", "verb", o.Verb, "holder", o.Holder, "tgt", o.Target, "result", o.Result.String(), "ev", o.Evidence)
 		}
+		// Nav follower transitions are ResDone too — the trace names every one.
+		if o.Verb == "nav" {
+			if ln, ok := trace.Nav(o.Holder, o.Evidence, curTick.Load()); ok {
+				emit(ln)
+			}
+		}
+		if uiVerbs[o.Verb] {
+			sh.Kick()
+		}
 	}
+	activity.PhaseSink = func(ln string) { emit(trace.Phase(ln, curTick.Load())) }
+	// The loot brain: config/loot.yaml, verb=lootpick decisions, the loot
+	// census, and the item catalog (memory + logs/loot_catalog.jsonl).
+	activity.WireLoot(mem, func(msg string, args ...any) { logger.Info(msg, args...) })
 	// WARNING 6 (the 12:00 and 12:12 lessons): a swap can inherit ANY panel —
 	// the vendor window (readable) or the plain bag (byte-blind, photographed
 	// eating six straight talks). The successor heals itself blind: in town,
@@ -1814,18 +1893,41 @@ func main() {
 	// STARTUP UI HYGIENE, BY SIGHT (2026-09-23): the blind ESC dance here raised
 	// the pause menu whenever no panel was open, and memory cannot see panels.
 	// Close an inherited shop by its own X, then click away any pause/sub-panel.
-	if x, y, ok := game.ShopOpenX(gr.Screenshot()); ok {
-		logger.Info("startup: inherited trade panel — closing by its X")
-		m.RealMenuClick(x, y)
-		time.Sleep(400 * time.Millisecond)
-	}
-	if n := activity.EnsureWorld(gr, m); n > 0 {
-		logger.Info("startup: cleared blocking screens by sight", "layers", n)
+	// JANITOR ON (v2 step 6): the janitor does this by the same oracle the gate
+	// uses — every seen panel is foreign with no holder — and it runs once
+	// more every tick, so it also replaces the pause sentry below.
+	activity.JanitorOn = janitorOn
+	// LAYER 0 — THE SESSION (v2 step 8): owns the relog, which is no longer an
+	// arbiter activity; Relog is its trigger and its motor half.
+	relog := activity.NewRelog()
+	sd := newSessionDriver(logger, m, gr, sh, relog)
+	sd.ses.WindCap, sd.ses.PauseFailsafe = *windDownF, *pauseFailsafeF
+	gk := newGatekeeper(logger, m, gr, sh, sd.ses)
+	gk.invKey = uint16(hid.GetASCIICode(*invKeyF))
+	hygiene := func() {
+		if janitorOn {
+			if n := gk.settle(p); n > 0 {
+				logger.Info("startup: janitor cleared foreign screens by sight", "actions", n)
+			}
+		} else {
+			if x, y, ok := game.ShopOpenX(gr.Screenshot()); ok {
+				logger.Info("startup: inherited trade panel — closing by its X")
+				m.RealMenuClick(x, y)
+				time.Sleep(400 * time.Millisecond)
+			}
+			if n := activity.EnsureWorld(gr, m); n > 0 {
+				logger.Info("startup: cleared blocking screens by sight", "layers", n)
+			}
+		}
 	}
 	// calibrate wraps probing + the owner's declared build: the owner KNOWS the char
 	// (classic-bot law — kolbot/koolo configs declared skills; nobody inferred them).
 	calibrate := func() combat.Capability {
-		c := combat.Calibrate(logger, gr, hid, mem, []string{"f1", "f2", "f3", "f4", "f5", "f6", "f7", "f8"})
+		calKeys, refused := combat.CalibrationKeys(*calKeysF, *killKey)
+		for _, r := range refused {
+			logger.Warn("capability: -calkeys key refused (never pressed)", "key", r)
+		}
+		c := combat.Calibrate(logger, gr, hid, mem, calKeys)
 		// Owner declaration sets the KEY; the proven SKILL for that key survives if
 		// calibration flipped it (P-8.7 skill-spend needs the skill ID for its tree
 		// seat — "skill 0 has no tree seat" was the bare-key binding, 12:48).
@@ -1851,6 +1953,56 @@ func main() {
 			c.Reach = &combat.Binding{Key: k, Skill: provenSkill(k)}
 			logger.Info("capability: owner-declared ranged key", "key", *rangedKeyF, "skill", int(c.Reach.Skill))
 		}
+		// -tpkey: the owner's word on the Town Portal tome key. Without a
+		// binding every portal path (Recall, Unstick, Withdraw, Breakout, the
+		// watchdog's portal remedy) is skipped — the wind-down goes straight
+		// to its pause rung instead of pressing a dead key.
+		switch tk := strings.ToLower(strings.TrimSpace(*tpKeyF)); tk {
+		case "":
+		case "none", "off", "false", "0":
+			c.TownTP = nil
+			logger.Info("capability: town portal DISABLED (-tpkey=none)")
+		default:
+			k := hid.GetASCIICode(tk)
+			sk := provenSkill(k)
+			if sk == 0 {
+				sk, _ = combat.OwnedTownPortal(c.Known)
+			}
+			c.TownTP = &combat.Binding{Key: k, Skill: sk}
+			logger.Info("capability: owner-declared town portal key", "key", tk,
+				"skill", int(sk), "skill_name", combat.SkillName(sk))
+		}
+		if c.TownTP == nil {
+			logger.Warn(combat.NoTownPortalLine, "why", combat.TownPortalDetail(c.Known))
+		} else {
+			logger.Info("capability: town portal binding", "key", int(c.TownTP.Key),
+				"skill", int(c.TownTP.Skill), "skill_name", combat.SkillName(c.TownTP.Skill))
+		}
+		activity.SetTownPortal(c.TownTP != nil)
+		// -leftskill: the owner's word on the LEFT-button primary when
+		// calibration cannot see it (on) or must not use it (off).
+		switch strings.ToLower(*leftSkillF) {
+		case "on", "force", "true", "1":
+			if c.Left == nil {
+				c.Left = combat.ReadLeft(gr.GetData().PlayerUnit)
+			}
+			c.Left.Forced = true
+			logger.Info("capability: left skill FORCED primary (-leftskill=on)",
+				"skill", int(c.Left.Skill), "skill_name", c.Left.Name, "proven", c.Left.Proven)
+		case "off", "false", "0", "none":
+			if c.Left != nil {
+				c.Left.Disabled = true
+			}
+			logger.Info("capability: left-click primary DISABLED (-leftskill=off) — right-skill strikes only")
+		default: // auto
+			if c.Left.Primary() {
+				logger.Info("capability: left skill is the PRIMARY strike",
+					"skill", int(c.Left.Skill), "skill_name", c.Left.Name, "mouse", "left")
+			} else if c.Left != nil {
+				logger.Info("capability: left skill not proven — right-skill strike order",
+					"skill", int(c.Left.Skill), "skill_name", c.Left.Name)
+			}
+		}
 		// UNARM THE TOME: probing leaves the LAST flipped skill selected — F3 is the
 		// Identify tome, so she stood around visibly armed with Identify (the owner
 		// kept catching it). End calibration on a combat selection.
@@ -1861,10 +2013,27 @@ func main() {
 		}
 		return c
 	}
-	cap := calibrate()
-	activity.SetBrawler(cap.Reach == nil && cap.Throw == nil) // P-2.-2: no ranged game = the Brawler's Creed
+	// The engaged start: hygiene, then calibration (Calibrate presses F1..F8
+	// through the HID — input). A -disengaged start defers both to the first
+	// engaged tick; until then the capability is empty and nothing acts.
+	var cap combat.Capability
+	started := false
+	start := func() {
+		started = true
+		hygiene()
+		cap = calibrate()
+		activity.SetBrawler(cap.Reach == nil && cap.Throw == nil) // P-2.-2: no ranged game = the Brawler's Creed
+		activity.SetBuffs(cap.Buffs)
+		activity.SetSummons(cap.Summons)
+		activity.SetTrapBinding(cap.Trap)
+	}
+	if *disengagedF {
+		sd.ses.Disengage(time.Now(), "-disengaged start: the owner drives until F10")
+		logger.Warn("DISENGAGED start: press F10 to engage — perceiving only (screen shadow, trace, flight recorder), no input until then")
+	} else {
+		start()
+	}
 	arb := &arbiter.Arbiter{}
-	acts := map[string]activity.Activity{}
 	road := []data.Position{{X: 6020, Y: 4952}, {X: 5992, Y: 4941}, {X: 5963, Y: 5001}, {X: 5962, Y: 4956}, {X: 5952, Y: 4944}}
 	// The hand-piloted road belongs to ONE world — its own provenance says
 	// "seed 466817790". On Fableboi's fresh seed it marched him into the
@@ -1889,29 +2058,34 @@ func main() {
 	if *goal == "campaign" || *goal == "rampage" {
 		startArea := area.ID(gr.GetData().PlayerUnit.Area)
 		legs = activity.CampaignItinerary(startArea)
+		activity.SetCampaignMode(*goal == "campaign")
+		// THE BUILD PROFILE (profiles/<Character>.yaml): the build's
+		// intent over the hotkey-read defaults.
+		charName := gr.GetData().PlayerUnit.Name
+		if p, ok, err := activity.LoadProfile("profiles", charName); err != nil {
+			logger.Warn("profile: unreadable, using the defaults", "char", charName, "err", err)
+		} else if ok {
+			logger.Info("profile loaded", "char", charName, "style", p.Style, "summons", fmt.Sprint(p.Summons))
+		} else {
+			logger.Info("profile: none for this character — the hotkey-read defaults play it", "char", charName)
+		}
 		logger.Info("campaign itinerary selected", "act", startArea.Act(), "startArea", int(startArea), "legs", len(legs))
 	}
-	adv := activity.NewAdvance(legs)
-	fight := activity.NewFight()
-	fight.March = adv.MarchGoal // P-5.8: the door mouth is shot open
-	for _, a := range []activity.Activity{&activity.Breakout{}, &activity.Stand{}, &activity.Flee{March: adv.MarchGoal}, activity.NewDodge(), &activity.Respawn{}, activity.NewRelog(), activity.NewReclaim(), fight, activity.NewLoot(), activity.NewImbibe(), activity.NewFence(), activity.NewRestock(), activity.NewRepair(), activity.NewHeal(), activity.NewIdentify(), activity.NewEquip(), activity.NewSpend(), adv, activity.NewWithdraw(), &activity.Return{}, &activity.Travel{Road: road}, &activity.Explore{Frontier: adv.FrontierFor}} {
-		acts[a.Name()] = a
-	}
+	// One registry for live and -replay; its order breaks exact bid ties.
+	roster := activity.Registry(legs, road)
+	sd.recall = roster.Recall // Spent: the wind-down's empty-tome rung trigger
+	fight := roster.Fight
+	// The lifecycle rides the arbiter's Changes: Suspend on preempt/outbid,
+	// Begin on every seat, End on every verdict or monitor release.
+	core := &exec.Core[*activity.Ctx]{Arb: arb, Find: roster.Lifecycle, Trace: emit}
 
 	var grid *game.Grid
-	// Stride's look-ahead reads the CURRENT live grid (the closure follows every
-	// regrid). Unknown/unloaded ground stays walkable — only real walls refuse.
-	verbs.Walkable = func(p data.Position) bool {
-		g := grid
-		if g == nil {
-			return true
-		}
-		rp := g.RelativePosition(p)
-		if rp.X < 0 || rp.Y < 0 || rp.X >= g.Width || rp.Y >= g.Height {
-			return true
-		}
-		return g.IsWalkable(p)
-	}
+	// Live journeys adopt every regrid: a wall that streams in across a route
+	// replans it at once.
+	journey.Source = func() *game.Grid { return grid }
+	// (Stride's own look-ahead, verbs.Walkable + steerAround, is gone: every
+	// stride is planned by MoveTo on this same grid.)
+
 	gridArea := -1
 	var gridAt time.Time
 	// THE CARTOGRAPHER: every area crossing she ever makes — by march, by wander, by
@@ -2032,13 +2206,16 @@ func main() {
 		}
 		dd := gr.GetData()
 		for _, ob := range dd.Objects {
-			if ob.IsWaypoint() && chebyshev(s.Me.Pos, ob.Position) <= 3 {
+			// Only an OPENED pad is lit: proximity does NOT activate on this game
+			// (the 03:47 Black Marsh panel photo; the owner, 2026-09-25: "waypoints
+			// are a click") — the old witness ledgered the Sanctuary pad unclicked.
+			if ob.IsWaypoint() && ob.ID != 0 && ob.Mode == mode.ObjectModeOpened && chebyshev(s.Me.Pos, ob.Position) <= 3 {
 				padSeen[s.Me.Area] = true
 				lit := false
 				mem.GetJSON(activity.LitKey(dd.PlayerUnit.Name, s.Me.Area), &lit)
 				if !lit {
 					mem.PutJSON(activity.LitKey(dd.PlayerUnit.Name, s.Me.Area), memory.ScopeForever,
-						memory.Provenance{Source: "measured", Evidence: "stood at the pad — proximity activates"}, true)
+						memory.Provenance{Source: "measured", Evidence: "stood at the pad and it reads Opened (lit)"}, true)
 					logger.Info("cartographer: PAD lit by proximity", "area", int(s.Me.Area))
 				}
 				return
@@ -2048,7 +2225,7 @@ func main() {
 	// Regrid: mid-area grid regrowth for the leg-walker — rooms stream in as she walks,
 	// and a grid built at the border knows nothing of the far exit.
 	regrid := func() *game.Grid {
-		if g, _, err := gr.BuildLiveGridRooms(); err == nil {
+		if g, err := fz.build(); err == nil {
 			grid = g
 			logger.Info("executive: grid regrown", "origin", fmt.Sprintf("(%d,%d)", g.OffsetX, g.OffsetY))
 		}
@@ -2065,25 +2242,68 @@ func main() {
 		logger.Info("flight recorder live", "path", flightPath)
 	}
 	var flightAt time.Time
+	lastBids := 0 // demands in the last Decide, for the decision frame
+	// record writes the 1 Hz sample — engaged or not: a disengaged run (the
+	// owner driving, -disengaged, a wind-down hold) is evidence too.
+	record := func(tick uint64, s *percept.Snapshot) {
+		if flightW == nil || time.Since(flightAt) < time.Second {
+			return
+		}
+		if b, err := json.Marshal(s); err == nil {
+			flightW.Write(b)
+			flightW.WriteByte('\n')
+			flightW.Flush()
+		}
+		// The decision frame follows its snapshot (replay skips it by "k").
+		if b, err := json.Marshal(sh.frame(tick, s, arb, core, roster, lastBids)); err == nil {
+			flightW.Write(b)
+			flightW.WriteByte('\n')
+			flightW.Flush()
+		}
+		flightAt = time.Now()
+	}
 	var ring []*percept.Snapshot
-	wasArmed := false
+	var arms armWatch // the armed state the last calibration ran under
 	wasDead := false
+	// The watchdog is pure: it observes and prescribes (stuck, orbit, thrash, the
+	// deadman box, the pacer); the executive benches, and Unstick performs.
 	wd := watchdog.New()
-	cooldowns := map[string]time.Time{}
-	wdCheckAt := time.Time{}
 	deadline := time.Now().Add(time.Duration(*seconds) * time.Second)
+	// A stale stop file must not end the new run on its first tick.
+	if err := os.Remove(stopNowPath); err == nil {
+		logger.Warn("startup: removed a stale stop request", "path", stopNowPath)
+	}
+	var stopLookAt time.Time // last look for the owner's stop.now
 	statusAt := time.Time{}
 	stallWarnAt := time.Time{}
-	deadmanPos := data.Position{}
-	deadmanAt := time.Now()
 	prevEngaged := true
 	engagedAt := time.Now()
-	emaX, emaY := 0.0, 0.0
-	emaRef := data.Position{}
-	emaRefAt := time.Now()
+	var lastEvidence time.Time // the ledger's last append credited as the holder's progress
+	lastPhase := ""            // the holder's last reported phase (a change is progress)
 	cursorItemAt := time.Time{}
 	cursorDropAt := time.Time{}
 	sawInvalid := false
+	// NEW GAME detection: a validity gap (relog, load screen) may mean a fresh
+	// world — the seed re-rolls per game. FetchMapData no-ops when the seed is
+	// unchanged; on a real change it re-fetches and the grid realigns below.
+	// The session's AwaitWorld reads the seed this refreshes.
+	newWorld := func() {
+		if !sawInvalid {
+			return
+		}
+		sawInvalid = false
+		prevSeed := gr.MapSeed()
+		if err := gr.FetchMapData(); err == nil && gr.MapSeed() != prevSeed {
+			logger.Info("executive: NEW WORLD", "seed", gr.MapSeed())
+			gridArea = -1 // force grid realign
+			lastArea = 0  // don't record a phantom crossing over the gap
+			// Beliefs retired by one world's bad frames must not silence
+			// services in the next (WARNING 8; the reviewer's finding 2).
+			activity.NewWorld()
+		}
+	}
+	var drillAt time.Time // last look for the owner's relog.now
+	wasRelogging := false
 	wasFocused := true
 	var trail []string // the last moments, for the owner's death reports
 	var trailAt time.Time
@@ -2093,19 +2313,13 @@ func main() {
 		}
 		return "-"
 	}
-	lastUnpause := time.Time{}
 	lastDeEsc := time.Time{}
+	gateOpenAt := time.Time{} // janitor ON: when the gate last reopened (the stall alarm's grace)
 	idleSince := time.Time{}
-	stuckRunN := 0
-	stuckRunPos := data.Position{}
-	lastPocketTP := time.Time{}
-	// Rotating escape bearings (the advisor's ladder: novel headings — the
-	// old fixed NW fling was the door pendulum).
-	escBearings := []data.Position{{X: 20, Y: 0}, {X: 14, Y: 14}, {X: 0, Y: 20}, {X: -14, Y: 14},
-		{X: -20, Y: 0}, {X: -14, Y: -14}, {X: 0, Y: -20}, {X: 14, Y: -14}}
-	escDirIdx := 0
+	idleSaidAt := time.Time{}
 	lastTick := time.Time{}
-	for time.Now().Before(deadline) {
+	executiveLive.Store(true)
+	for {
 		// THE TICK HAS A FLOOR (night-2 audit finding 10): the granted path had
 		// no sleep at all — the executive busy-spun Capture+Observe+Step at
 		// maximum rate, spraying sub-350ms no-op cycles and periodically
@@ -2115,6 +2329,8 @@ func main() {
 			time.Sleep(40*time.Millisecond - dt)
 		}
 		lastTick = time.Now()
+		tick := curTick.Add(1)
+		core.Tick = tick
 		// WARNING 7 (revised twice; the owner 2026-07-19 night: "we didn't need to
 		// focus diablo before"): the bot NEVER steals focus AND never stops playing
 		// for lack of it. In-game input is posted window messages + the injector's
@@ -2127,13 +2343,119 @@ func main() {
 		if focused := m.GameFocused(); focused != wasFocused {
 			if focused {
 				logger.Info("executive: game refocused")
-				wd = watchdog.New() // a pause-frozen position history would read as pathology
+				wd.Reset() // a pause-frozen position history would read as pathology
 			} else {
 				logger.Info("executive: game unfocused — playing on (posted input, your windows untouched)")
 			}
 			wasFocused = focused
 		}
 		s := p.Capture()
+		// SHADOW SCREEN (v2 step 5): read, trace and publish what is on screen —
+		// engaged or not, so the owner's panels are named too. Nothing gates on it.
+		sh.Feed(tick, s, holderWho(arb))
+		// LAYER 0 — THE SESSION (v2 step 8). A relog is requested by Relog's
+		// trigger (a naked girl in town, her body far) or by the owner's
+		// logs/relog.now; once the session takes it, the holder's episode ends
+		// and the session owns every tick until it is InGame again — nothing
+		// below acts: no arbitration, no gate, no monitors, no sentry.
+		if s.Valid && sd.ses.Relogging() {
+			newWorld() // AwaitWorld judges the refreshed seed
+		}
+		if sd.ses.State() == exec.InGame && s.Valid && m.Engage.Engaged() {
+			now := time.Now()
+			why, want := relog.Wants(s, now)
+			if !want {
+				if w := activity.TakeRelogRequest(); w != "" {
+					why, want = w, true // an activity asked (a quest chest that only a new game re-arms)
+				}
+			}
+			drill := false
+			if !want && now.Sub(drillAt) >= time.Second {
+				drillAt = now
+				if _, err := os.Stat(relogNowPath); err == nil {
+					why, want, drill = "owner drill ("+relogNowPath+")", true, true
+				}
+			}
+			if want && sd.request(why) {
+				if drill {
+					_ = os.Remove(relogNowPath)
+				}
+				if who := holderWho(arb); who != "" {
+					m.MoveStop()
+					core.End(&activity.Ctx{M: m, GR: gr, P: p, Led: led, Grid: grid, Cap: &cap, Snap: s, Mem: mem,
+						Seen: sh.Eye.Latest(), Held: arb.Held}, who, phase.Abandoned, phase.Preempted, "session: relog")
+				}
+			}
+		}
+		// THE SAFE END (relay R4): the budget, the owner's stop file and a first
+		// Ctrl-C ask the session to wind down; the session decides when the run
+		// may end (in town, or no living monster within 40 for 3s).
+		if !sd.ses.Winding() {
+			switch {
+			case !time.Now().Before(deadline):
+				sd.stop(tick, "time budget spent")
+			case time.Since(stopLookAt) >= time.Second:
+				stopLookAt = time.Now()
+				if _, err := os.Stat(stopNowPath); err == nil {
+					_ = os.Remove(stopNowPath)
+					sd.stop(tick, "owner stop ("+stopNowPath+")")
+				}
+			}
+			select {
+			case why := <-stopReq:
+				sd.stop(tick, why)
+			default:
+			}
+		}
+		sesOwns := sd.step(tick, s)
+		sh.stateLine(tick, s, sd.ses.String(), arb, roster)
+		// WindTown: the town road (Recall, Withdraw's TP ride) bids this tick.
+		roster.Recall.Want(sd.out.Wind == exec.WindTown)
+		if w := sd.out.Wind; w == exec.WindExit || w == exec.WindHold || w == exec.WindPause {
+			// Every way nothing more is driven: stop the feet and end the
+			// holder's episode (its lease and keys go with it). WindPause: the
+			// session's ESC follows on a later tick it owns.
+			m.MoveStop()
+			if who := holderWho(arb); who != "" {
+				core.End(&activity.Ctx{M: m, GR: gr, P: p, Led: led, Grid: grid, Cap: &cap, Snap: s, Mem: mem,
+					Seen: sh.Eye.Latest(), Held: arb.Held}, who, phase.Abandoned, phase.Preempted, "session: "+sd.ses.String())
+			}
+			if w == exec.WindExit {
+				// A paused exit leaves the pause menu up: the session claims it,
+				// and nothing on the way out sends an ESC or clicks Return to Game.
+				logger.Warn("SESSION: safe to stop — exiting", "town", s.Valid && s.Me.InTown,
+					"paused", sd.ses.Paused(),
+					"pos", fmt.Sprintf("(%d,%d)", s.Me.Pos.X, s.Me.Pos.Y), "area", int(s.Me.Area))
+				break
+			}
+			if w == exec.WindHold {
+				// The last rung: hand the controls back (the kill-switch's own
+				// path) and hold — perceiving, reminding every 30s, never
+				// exiting while hot. WindPause stays engaged: the sentinel
+				// drinks on until the ESC's menu is seen.
+				m.Disengage()
+			}
+		}
+		if wasRelogging && !sd.ses.Relogging() {
+			// A relog moves her to a new world's spawn (or leaves the world
+			// intact after a pause): the position monitors start fresh, the
+			// refocus precedent, so the jump is not read as pathology.
+			wd.Reset()
+		}
+		wasRelogging = sd.ses.Relogging()
+		if sesOwns {
+			sawInvalid = sawInvalid || !s.Valid
+			continue
+		}
+		if !started && s.Valid && m.Engage.Engaged() {
+			// -disengaged: F10 engaged for the first time — the deferred start.
+			neverEngaged = false
+			logger.Warn("ENGAGED: first engagement of a -disengaged run — startup hygiene and calibration now")
+			start()
+			arms.seed(s.Me.Armed) // calibrated just now: not an armed-flip event
+			wd.Reset()
+			continue
+		}
 		if !s.Valid || !m.Engage.Engaged() {
 			// THE WATCHER NEVER SLEEPS (01:12, the owner: "i even entered dark
 			// wood" — and the cartographer was DEAF because this gate skipped
@@ -2144,6 +2466,7 @@ func main() {
 			if s.Valid {
 				recordCrossing(s)
 				padWitness(s) // the owner's pad stands teach the ledger too
+				record(tick, s)
 			}
 			sawInvalid = sawInvalid || !s.Valid
 			time.Sleep(200 * time.Millisecond)
@@ -2166,43 +2489,38 @@ func main() {
 				if dx <= 30 && dy <= 30 {
 					e.Walled = !activity.LosClear(grid, s.Me.Pos, e.Pos)
 				}
+				// A monster proven unreachable (a stalemate behind a closed door, R36) reads
+				// as walled: Stand and Fight stop swinging at it; the march and Door resume.
+				if activity.Unreachable(e.ID) {
+					e.Walled = true
+				}
 			}
 		}
-		// NEW GAME detection: a validity gap (relog, load screen) may mean a fresh
-		// world — the seed re-rolls per game. FetchMapData no-ops when the seed is
-		// unchanged; on a real change it re-fetches and the grid realigns below.
-		if sawInvalid {
-			sawInvalid = false
-			prevSeed := gr.MapSeed()
-			if err := gr.FetchMapData(); err == nil && gr.MapSeed() != prevSeed {
-				logger.Info("executive: NEW WORLD", "seed", gr.MapSeed())
-				gridArea = -1 // force grid realign
-				lastArea = 0  // don't record a phantom crossing over the gap
-				// Beliefs retired by one world's bad frames must not silence
-				// services in the next (WARNING 8; the reviewer's finding 2).
-				activity.NewWorld()
-			}
-		}
+		newWorld() // after a validity gap: a new seed means a new world
 		recordCrossing(s)
 		padWitness(s)            // any brush with a pad lights it, whatever the holder
 		activity.ObserveBlood(s) // P-2.0: one blood truth for every Demand this cycle
+		activity.ObserveBosses(s, mem, gr.GetData().PlayerUnit.Name)
 		// Grid follows the area (the re-align, owned in one place) — and REGROWS on a
 		// clock in the field: rooms stream in as she walks, and a grid built at the
 		// border brands every unloaded room a wall. Loot/Reclaim/Fight journeys were
 		// planning against that stale truth (Advance was the only one regridding);
 		// fresh journeys now always start on current rooms.
 		if int(s.Me.Area) != gridArea {
-			if g, _, err := gr.BuildLiveGridRooms(); err == nil {
+			if g, err := fz.build(); err == nil {
 				grid, gridArea = g, int(s.Me.Area)
 				gridAt = time.Now()
 				logger.Info("executive: grid re-aligned", "area", gridArea)
 			}
 		} else if !s.Me.InTown && time.Since(gridAt) > 6*time.Second {
-			if g, _, err := gr.BuildLiveGridRooms(); err == nil {
+			if g, err := fz.build(); err == nil {
 				grid = g
 				gridAt = time.Now()
 			}
 		}
+		// Coverage follows the same grid: mark what she sees (a no-op unless she
+		// moved), rebuild its terrain when the grid regrew, flush every 10s.
+		activity.Cov.Tick(s, grid, area.ID(gridArea))
 		// DEATH REPORT for the owner ("i didnt even know how it died"): the last
 		// moments, from the trail ring — hp slope, who held the actuator, how many
 		// teeth were on her.
@@ -2225,14 +2543,7 @@ func main() {
 		if len(ring) > 300 {
 			ring = ring[1:]
 		}
-		if flightW != nil && time.Since(flightAt) >= time.Second {
-			if b, err := json.Marshal(s); err == nil {
-				flightW.Write(b)
-				flightW.WriteByte('\n')
-				flightW.Flush()
-			}
-			flightAt = time.Now()
-		}
+		record(tick, s)
 		// Self-model events: armed flip OR back-from-death → recalibrate capability.
 		deadNow := s.Me.HPPct <= 0
 		if deadNow && !wasDead {
@@ -2255,12 +2566,15 @@ func main() {
 				logger.Warn("BLACK BOX dumped", "path", bbPath, "frames", len(ring))
 			}
 		}
-		if (s.Me.Armed != wasArmed || (wasDead && !deadNow)) && !deadNow {
+		if (arms.flipped(s.Me.Armed) || (wasDead && !deadNow)) && !deadNow {
 			logger.Info("executive: self-model event — recalibrating", "armed", s.Me.Armed, "revived", wasDead)
 			cap = calibrate()
 			activity.SetBrawler(cap.Reach == nil && cap.Throw == nil)
+			activity.SetBuffs(cap.Buffs)
+			activity.SetSummons(cap.Summons)
+			activity.SetTrapBinding(cap.Trap)
 			fight.Recalibrated() // the audit follows the hands (P-7.1)
-			wasArmed = s.Me.Armed
+			arms.seed(s.Me.Armed)
 		}
 		wasDead = deadNow
 
@@ -2268,12 +2582,15 @@ func main() {
 		// unless there's a good reason like relogging"): the quit menu is
 		// READABLE (OpenMenus.QuitMenu, UI byte 0x09 — never byte-blind after
 		// all). Standing unsanctioned, it is a wedge that freezes the world;
-		// the sentry closes it within a tick. Relog alone sanctions it.
+		// the sentry closes it within a tick. A relogging session alone claims it
+		// (and while it relogs this code is not reached at all).
 		// 2026-09-23: s.QuitMenu reads FALSE with the pause menu on screen, so this
 		// sentry never fired and a stray pause ate whole runs. The screen is the
 		// oracle now (game.PauseMenuVisible, 12/12 vs 0/12 on real captures), and
 		// the cure is a click on Return to Game — never an ESC, which toggles.
-		if time.Now().After(activity.MenuSanctionUntil) && time.Since(lastDeEsc) > 3*time.Second {
+		// JANITOR ON: retired — the gate below sees the pause menu every tick
+		// and the janitor clicks Return to Game (the session's claim honoured).
+		if !janitorOn && sd.ses.Claims()&screen.PauseMenu == 0 && time.Since(lastDeEsc) > 3*time.Second {
 			lastDeEsc = time.Now()
 			if activity.ClearPause(gr, m) {
 				logger.Warn("menu sentry: pause menu on screen with no sanction — clicked Return to Game")
@@ -2281,202 +2598,159 @@ func main() {
 			}
 		}
 
-		var demands []arbiter.Demand
-		var benched []arbiter.Demand
-		for _, a := range acts {
-			if d := a.Demand(s); d != nil {
-				// The watchdog's prescriptions: a cooled activity may not win again
-				// until its moment passes — survival and recovery are never cooled.
-				if until, cooled := cooldowns[d.Who]; cooled && time.Now().Before(until) &&
-					d.Class > arbiter.ClassRecover {
-					benched = append(benched, *d)
-					continue
-				}
-				demands = append(demands, *d)
-			}
-		}
-		// A cooldown must be real.  The old empty-field fallback immediately
+		demands := roster.Demands(s) // registry order, Order stamped
+		// A bench must be real. The old empty-field fallback immediately
 		// re-granted the activity the watchdog had just convicted (observed:
 		// "cooling advance for 15s" followed by an advance grant 38ms later),
-		// turning recovery into the same failed plan repeated forever.  Re-seat
-		// a sole bidder only in the final two seconds of its short recovery
-		// window; until then the watchdog's novel stride owns the reset.
-		if len(demands) == 0 && len(benched) > 0 {
-			soonest := time.Duration(1<<63 - 1)
-			for _, d := range benched {
-				if until, ok := cooldowns[d.Who]; ok {
-					if left := time.Until(until); left < soonest {
-						soonest = left
-					}
+		// turning recovery into the same failed plan repeated forever. The
+		// arbiter filters benched bids; only when EVERY bidder is benched and
+		// one is within two seconds of release are they re-seated early.
+		if len(demands) > 0 {
+			soonest, all := time.Duration(1<<63-1), true
+			for _, d := range demands {
+				left, ok := arb.BenchLeft(d.Who)
+				if !ok {
+					all = false
+					break
 				}
+				soonest = min(soonest, left)
 			}
-			if soonest <= 2*time.Second {
-				demands = benched
+			if all && soonest <= 2*time.Second {
+				for _, d := range demands {
+					arb.Unbench(d.Who)
+				}
+				logger.Info("bench: every bidder benched — re-seating early", "left", soonest.Round(100*time.Millisecond))
 			}
 		}
-		grant, changed := arb.Decide(demands)
+		// One context per tick: the lifecycle calls inside Decide and the Step
+		// below see the same world.
+		actx := &activity.Ctx{M: m, GR: gr, P: p, Led: led, Grid: grid, Cap: &cap, Snap: s, SwapKey: hid.GetASCIICode(*swapKey), InvKey: hid.GetASCIICode(*invKeyF), Regrid: regrid, Mem: mem,
+			Seen: sh.Eye.Latest(), Held: arb.Held}
+		if janitorOn {
+			actx.Screen = gk.Stable()
+		}
+		grant, gch := core.Decide(actx, demands)
+		lastBids = len(demands)
+
+		// THE GATE (v2 step 6, janitor ON): the holder's Needs against the
+		// stable screen Reading. A foreign panel or cursor item earns ONE
+		// janitor action; the holder's clock pauses and it does not Step. The
+		// monitors below are skipped too — a gated holder is not stuck.
+		if janitorOn {
+			open, was := gk.step(tick, s, arb, roster, demands)
+			if was > 2*time.Second {
+				// A long block starved the position monitors: start them fresh
+				// (the refocus precedent) so the wait is not read as a wedge.
+				wd.Reset()
+			}
+			if was > 0 {
+				gateOpenAt = time.Now()
+			}
+			if !open {
+				continue
+			}
+		}
 
 		// SELF-OBSERVATION (the owner's ask: "tell what the bot is up to, moments where
-		// it's stuck, looping, thrashing — and unstuck itself"): the bot consumes its own
-		// position and grant streams, names the pathology out loud, cools the culprit,
-		// and breaks the physical state with one fresh-bearing stride.
+		// it's stuck, looping, thrashing — and unstuck itself"). The watchdog is pure:
+		// it reads the position and grant streams and returns a verdict with its
+		// evidence and a remedy. The executive (a) hands the verdict to the culprit
+		// (Judged — Advance climbs its ladder), (b) benches it, (c) opens a
+		// prescription the Unstick activity bids on. No monitor moves the character
+		// (docs/AZBOT_V2.md step 9): the escape strides, the pocket breaker's
+		// blocking TP and the deadman/pacer TP all live in Unstick now.
 		holderName := ""
 		if grant != nil {
 			holderName = grant.Demand.Who
 		}
-		// The dodge reflex blips sub-second by design — dodge↔fight alternation IS the
-		// arrow dance, not thrash (the watchdog cooled fight mid-dance, measured 02:51).
-		obsHolder := holderName
-		if obsHolder == "dodge" {
-			obsHolder = ""
+		wd.Observe(watchdog.Sample{Pos: s.Me.Pos, Holder: holderName, InTown: s.Me.InTown, Dead: s.Me.HPPct <= 0})
+		enemyAt := make([]data.Position, 0, len(s.Enemies))
+		for _, e := range s.Enemies {
+			enemyAt = append(enemyAt, e.Pos)
 		}
-		wd.Observe(s.Me.Pos, obsHolder)
-		if time.Since(wdCheckAt) > 5*time.Second {
-			wdCheckAt = time.Now()
-			// A volleying archer holds ground by design: fight + a target in bow range
-			// vouches for stillness (Stuck/Orbit suppressed; Thrash still watched).
-			stationaryOK := false
-			if holderName == "fight" {
-				for _, e := range s.Enemies {
-					if chebyshev(s.Me.Pos, e.Pos) <= 28 {
-						stationaryOK = true
-						break
+		// A volleying archer and a melee Stand hold ground by design: fight/stand
+		// with a target in range vouches for stillness (Stuck/Orbit suppressed,
+		// Thrash still watched; the deadman box answers whoever holds).
+		// A holder at its panel (an errand's Talk..Act, Equip's Dress, Spend's
+		// sheet) stands still by design, and an item on the cursor is never a
+		// reason to hand the grant away (relay R10: equip benched as stuck
+		// mid-Dress, the item then dropped on the town floor).
+		inService := false
+		if a := roster.Get(holderName); a != nil && holderName != "" {
+			inService = a.Needs(s).Claims != 0
+		}
+		if v := wd.Check(watchdog.Context{
+			Holder:       holderName,
+			StationaryOK: watchdog.StationaryOK(holderName, s.Me.Pos, enemyAt),
+			Productive:   holderName == "loot" && activity.LootProductive(time.Now()),
+			CrossingHot:  activity.CrossingHot(),
+			CanPortal:    !s.Me.InTown && s.Me.HPPct > 0 && cap.TownTP != nil,
+			InService:    inService,
+			CursorItem:   s.Me.CursorItem,
+		}); v.Pathology != watchdog.Healthy {
+			why := "judged: " + v.Summary()
+			emit(trace.Watchdog(v.Pathology.String(), v.Remedy.String(), v.Culprit, v.Evidence, tick))
+			logger.Warn("PATHOLOGY", "kind", v.Pathology.String(), "remedy", v.Remedy.String(),
+				"culprit", v.Culprit, "holder", v.Holder, "evidence", v.Evidence)
+			mem.PutJSON("pathology.last", memory.ScopeGame,
+				memory.Provenance{Source: "measured", Evidence: v.Evidence},
+				map[string]any{"kind": v.Pathology.String(), "remedy": v.Remedy.String(), "at": time.Now().UnixMilli()})
+			// (a) The culprit hears its verdict first (the place's holder when
+			// the place, not a holder, is convicted).
+			judged := v.Culprit
+			if judged == "" {
+				judged = v.Holder
+			}
+			if j, ok := roster.Get(judged).(activity.Judgeable); ok {
+				j.Judged(actx, v)
+			}
+			// (b) Bench the culprit: the next Decide releases it with the
+			// verdict as its reason. Survival and recovery are never benched;
+			// a convicted holder of those classes still has its episode ended.
+			convicted := false
+			classOf := func(who string) arbiter.Class {
+				cls := arbiter.ClassIdle
+				for _, d := range demands {
+					if d.Who == who {
+						cls = d.Class
+					}
+				}
+				return cls
+			}
+			if v.Pathology == watchdog.Thrash {
+				// Thrash is a decision problem between bidders: silence the
+				// least important one that is not fighting or surviving. Benching
+				// the fight (or ending Stand) mid-pack left her swinging at
+				// nothing; when only those classes ping-pong, log and let them be.
+				v.Culprit = ""
+				for i := len(v.Involved) - 1; i >= 0; i-- {
+					if c := v.Involved[i]; classOf(c) > arbiter.ClassFight && (v.Culprit == "" || classOf(c) > classOf(v.Culprit)) {
+						v.Culprit = c
 					}
 				}
 			}
-			if v := wd.Check(holderName, stationaryOK); v.Pathology != watchdog.Healthy {
-				logger.Warn("PATHOLOGY", "kind", v.Pathology.String(), "detail", v.Detail,
-					"cooling", v.CoolWho, "for", time.Until(v.CoolUntil).Round(time.Second))
-				mem.PutJSON("pathology.last", memory.ScopeGame,
-					memory.Provenance{Source: "measured", Evidence: v.Detail},
-					map[string]any{"kind": v.Pathology.String(), "at": time.Now().UnixMilli()})
-				if v.CoolWho != "" {
-					cooldowns[v.CoolWho] = v.CoolUntil
-					// ADVANCE CONSUMES THE VERDICT (item 3): the cooldown is the
-					// backstop, but the marcher also climbs its escalation ladder
-					// so the plan it returns to is a DIFFERENT one, not the plan
-					// the watchdog just convicted. No-op unless the deliberate
-					// flag is armed and a committed intent is live.
-					if v.CoolWho == adv.Name() {
-						adv.NoteWatchdog(v.Pathology.String(), led)
-					}
+			if v.Culprit != "" {
+				cls := classOf(v.Culprit)
+				if cls > arbiter.ClassRecover {
+					arb.Bench(v.Culprit, time.Now().Add(v.BenchFor), why)
+					convicted = v.Culprit == holderName
+				} else if v.Culprit == holderName {
+					core.End(actx, holderName, phase.Abandoned, phase.Judged, why)
+					convicted = true
 				}
-				arb.Release()
-				// One decisive displacement in a fresh bearing breaks the physical
-				// loop — a ROTATING bearing (the advisor's ladder: novel headings),
-				// never the old fixed NW that pendulumed her off every door mouth.
-				escDirIdx = (escDirIdx + 3) % 8
-				eb := escBearings[escDirIdx]
-				esc := data.Position{X: s.Me.Pos.X + eb.X, Y: s.Me.Pos.Y + eb.Y}
-				if (v.Pathology == watchdog.Stuck || v.Pathology == watchdog.Orbit) &&
-					activity.CrossingHot() {
-					// P-5.10: the door owns motion. The watchdog's escape fling
-					// from a door mouth was the pendulum — count toward the
-					// breaker (a frozen world at a door still ends in a TP home)
-					// but throw no footwork of its own.
-					if chebyshev(s.Me.Pos, stuckRunPos) > 10 {
-						stuckRunPos, stuckRunN = s.Me.Pos, 0
-					}
-					stuckRunN++
-					// A held door earns a LONG leash (03:44: the breaker fired
-					// at ~20s while the arch-click ritual needed ~30 to reach
-					// its turn — the medicine kept outrunning the cure).
-					if stuckRunN >= 10 && !s.Me.InTown && cap.TownTP != nil &&
-						time.Since(lastPocketTP) > 120*time.Second {
-						logger.Warn("watchdog: POCKET BREAKER (door) — the portal is the door now")
-						activity.NoteBreakerSite(s.Me.Pos)
-						activity.MarkPortalHot(4 * time.Minute)
-						verbs.CastSelf{Key: cap.TownTP.Key}.Do(m, gr, p, led, "watchdog")
-						time.Sleep(2200 * time.Millisecond)
-						if s2 := p.Capture(); s2.Valid && len(s2.Portals) > 0 {
-							verbs.EnterPortal{Target: s2.Portals[0].ID, TargetPos: s2.Portals[0].Pos}.
-								Do(m, gr, p, led, "watchdog")
-						}
-						lastPocketTP = time.Now()
-						stuckRunN = 0
-					}
-					continue
+			}
+			// (c) Prescribe: Unstick bids from the next tick. Thrash is a
+			// decision problem — bench only, no prescription.
+			if v.Remedy != watchdog.RemedyNone {
+				rx := unstick.Rx{Kind: v.Pathology.String(), Portal: v.Remedy == watchdog.RemedyPortal,
+					Site: v.Site, Area: int(s.Me.Area), Opened: time.Now(), Culprit: v.Culprit, Evidence: v.Evidence}
+				if roster.Unstick.Prescribe(rx) {
+					logger.Info("prescription opened", "remedy", v.Remedy.String(), "kind", rx.Kind,
+						"site", fmt.Sprintf("(%d,%d)", rx.Site.X, rx.Site.Y))
 				}
-				if v.Pathology == watchdog.Stuck || v.Pathology == watchdog.Orbit {
-					// THE POCKET BREAKER (01:23: pinned in a Stony pen, every local
-					// maneuver a wiggle inside the box): four stucks in one 10-box
-					// refute footwork — the portal is the door. Ride home, run the
-					// services (the banked points too), re-enter by proven ground.
-					if chebyshev(s.Me.Pos, stuckRunPos) > 10 {
-						stuckRunPos, stuckRunN = s.Me.Pos, 0
-					}
-					stuckRunN++
-					if stuckRunN >= 4 && !s.Me.InTown && cap.TownTP != nil &&
-						time.Since(lastPocketTP) > 120*time.Second {
-						logger.Warn("watchdog: POCKET BREAKER — footwork refuted; the portal is the door")
-						activity.NoteBreakerSite(s.Me.Pos)
-						activity.MarkPortalHot(4 * time.Minute) // Return must NOT ride back into the pen (02:28)
-						verbs.CastSelf{Key: cap.TownTP.Key}.Do(m, gr, p, led, "watchdog")
-						time.Sleep(2200 * time.Millisecond)
-						if s2 := p.Capture(); s2.Valid && len(s2.Portals) > 0 {
-							verbs.EnterPortal{Target: s2.Portals[0].ID, TargetPos: s2.Portals[0].Pos}.
-								Do(m, gr, p, led, "watchdog")
-						}
-						lastPocketTP = time.Now()
-						stuckRunN = 0
-						continue
-					}
-					o := verbs.Stride{To: esc, Hold: 2 * time.Second, MinGain: 3}.Do(m, gr, p, led, "watchdog")
-					// WARNING 4: the pause menu is byte-blind and can arrive from
-					// outside (a swap mid-relog, measured 08:41) — a REFUSED watchdog
-					// stride in a safe town is its only shadow. The probe is SELF-
-					// CONTAINED: RealEsc (menus are deaf to lane input), stride retest
-					// in the SAME cycle, and a restoring RealEsc when the retest still
-					// fails — the world is never left ambiguous for the next holder
-					// (the 08:46 spend burned its belief clicking into a menu a blind
-					// half-probe had just raised).
-					// The probe runs on ANY safe ground, not just town (00:44: a
-					// field attach inherited a frozen world and the town-gated
-					// probe left her pinned two minutes at full blood — the
-					// freeze doesn't care where she stands, and a frozen world
-					// holds its monsters frozen too).
-					// The probe is a FOCUS GRAB (the owner, 02:35: "why does it
-					// bring diablo to the forefront sometimes") — it may not
-					// fire on the first stumble. Three same-box stucks first:
-					// real wedges persist; noise doesn't steal the screen.
-					if o.Result != verbs.ResDone && !s.Me.CursorItem && stuckRunN >= 3 &&
-						time.Since(lastUnpause) > 30*time.Second {
-						safeGround := true
-						for _, e := range s.Enemies {
-							if chebyshev(s.Me.Pos, e.Pos) <= 12 {
-								safeGround = false
-								break
-							}
-						}
-						// FROZEN-WORLD OVERRIDE (02:19: the quit menu stood by a
-						// pad with frozen monsters "nearby" — the safety gate
-						// blocked the probe FOREVER, because frozen enemies never
-						// leave). Six same-box stucks prove the world is not
-						// running; frozen teeth cannot bite, and if they are real
-						// after all, two minutes of paralysis is deadlier than
-						// one ESC. (The QuitMenu byte reads FALSE under this
-						// mod's menu — the behavioral probe is the only sentry.)
-						if !safeGround && stuckRunN >= 6 {
-							safeGround = true
-						}
-						// The shadow probe is optional diagnostics, not a reason to
-						// steal the desktop. RealEsc focuses D2R before sending the
-						// key; only probe when D2R already owns the foreground.
-						if safeGround && m.GameFocused() {
-							m.RealEsc()
-							time.Sleep(500 * time.Millisecond)
-							o2 := verbs.Stride{To: esc, Hold: 700 * time.Millisecond, MinGain: 1}.Do(m, gr, p, led, "watchdog/shadow")
-							if o2.Result == verbs.ResDone {
-								logger.Info("watchdog: ESC probe — a menu WAS up; the world moves again")
-							} else {
-								m.RealEsc() // raised on clear ground: restore before releasing
-								logger.Info("watchdog: ESC probe — stride still refused; not the menu (fence?), state restored")
-							}
-							lastUnpause = time.Now()
-						}
-					}
-				}
-				continue
+			}
+			if convicted {
+				continue // the convicted holder does not Step this tick
 			}
 		}
 		if grant == nil {
@@ -2485,115 +2759,114 @@ func main() {
 					"area", int(s.Me.Area), "hp", s.Me.HPPct, "lvl", s.Me.Level)
 				statusAt = time.Now()
 			}
-			// THE IDLE BREAKER (the owner, 04:47: 'hangs on Akara' — a service
-			// abandoned, nothing re-bid, and he stood dead by the healer for
-			// minutes). The advisor's law: bench the strategy, not the mission.
-			// Sustained idle in town cools EVERY service (they hard-gate the
-			// march via ServicesPending) so the march reclaims the actuator and
-			// retries the errands from the field next trip.
+			// THE IDLE LOG (was the idle breaker, the owner, 04:47: 'hangs on
+			// Akara'). It used to cool every service to shove the march back on
+			// the wheel; in v2 no monitor actuates, so sustained idle is NAMED:
+			// who is benched and why, and whether a prescription waits.
 			if idleSince.IsZero() {
 				idleSince = time.Now()
-			} else if time.Since(idleSince) > 12*time.Second {
-				activity.CoolAllServices(90 * time.Second)
-				logger.Warn("idle breaker: services cooled 90s — the march reclaims the wheel")
-				idleSince = time.Time{}
+			} else if time.Since(idleSince) > 12*time.Second && time.Since(idleSaidAt) > 12*time.Second {
+				idleSaidAt = time.Now()
+				var benchedNow []string
+				for _, a := range roster.Acts {
+					if bwhy, ok := arb.Benched(a.Name()); ok {
+						benchedNow = append(benchedNow, a.Name()+"("+bwhy+")")
+					}
+				}
+				rx := "-"
+				if o, ok := roster.Unstick.Open(); ok {
+					rx = o.Kind
+				}
+				logger.Warn("idle: nobody bids", "for", time.Since(idleSince).Round(time.Second),
+					"town", s.Me.InTown, "benched", strings.Join(benchedNow, " "), "rx", rx, "pending", activity.ServicesPendingWhy(s))
+				// The town deadlock valve (a decision, not an actuation): an abandoned
+				// errand keeps ServicesPending true, so Travel stands down for it and
+				// nobody bids ("hangs on Akara"). Silencing services frees the march;
+				// the errands retry next trip. Retired when the Director owns TownVisit.
+				if line := activity.ServicesPendingWhy(s); line != "" {
+					activity.CoolServiceLine(line, 5*time.Minute) // only the stuck line: restock still runs
+				} else {
+					activity.CoolAllServices(90 * time.Second)
+				}
 			}
 			time.Sleep(200 * time.Millisecond)
 			continue
 		}
 		idleSince = time.Time{}
-		if changed {
-			logger.Info("grant", "to", grant.Demand.Who, "class", grant.Demand.Class.String(),
-				"urgency", fmt.Sprintf("%.2f", grant.Demand.Urgency))
+		if gch.Changed() {
+			logger.Info("grant", "from", gch.From, "to", grant.Demand.Who, "class", grant.Demand.Class.String(),
+				"urgency", fmt.Sprintf("%.2f", grant.Demand.Urgency), "why", gch.Why())
 		}
-		act := acts[grant.Demand.Who]
-		v := act.Step(&activity.Ctx{M: m, GR: gr, P: p, Led: led, Grid: grid, Cap: &cap, Snap: s, SwapKey: hid.GetASCIICode(*swapKey), InvKey: hid.GetASCIICode(*invKeyF), Regrid: regrid, Mem: mem})
-		if v != activity.Running {
-			logger.Info("verdict", "activity", grant.Demand.Who, "verdict", map[activity.Verdict]string{activity.Done: "done", activity.Abandoned: "abandoned"}[v])
-			arb.Release()
+		// WAIT (contract v2): a holder that answered Wait keeps the grant but
+		// is not Stepped until its WakeAt. Arbitration above still ran, so a
+		// survival bid preempts a sleeper like any holder (and drops the park).
+		var st exec.Status
+		if core.Asleep(grant.Demand.Who, time.Now()) {
+			st = exec.Status{V: phase.Wait}
+		} else {
+			st = roster.Get(grant.Demand.Who).Step(actx)
+			core.Park(grant.Demand.Who, st)
+		}
+		if st.V.Terminal() {
+			logger.Info("verdict", "activity", grant.Demand.Who, "verdict", st.V.String())
+			core.End(actx, grant.Demand.Who, st.V, st.Why, st.Evidence) // was arb.Release()
+		} else {
+			// Progress evidence for the arbiter's mute clock: a ledger outcome, a
+			// phase change, or an honest Wait with a wake time.
+			who := grant.Demand.Who
+			if la := led.LastAppend(); la.After(lastEvidence) {
+				lastEvidence = la
+				arb.MarkProgress(who)
+			}
+			if ph := who + "/" + st.Phase; ph != lastPhase {
+				lastPhase = ph
+				arb.MarkProgress(who)
+			}
+			if st.V == phase.Wait && st.WakeAt.After(time.Now()) {
+				arb.MarkProgress(who)
+			}
 		}
 		// THE STALL ALARM (the owner, session 2: "bouts of idleness while
 		// surrounded by monsters"; 13:03 anatomy: six Survive grants, 26s,
-		// zero outcomes — a mute holder bled him out invisibly). A Survive
-		// holder that writes NOTHING for 2s gets named in the log while it
-		// happens, not exhumed from a black box after.
-		// ALL classes, not just Survive (21:18: a fight-class holder pinned
-		// him at one tile for 100+ seconds, invisible to the Survive-only
-		// alarm — the owner saw it before the log did, again). Survive
-		// stalls at 2s; everyone else gets 4s of grace before being named.
+		// zero outcomes — a mute holder bled him out invisibly). A holder with
+		// no progress evidence for its bar is named in the log while it
+		// happens: Survive at 2s, everyone else 4s. Silence is the arbiter's
+		// mute clock — held time, so gate blocks and preemption never count.
 		// Engage-transition grace (21:39: the ledger is naturally silent while
 		// the OWNER drives, so the alarm fired the instant F10 handed back).
 		if m.Engage.Engaged() != prevEngaged {
 			prevEngaged = m.Engage.Engaged()
 			engagedAt = time.Now()
+			arb.MarkProgress(holderWho(arb))
 		}
-		if grant != nil && time.Since(stallWarnAt) > 2*time.Second && !led.LastAppend().IsZero() &&
-			time.Since(engagedAt) > 5*time.Second {
-			silent := time.Since(led.LastAppend())
+		// Gate grace (janitor ON): a holder the gate held was silent by order.
+		if grant != nil && !st.V.Terminal() && holderWho(arb) == grant.Demand.Who &&
+			time.Since(engagedAt) > 5*time.Second && time.Since(gateOpenAt) > 5*time.Second {
+			who := grant.Demand.Who
 			bar := 4 * time.Second
 			if grant.Demand.Class == arbiter.ClassSurvive {
 				bar = 2 * time.Second
 			}
-			if silent > bar {
+			silent := arb.Silence(who)
+			if silent > bar && time.Since(stallWarnAt) > 2*time.Second {
 				logger.Warn("STALL — mute holder", "class", grant.Demand.Class.String(),
-					"holder", grant.Demand.Who, "silent", silent.Round(100*time.Millisecond),
+					"holder", who, "silent", silent.Round(100*time.Millisecond),
 					"hp", s.Me.HPPct, "pos", fmt.Sprintf("(%d,%d)", s.Me.Pos.X, s.Me.Pos.Y))
 				stallWarnAt = time.Now()
-				// NO MUTE GRANT (2026-09-23, the owner: "the occasional idling"):
-				// naming the mute holder never freed the wheel — hysteresis kept
-				// granting it while it did nothing. Twice the bar of silence now
-				// RELEASES the grant and cools that holder briefly, so the next
-				// bidder acts. Survive is exempt: its silence is a bug to fix, but
-				// yanking it mid-crowd is worse than the silence.
-				if silent > 2*bar && grant.Demand.Class != arbiter.ClassSurvive {
-					cooldowns[grant.Demand.Who] = time.Now().Add(5 * time.Second)
-					logger.Warn("STALL — mute grant released", "holder", grant.Demand.Who, "cool", "5s")
-					arb.Release()
+			}
+			// NO MUTE GRANT (2026-09-23, the owner: "the occasional idling"):
+			// the arbiter's mute policy — twice the bar of silence ends the
+			// episode as Abandoned(Mute) and benches the holder briefly so the
+			// next bidder acts. Survive is exempt: its silence is a bug to fix,
+			// but yanking it mid-crowd is worse; recovery is ended, not benched.
+			if grant.Demand.Class != arbiter.ClassSurvive && arb.Mute(who, 2*bar) {
+				detail := fmt.Sprintf("stall: silent %s", silent.Round(100*time.Millisecond))
+				logger.Warn("STALL — mute holder ended", "holder", who, "silent", silent.Round(100*time.Millisecond))
+				core.End(actx, who, phase.Abandoned, phase.Mute, detail)
+				if grant.Demand.Class > arbiter.ClassRecover {
+					arb.Bench(who, time.Now().Add(5*time.Second), "mute: "+detail)
 				}
 			}
-		}
-		// THE DEADMAN BOX (21:29: ten minutes pinned in a UP pocket across two
-		// binaries while the pocket breaker STARVED — it counts blocked
-		// strides, and a fight-class holder never strides. Position truth
-		// needs no holder's cooperation: 75s inside a 6-box on hostile ground
-		// refutes everything — the portal is the door, WHOEVER holds.)
-		//
-		// THE PACER'S DEADMAN (00:44, the owner: "going back and forth most
-		// of the time — his new favorite spot"): shuttling between two pockets
-		// 20 tiles apart resets every box-based breaker forever. The EMA of
-		// his position barely moves while his feet never stop: <12 tiles of
-		// centroid drift in 3 field-minutes refutes footwork the same way.
-		emaX = emaX*0.98 + float64(s.Me.Pos.X)*0.02
-		emaY = emaY*0.98 + float64(s.Me.Pos.Y)*0.02
-		if s.Me.InTown || s.Me.HPPct <= 0 ||
-			chebyshev(data.Position{X: int(emaX), Y: int(emaY)}, emaRef) > 12 {
-			emaRef, emaRefAt = data.Position{X: int(emaX), Y: int(emaY)}, time.Now()
-		}
-		pacerTripped := time.Since(emaRefAt) > 3*time.Minute
-		if chebyshev(s.Me.Pos, deadmanPos) > 6 || s.Me.InTown || s.Me.HPPct <= 0 {
-			deadmanPos, deadmanAt = s.Me.Pos, time.Now()
-		}
-		if (time.Since(deadmanAt) > 75*time.Second || pacerTripped) && !s.Me.InTown && s.Me.HPPct > 0 &&
-			cap.TownTP != nil &&
-			m.Engage.Engaged() && time.Since(lastPocketTP) > 120*time.Second {
-			who := "none"
-			if grant != nil {
-				who = grant.Demand.Who
-			}
-			logger.Warn("watchdog: DEADMAN BOX — 75s in a 6-box; the portal is the door, whoever holds",
-				"holder", who)
-			activity.NoteBreakerSite(s.Me.Pos)
-			activity.MarkPortalHot(4 * time.Minute)
-			verbs.CastSelf{Key: cap.TownTP.Key}.Do(m, gr, p, led, "watchdog")
-			time.Sleep(2200 * time.Millisecond)
-			if s2 := p.Capture(); s2.Valid && len(s2.Portals) > 0 {
-				verbs.EnterPortal{Target: s2.Portals[0].ID, TargetPos: s2.Portals[0].Pos}.
-					Do(m, gr, p, led, "watchdog")
-			}
-			lastPocketTP = time.Now()
-			deadmanPos, deadmanAt = data.Position{}, time.Now()
-			emaRefAt = time.Now()
-			continue
 		}
 		// THE CURSOR-ITEM DROP (the owner, 02:13: "inventory open and an item
 		// held by the cursor, locking the bot — all it has to do is lmb to
@@ -2603,21 +2876,33 @@ func main() {
 		// feet (a unique gets re-looted by doctrine; junk stays where junk
 		// belongs) → one ESC for the byte-blind bag that identify/equip
 		// opened (the menu sentry cures a stray pause menu within a tick).
-		if s.Me.CursorItem {
-			if cursorItemAt.IsZero() {
-				cursorItemAt = time.Now()
-			}
-			if time.Since(cursorItemAt) > 3*time.Second && time.Since(cursorDropAt) > 10*time.Second &&
-				m.Engage.Engaged() {
-				logger.Warn("watchdog: CURSOR-ITEM DROP — lmb at feet, esc the bag")
-				m.BareClick(gr.GameAreaSizeX/2, gr.GameAreaSizeY/2+140)
-				time.Sleep(400 * time.Millisecond)
-				m.RealEsc()
-				cursorDropAt = time.Now()
+		// JANITOR ON: replaced by the gate's cursor rule — a foreign item on
+		// clear ground is dropped at the same spot, over an open bag it is left
+		// (logged), and the drop is judged by a later Reading. Never an ESC.
+		// RELAY R10: never in town, and in the field only a KNOWN-junk item
+		// (the gatekeeper's junk set) — anything else stays on the cursor.
+		if !janitorOn {
+			gk.junk.observe(gr, s)
+			if s.Me.CursorItem {
+				if cursorItemAt.IsZero() {
+					cursorItemAt = time.Now()
+				}
+				if time.Since(cursorItemAt) > 3*time.Second && time.Since(cursorDropAt) > 10*time.Second &&
+					m.Engage.Engaged() && (s.Me.InTown || !gk.junk.cursorJunk(gr)) {
+					logger.Warn("watchdog: CURSOR ITEM HELD — no drop (town, or not known junk)", "town", s.Me.InTown)
+					cursorDropAt = time.Now()
+				} else if time.Since(cursorItemAt) > 3*time.Second && time.Since(cursorDropAt) > 10*time.Second &&
+					m.Engage.Engaged() {
+					logger.Warn("watchdog: CURSOR-ITEM DROP — lmb at feet, esc the bag")
+					m.BareClick(gr.GameAreaSizeX/2, gr.GameAreaSizeY/2+140)
+					time.Sleep(400 * time.Millisecond)
+					m.RealEsc()
+					cursorDropAt = time.Now()
+					cursorItemAt = time.Time{}
+				}
+			} else {
 				cursorItemAt = time.Time{}
 			}
-		} else {
-			cursorItemAt = time.Time{}
 		}
 		if time.Since(statusAt) > 10*time.Second {
 			// mp/maxmana joined 2026-07-20 11:30 (the owner: "he has about 33
@@ -2631,6 +2916,10 @@ func main() {
 			statusAt = time.Now()
 		}
 	}
+	// THE NORMAL EXIT, reached only when the session judged it safe (Stopped):
+	// the feet were stopped above; the defers release modifiers and heal the
+	// input patches exactly as every clean exit does.
+	activity.Cov.Flush() // the last seen tiles reach the WAL before the scribe stops
 	close(stop)
-	logger.Info("azbot done")
+	logger.Info("azbot done", "ses", sd.ses.String())
 }

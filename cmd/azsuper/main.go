@@ -1,0 +1,334 @@
+// azsuper — the unattended supervisor. It keeps one thing true: D2R is
+// running, a character is in the world, and azbot is driving it.
+//
+//   - D2R gone (crash) or its crash reporter up: (kill the reporter and the
+//     hung game,) relaunch D2R with the mod.
+//   - D2R up but not in the world: skip intros (Space) until the character
+//     screen, then click Play (the selected character = the last played).
+//   - In the world with no azbot: heal input (farmbot -fixinput) and start
+//     azbot for -seconds; when it ends, start the next run.
+//
+// Stop: create logs\super.stop (azbot is then left to its own WindDown).
+// Owner rule kept: azbot is never killed here — only started.
+package main
+
+import (
+	"flag"
+	"fmt"
+	"log/slog"
+	"os"
+	"os/exec"
+	"path/filepath"
+	"strings"
+	"syscall"
+	"time"
+	"unsafe"
+
+	"github.com/hectorgimenez/d2go/pkg/memory"
+	"github.com/hectorgimenez/koolo/internal/game"
+	"github.com/lxn/win"
+	"golang.org/x/sys/windows"
+)
+
+var (
+	d2rExe   = flag.String("d2r", `C:\Program Files (x86)\Diablo II Resurrected\D2R.exe`, "D2R executable")
+	d2rArgs  = flag.String("args", `-mod D2RMM -txt`, "D2R arguments (the mod launch line)")
+	seconds  = flag.Int("seconds", 86400, "azbot -seconds per run (long: a wind-down is the exception)")
+	tag      = flag.String("tag", "s", "log tag prefix: logs\\run_<date><tag><n>.out")
+	goal     = flag.String("goal", "campaign", "azbot -goal")
+	extra    = flag.String("extra", "", "extra azbot flags")
+	dpiScale = flag.Float64("dpiscale", 1.25, "display scale (screen points are physical px)")
+	playX    = flag.Int("playx", 922, "character screen Play/Normal button x (physical px)")
+	check    = flag.Bool("check", false, "print the world/menu reading once and exit (no input)")
+	playY    = flag.Int("playy", 822, "character screen Play/Normal button y (physical px)")
+)
+
+func logf(format string, a ...any) {
+	line := time.Now().Format("15:04:05 ") + fmt.Sprintf(format, a...)
+	fmt.Println(line)
+	if f, err := os.OpenFile(filepath.Join("logs", "super.log"), os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o644); err == nil {
+		fmt.Fprintln(f, time.Now().Format("2006-01-02 ")+line)
+		f.Close()
+	}
+}
+
+func pidOf(exe string) uint32 {
+	snap, err := windows.CreateToolhelp32Snapshot(windows.TH32CS_SNAPPROCESS, 0)
+	if err != nil {
+		return 0
+	}
+	defer windows.CloseHandle(snap)
+	var e windows.ProcessEntry32
+	e.Size = uint32(unsafe.Sizeof(e))
+	for err := windows.Process32First(snap, &e); err == nil; err = windows.Process32Next(snap, &e) {
+		if strings.EqualFold(windows.UTF16ToString(e.ExeFile[:]), exe) {
+			return e.ProcessID
+		}
+	}
+	return 0
+}
+
+func killPID(pid uint32) {
+	h, err := windows.OpenProcess(windows.PROCESS_TERMINATE, false, pid)
+	if err != nil {
+		return
+	}
+	windows.TerminateProcess(h, 1)
+	windows.CloseHandle(h)
+}
+
+func findHWND(pid uint32) win.HWND {
+	var hwnd win.HWND
+	cb := syscall.NewCallback(func(h win.HWND, _ uintptr) uintptr {
+		var p uint32
+		win.GetWindowThreadProcessId(h, &p)
+		if p == pid && win.IsWindowVisible(h) {
+			hwnd = h
+			return 0
+		}
+		return 1
+	})
+	windows.EnumWindows(cb, nil)
+	return hwnd
+}
+
+func launchD2R() {
+	args := strings.Fields(*d2rArgs)
+	if len(args) > 0 && args[len(args)-1] == "-txt" {
+		args = append(args, "") // the mod launch line ends in -txt ""
+	}
+	cmd := exec.Command(*d2rExe, args...)
+	cmd.Dir = filepath.Dir(*d2rExe)
+	if err := cmd.Start(); err != nil {
+		logf("relaunch FAILED: %v", err)
+		return
+	}
+	logf("relaunched D2R pid=%d", cmd.Process.Pid)
+	cmd.Process.Release()
+}
+
+func startAzbot(n int) {
+	fix := exec.Command(`.\farmbot.exe`, "-fixinput")
+	_ = fix.Run()
+	// Date + time: a restarted supervisor must never overwrite an earlier run's log.
+	name := filepath.Join("logs", fmt.Sprintf("run_%s%s%d.out", time.Now().Format("2006-01-02_1504"), *tag, n))
+	out, err := os.Create(name)
+	if err != nil {
+		logf("azbot log: %v", err)
+		return
+	}
+	errf, _ := os.Create(name + ".err")
+	args := []string{"-goal", *goal, "-seconds", fmt.Sprint(*seconds)}
+	args = append(args, strings.Fields(*extra)...)
+	cmd := exec.Command(filepath.Join("build", "azbot.exe"), args...)
+	cmd.Stdout, cmd.Stderr = out, errf
+	cmd.Env = append(os.Environ(), "AZBOT_DELIBERATE=1", "AZBOT_JANITOR=1")
+	cmd.SysProcAttr = &syscall.SysProcAttr{HideWindow: true}
+	if err := cmd.Start(); err != nil {
+		logf("azbot start FAILED: %v", err)
+		return
+	}
+	logf("azbot started pid=%d -> %s", cmd.Process.Pid, name)
+	go func() { cmd.Wait(); out.Close(); errf.Close() }()
+}
+
+// inWorld reports whether a character is loaded (and whether the reader
+// could attach at all).
+// inTown: the character stands in a town (the only safe moment to swap builds).
+func inTown(pid uint32) bool {
+	proc, err := memory.NewProcessForPID(pid)
+	if err != nil {
+		return false
+	}
+	defer proc.Close()
+	// A fresh reader has no ghost filter (inWorld): any live, non-corpse
+	// main-player unit standing in a town.
+	for _, pu := range memory.NewGameReader(proc).GetRawPlayerUnits() {
+		if pu.IsMainPlayer && !pu.IsCorpse && pu.Area > 0 && pu.Area.IsTown() {
+			return true
+		}
+	}
+	return false
+}
+
+// deployWaiting: a new build waits beside the running one.
+func deployWaiting() bool {
+	nw, err := os.Stat(filepath.Join("build", "azbot.exe.new"))
+	return err == nil && nw.Size() > 0
+}
+
+// swapBuild installs build/azbot.exe.new (azbot must not be running).
+func swapBuild() {
+	if !deployWaiting() {
+		return
+	}
+	if err := os.Rename(filepath.Join("build", "azbot.exe.new"), filepath.Join("build", "azbot.exe")); err != nil {
+		logf("deploy: swap failed: %v", err)
+		return
+	}
+	logf("deploy: installed the waiting build")
+}
+
+func inWorld(pid uint32) (world, charScreen, deathScreen, ok bool) {
+	proc, err := memory.NewProcessForPID(pid)
+	if err != nil {
+		return false, false, false, false
+	}
+	defer proc.Close()
+	gr := memory.NewGameReader(proc)
+	// A fresh reader has no ghost filter: a relog leaves a STALE main-player
+	// unit in the table (area 0, dead) beside the live one — judged alone it
+	// read as the death screen and the supervisor ESC'd a living character
+	// into the pause menu every 27s. Any live main player = in the world;
+	// the death screen is a named main player in area 0, mode Death/Dead,
+	// with no live one beside it.
+	// The death screen (dumped live 20:41): the body is a CORPSE unit (area
+	// kept, mode Dead) still flagged main — it must never count as "in the
+	// world" — and the rest are area-0 ghosts. Alive = a non-corpse main
+	// player with an area; dead = none such, and a corpse lying somewhere.
+	corpse := false
+	for _, pu := range gr.GetRawPlayerUnits() {
+		if !pu.IsMainPlayer {
+			continue
+		}
+		if pu.IsCorpse {
+			corpse = true
+			continue
+		}
+		if pu.Area > 0 && pu.Position.X > 0 {
+			world = true
+		}
+	}
+	deathScreen = !world && corpse
+	return world, gr.IsInCharacterSelectionScreen(), deathScreen, true
+}
+
+func clickPhysical(hwnd win.HWND, x, y int) {
+	game.ForceForegroundHWND(hwnd)
+	time.Sleep(300 * time.Millisecond)
+	p := win.POINT{}
+	win.ClientToScreen(hwnd, &p)
+	game.SendClickRealScreen(int(float64(x) / *dpiScale)+int(p.X), int(float64(y) / *dpiScale)+int(p.Y))
+}
+
+func main() {
+	flag.Parse()
+	_ = slog.Default()
+	if *check {
+		pid := pidOf("D2R.exe")
+		if proc, err := memory.NewProcessForPID(pid); err == nil {
+			for _, pu := range memory.NewGameReader(proc).GetRawPlayerUnits() {
+				fmt.Println("unit", pu.UnitID, "main", pu.IsMainPlayer, "corpse", pu.IsCorpse, "name", pu.Name, "area", pu.Area, "pos", pu.Position, "mode", pu.Mode, "addr", pu.Address)
+			}
+			proc.Close()
+		}
+		w, c, dth, ok := inWorld(pid)
+		fmt.Println("d2r", pid, "azbot", pidOf("azbot.exe"), "world", w, "charScreen", c, "deathScreen", dth, "ok", ok)
+		return
+	}
+	os.MkdirAll("logs", 0o755)
+	os.Remove(filepath.Join("logs", "super.stop"))
+	logf("supervisor up: seconds=%d tag=%s", *seconds, *tag)
+	runs, relaunches := 0, 0
+	var menuSince, deathSince time.Time
+	for {
+		if _, err := os.Stat(filepath.Join("logs", "super.stop")); err == nil {
+			logf("super.stop found: supervisor exits (azbot, if running, winds down on its own)")
+			return
+		}
+		// A crash reporter up means the game is dead even if its process lingers.
+		if rep := pidOf("BlizzardError.exe"); rep != 0 {
+			logf("crash reporter up (pid %d): clearing it and the hung game", rep)
+			killPID(rep)
+			if p := pidOf("D2R.exe"); p != 0 {
+				killPID(p)
+			}
+			time.Sleep(3 * time.Second)
+		}
+		pid := pidOf("D2R.exe")
+		if pid == 0 {
+			if az := pidOf("azbot.exe"); az != 0 {
+				killPID(az) // driving nothing: it would only log errors
+				logf("D2R gone: stopped the orphaned azbot pid=%d", az)
+			}
+			relaunches++
+			logf("D2R not running: relaunch #%d", relaunches)
+			launchD2R()
+			menuSince = time.Now()
+			time.Sleep(20 * time.Second)
+			continue
+		}
+		world, charScreen, deathScreen, ok := inWorld(pid)
+		if !ok {
+			time.Sleep(3 * time.Second)
+			continue
+		}
+		if world {
+			menuSince = time.Time{}
+			// AUTO-DEPLOY: a waiting build goes in at the next town visit (the
+			// owner's rule: restarts only in town) — no hand-run restart loops.
+			if az := pidOf("azbot.exe"); az != 0 && deployWaiting() && inTown(pid) {
+				logf("deploy: new build waiting and she is in town — stopping azbot pid=%d", az)
+				killPID(az)
+				time.Sleep(time.Second)
+			}
+			if pidOf("azbot.exe") == 0 {
+				swapBuild()
+				runs++
+				startAzbot(runs)
+				time.Sleep(15 * time.Second)
+			}
+			time.Sleep(3 * time.Second)
+			continue
+		}
+		// Not in the world. azbot's own relog walks the menus while it runs;
+		// act only when nothing drives the game — except the death screen,
+		// which azbot cannot see (its snapshot is invalid there): after 10s of
+		// it, ESC respawns her (k-run 20:35: azbot sat 30s+ on "You have died").
+		if pidOf("azbot.exe") != 0 {
+			if deathScreen {
+				if deathSince.IsZero() {
+					deathSince = time.Now()
+				} else if time.Since(deathSince) > 10*time.Second {
+					if hwnd := findHWND(pid); hwnd != 0 {
+						logf("death screen for %s with azbot running: ESC to respawn", time.Since(deathSince).Round(time.Second))
+						game.ForceForegroundHWND(hwnd)
+						time.Sleep(200 * time.Millisecond)
+						game.SendKeyReal(0x1B)
+						deathSince = time.Time{}
+						time.Sleep(5 * time.Second)
+					}
+				}
+			} else {
+				deathSince = time.Time{}
+			}
+			time.Sleep(3 * time.Second)
+			continue
+		}
+		if menuSince.IsZero() {
+			menuSince = time.Now()
+		}
+		hwnd := findHWND(pid)
+		if hwnd == 0 {
+			time.Sleep(3 * time.Second)
+			continue
+		}
+		switch {
+		case deathScreen:
+			logf("death screen: ESC to respawn in town")
+			game.ForceForegroundHWND(hwnd)
+			time.Sleep(200 * time.Millisecond)
+			game.SendKeyReal(0x1B) // ESC: "press ESC to continue"
+			time.Sleep(5 * time.Second)
+		case charScreen || time.Since(menuSince) > 60*time.Second:
+			logf("character screen (read=%v, %s in menus): clicking Play", charScreen, time.Since(menuSince).Round(time.Second))
+			clickPhysical(hwnd, *playX, *playY)
+			time.Sleep(8 * time.Second)
+		default:
+			game.ForceForegroundHWND(hwnd)
+			time.Sleep(200 * time.Millisecond)
+			game.SendKeyReal(0x20) // Space: skip intro videos / "press any key"
+			time.Sleep(2 * time.Second)
+		}
+	}
+}

@@ -1,0 +1,4 @@
+Superunique	Name	Class	hcIdx
+Test Chief	Test Chief	testbeast	0
+Expansion
+Late Chief	Late Chief	testboss	7

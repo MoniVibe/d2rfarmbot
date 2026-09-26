@@ -121,7 +121,7 @@ func (h HoverStrike) Do(m *motor.Motor, gr *game.MemoryReader, p *percept.Percep
 			}
 		}
 		cx, cy := bx+pr[0], by+pr[1]
-		if cx < 20 || cy < 20 || cx > gr.GameAreaSizeX-20 || cy > gr.GameAreaSizeY-20 {
+		if !ClickableLogical(gr, cx, cy) {
 			continue
 		}
 		inBounds++
@@ -141,6 +141,7 @@ func (h HoverStrike) Do(m *motor.Motor, gr *game.MemoryReader, p *percept.Percep
 			}
 			confirmed, px, py = true, cx, cy
 			o.AimDX, o.AimDY = pr[0], pr[1]
+			o.Unit = int(hd.UnitID)
 			break
 		}
 		if hd.IsHovered {
@@ -197,12 +198,14 @@ func (h HoverStrike) Do(m *motor.Motor, gr *game.MemoryReader, p *percept.Percep
 		}
 		if tomeSkill(rs) {
 			o.Evidence = fmt.Sprintf("tome armed (skill=%d) — plain attack instead", int(rs))
-			m.ClickLeft(px, py)
+			leftStrike(m, gr, px, py)
 		} else {
 			m.ClickRight(px, py)
 		}
 	} else {
-		m.ClickLeft(px, py)
+		// The LEFT skill (the owner's Carnage, 2026-09-24) fires on the left
+		// button with NO key press: whatever is mapped to the left hand swings.
+		leftStrike(m, gr, px, py)
 	}
 
 	// VOLLEY: the click was the verb's whole job. Evidence belongs to the caller's
@@ -233,6 +236,20 @@ func (h HoverStrike) Do(m *motor.Motor, gr *game.MemoryReader, p *percept.Percep
 	o.Evidence = "no mode evidence in window (may still have dealt damage)"
 	led.Append(o)
 	return o
+}
+
+// leftStrike fires the left skill at a hover-confirmed point. A bare left
+// click on the GROUND is a move order, and the confirmation is one read old —
+// the monster may have stepped off the cursor since. Re-read the hover at the
+// instant of the click: still on a monster → the plain left click (the game's
+// attack command, which pursues and swings); anything else → SHIFT+left
+// (attack-in-place), which can never be mistaken for a walk.
+func leftStrike(m *motor.Motor, gr *game.MemoryReader, x, y int) {
+	if hd := gr.GetData().HoverData; hd.IsHovered && hd.UnitType == 1 {
+		m.ClickLeft(x, y)
+		return
+	}
+	m.AttackClick(x, y)
 }
 
 // Thin motor pass-throughs (kept here so the verb layer, not callers, touches input).

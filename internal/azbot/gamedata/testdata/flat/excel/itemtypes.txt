@@ -1,0 +1,23 @@
+ItemType	Code	Equiv1	Equiv2	Body	BodyLoc1	BodyLoc2	Beltable	*eol
+Miscellaneous	misc			0			0	0
+Socket Filler	sock	misc		0			0	0
+Rune	rune	sock		0			0	0
+Gem	gem	sock		0			0	0
+Amethyst	gema	gem		0			0	0
+Potion	poti	misc		0			1	0
+Healing Potion	hpot	poti		0			0	0
+Mana Potion	mpot	poti		0			0	0
+Rejuv Potion	rpot	hpot	mpot	0			0	0
+Gold	gold	misc		0			0	0
+Weapon	weap			0			0	0
+Melee Weapon	mele	weap		0			0	0
+Axe	axe	mele		1	rarm	larm	0	0
+Expansion
+Any Armor	armo			0			0	0
+Armor	tors	armo		1	tors		0	0
+Quest	ques			0			0	0
+Book	book	misc		0			0	0
+Charm	char	misc		0			0	0
+Small Charm	scha	char		0			0	0
+Jewel	jewl	sock		0			0	0
+Duplicate Axe	axe	misc		0			0	0

@@ -30,15 +30,3 @@ func EnsureWorld(gr *game.MemoryReader, m *motor.Motor) int {
 
 // ClearPause is kept for the executive's sentry: true when anything was dismissed.
 func ClearPause(gr *game.MemoryReader, m *motor.Motor) bool { return EnsureWorld(gr, m) > 0 }
-
-// safeEsc closes an NPC dialog with a real ESC, then undoes any pause the ESC
-// may have raised (it does when the dialog had already closed). The fade-in is
-// not instant, so the screen is checked twice.
-func safeEsc(ctx *Ctx) {
-	ctx.M.RealKey(0x1B)
-	time.Sleep(400 * time.Millisecond)
-	if EnsureWorld(ctx.GR, ctx.M) == 0 {
-		time.Sleep(500 * time.Millisecond)
-		EnsureWorld(ctx.GR, ctx.M)
-	}
-}

@@ -98,7 +98,7 @@ sweep:
 	for dy := -80; dy <= 16; dy += dyStep {
 		for _, dx := range dxProbes {
 			cx, cy := bx+dx, by+dy
-			if cx < 20 || cy < 20 || cx > gr.GameAreaSizeX-20 || cy > gr.GameAreaSizeY-20 {
+			if !ClickableLogical(gr, cx, cy) {
 				continue
 			}
 			m.AimPhysical(cx, cy)
@@ -127,6 +127,12 @@ sweep:
 		}
 		// Desperate blind fallback: the label sits ~40px above the base — click it.
 		px, py = bx, by-40
+		if !ClickableLogical(gr, px, py) {
+			o.Result = ResRefused
+			o.Evidence = fmt.Sprintf("blind portal click (%d,%d) is off the world (hud: %s)", px, py, HUD(gr).ZoneAtLogical(px, py))
+			led.Append(o)
+			return o
+		}
 		o.Evidence = "blind click (swarm owns the hover)"
 	}
 

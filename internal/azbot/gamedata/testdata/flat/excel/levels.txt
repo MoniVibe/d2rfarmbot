@@ -1,0 +1,6 @@
+Name	Id	Act	LevelName	LevelWarp	Waypoint	MonLvl	MonLvl(N)	MonLvl(H)	MonLvlEx	MonLvlEx(N)	MonLvlEx(H)	Vis0	Warp0	Vis1	Warp1	mon1	mon2	nmon1
+Null	0	0			255	0	0	0				0	-1	0	-1			
+Act 1 - Town	1	0	Test Camp	To The Test Camp	0	0	25	50				2	-1	0	-1			
+Act 1 - Fields	2	0	Test Fields	To The Test Fields	255	2	27	52	4	36	80	1	-1	3	1	testbeast	testboss	testbeast
+Expansion
+Act 1 - Cave	3	0	Test Cave	To The Test Cave	1	5	30	55				2	0	0	-1	testbeast		

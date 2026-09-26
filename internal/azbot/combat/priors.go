@@ -14,6 +14,8 @@ import (
 	"unicode"
 
 	"github.com/hectorgimenez/d2go/pkg/data/skill"
+	"github.com/hectorgimenez/d2go/pkg/data/state"
+	"github.com/hectorgimenez/koolo/internal/azbot/gamedata"
 )
 
 // Role is the seed classification a prior gives a proven selection (P-7.5).
@@ -27,6 +29,9 @@ const (
 	RoleTownTP        // town-portal utility (not a TOOL)
 	RoleIdentify      // identify utility — the panel side door (WARNING 5)
 	RoleVault         // cursor-targeted self-displacement: the ring becomes scenery
+	RoleTrap          // ground-placed sentries: laid at a pack, then the fight goes on in melee
+	RoleBuff          // self-cast buff with a readable player state (BuffState)
+	RoleSummon        // a summon kept alive: recast when its unit is gone (SummonCode)
 )
 
 // rolePriors seeds every class's early-to-mid kit plus the universal item
@@ -133,24 +138,35 @@ var rolePriors = map[skill.ID]Role{
 	skill.Hunger:        RoleContact,
 	skill.Fury:          RoleContact,
 
+	// Barbarian warcries (self buffs)
+	skill.Shout:         RoleBuff,
+	skill.BattleOrders:  RoleBuff,
+	skill.BattleCommand: RoleBuff,
+
 	// Assassin
-	skill.TigerStrike:       RoleContact,
-	skill.DragonTalon:       RoleContact,
-	skill.FistsOfFire:       RoleContact,
-	skill.DragonClaw:        RoleContact,
-	skill.CobraStrike:       RoleContact,
-	skill.ClawsOfThunder:    RoleContact,
-	skill.DragonTail:        RoleContact,
-	skill.BladesOfIce:       RoleContact,
-	skill.DragonFlight:      RoleContact,
-	skill.PhoenixStrike:     RoleContact,
-	skill.PsychicHammer:     RoleReach,
-	skill.ShockWeb:          RoleReach,
-	skill.ChargedBoltSentry: RoleReach,
-	skill.WakeOfFire:        RoleReach,
-	skill.BladeSentinel:     RoleReach,
-	skill.LightningSentry:   RoleReach,
-	skill.WakeOfInferno:     RoleReach,
+	skill.TigerStrike:    RoleContact,
+	skill.DragonTalon:    RoleContact,
+	skill.FistsOfFire:    RoleContact,
+	skill.DragonClaw:     RoleContact,
+	skill.CobraStrike:    RoleContact,
+	skill.ClawsOfThunder: RoleContact,
+	skill.DragonTail:     RoleContact,
+	skill.BladesOfIce:    RoleContact,
+	skill.DragonFlight:   RoleContact,
+	skill.PhoenixStrike:  RoleContact,
+	skill.PsychicHammer:  RoleReach,
+	// Traps are NOT reach (owner, 2026-09-26, KillaryClinton: "launch some
+	// sentries and melee the rest"): a trap binding keeps the assassin a
+	// brawler — sentries are an opener laid at a pack, the claws do the rest.
+	skill.ShockWeb:          RoleTrap,
+	skill.ChargedBoltSentry: RoleTrap,
+	skill.WakeOfFire:        RoleTrap,
+	skill.BladeSentinel:     RoleTrap, // placed at a point like a trap; "reach" disarmed the brawler
+	skill.BurstOfSpeed:      RoleBuff,
+	skill.Fade:              RoleBuff,
+	skill.LightningSentry:   RoleTrap,
+	skill.WakeOfInferno:     RoleTrap,
+	skill.DeathSentry:       RoleTrap,
 	skill.BladeFury:         RoleReach,
 	skill.FireBlast:         RoleThrow,
 }
@@ -186,10 +202,124 @@ var rolePriorsByName = func() map[string]Role {
 // Prior returns the seed role for a selection, RoleNone when the table is
 // silent. Callers treat the answer as a hint, never as proof (P-7.2).
 func Prior(id skill.ID) Role {
+	// THE MOD'S OWN TABLE FIRST (2026-09-26): Reimagined adds skills the
+	// vanilla enum does not know (264 is "Snowlash Sentry" here, "Mind Blast"
+	// in d2go). The mod's skills.txt key is authoritative for what it adds.
+	if r := modRole(id); r != RoleNone {
+		return r
+	}
 	if def, ok := skill.Skills[id]; ok {
 		if role, found := rolePriorsByName[canonicalSkillName(def.Name)]; found {
 			return role
 		}
 	}
 	return rolePriors[id]
+}
+
+// buffStates: the player state each self-buff sets while active. A buff with
+// no entry here is never recast (no way to see that it lapsed).
+var buffStates = map[skill.ID]state.State{
+	skill.BurstOfSpeed:  state.Quickness,
+	skill.Fade:          state.Fade,
+	skill.Shout:         state.Shout,
+	skill.BattleOrders:  state.Battleorders,
+	skill.BattleCommand: state.Battlecommand,
+}
+
+// BuffState: the state a self-buff shows while active (by the live skill
+// table's name first, like Prior — the enum and the table disagree on some IDs).
+func BuffState(id skill.ID) (state.State, bool) {
+	if def, ok := skill.Skills[id]; ok {
+		for b, st := range buffStates {
+			if name, ok := skill.SkillNames[b]; ok && canonicalSkillName(name) == canonicalSkillName(def.Name) {
+				return st, true
+			}
+		}
+	}
+	st, ok := buffStates[id]
+	return st, ok
+}
+
+// modRole classifies by the mod skill table's key: every sentry is a trap
+// (Snowlash, Glacial Burst, the vanilla ones), the summon table's skills are
+// summons.
+func modRole(id skill.ID) Role {
+	db := gamedata.Get()
+	if db == nil {
+		return RoleNone
+	}
+	sk := db.Skill(int(id))
+	if sk == nil {
+		return RoleNone
+	}
+	k := canonicalSkillName(sk.Key)
+	switch {
+	case strings.HasSuffix(k, "sentry"):
+		return RoleTrap
+	}
+	if _, ok := summons[k]; ok {
+		return RoleSummon
+	}
+	return RoleNone
+}
+
+// Summon is how a summon skill is kept up (owner, 2026-09-26: "it should
+// maintain summonables, we will reuse it with a necro and druid and so on").
+type Summon struct {
+	Code   string // monstats code of its unit
+	Want   int    // default count kept alive (a profile may override)
+	Corpse bool   // cast onto a corpse (raise skeleton / mage)
+	Group  string // one of a group at a time (druid spirits, vines): "" = none
+}
+
+// summons: by the mod skills.txt key (canonical). Codes from the mod's
+// monstats (cmd/skilldump -mon), 2026-09-26.
+var summons = map[string]Summon{
+	"raiseskeleton":     {Code: "necroskeleton", Want: 5, Corpse: true},
+	"raiseskeletalmage": {Code: "necromage", Want: 3, Corpse: true},
+	"claygolem":         {Code: "claygolem", Want: 1, Group: "golem"},
+	"bloodgolem":        {Code: "bloodgolem", Want: 1, Group: "golem"},
+	"firegolem":         {Code: "firegolem", Want: 1, Group: "golem"},
+	"raven":             {Code: "druidhawk", Want: 5},
+	"summonspiritwolf":  {Code: "spiritwolf", Want: 3},
+	"summonfenris":      {Code: "fenris", Want: 3},
+	"summongrizzly":     {Code: "druidbear", Want: 1},
+	"oaksage":           {Code: "oaksage", Want: 1, Group: "spirit"},
+	"how":               {Code: "heartofwolverine", Want: 1, Group: "spirit"},
+	"spiritofbarbs":     {Code: "spiritofbarbs", Want: 1, Group: "spirit"},
+	"plaguepoppy":       {Code: "plaguepoppy", Want: 1, Group: "vine"},
+	"col":               {Code: "cycleoflife", Want: 1, Group: "vine"},
+	"vines":             {Code: "vinecreature", Want: 1, Group: "vine"},
+	"valkyrie":          {Code: "valkyrie", Want: 1},
+	"shadowwarrior":     {Code: "shadowwarrior", Want: 1, Group: "shadow"},
+	"shadowmaster":      {Code: "shadowmaster", Want: 1, Group: "shadow"},
+}
+
+// SummonOf: how a summon skill is kept up (ok=false: not a summon).
+func SummonOf(id skill.ID) (Summon, bool) {
+	db := gamedata.Get()
+	if db == nil {
+		return Summon{}, false
+	}
+	sk := db.Skill(int(id))
+	if sk == nil {
+		return Summon{}, false
+	}
+	sm, ok := summons[canonicalSkillName(sk.Key)]
+	return sm, ok
+}
+
+// SummonCodes: every summon unit code (percept counts them as hers).
+func SummonCodes() map[string]bool {
+	out := map[string]bool{}
+	for _, sm := range summons {
+		out[sm.Code] = true
+	}
+	return out
+}
+
+// SummonCode: the monstats code of a summon skill's unit ("" = not a summon).
+func SummonCode(id skill.ID) string {
+	sm, _ := SummonOf(id)
+	return sm.Code
 }
