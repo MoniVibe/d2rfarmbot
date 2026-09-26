@@ -71,7 +71,7 @@ func handOf(c *combat.Capability, key byte) (name, mouse string, leftPrimary boo
 		return "Attack", "left", false
 	}
 	if c != nil {
-		for _, b := range []*combat.Binding{c.LeapAttack, c.DoubleSwing, c.Combat, c.Contact, c.Reach, c.Throw} {
+		for _, b := range []*combat.Binding{c.LeapAttack, c.DoubleSwing, c.Combat, c.Contact, c.Reach, c.Throw, c.Trap} {
 			if b != nil && b.Key == key && b.Skill != 0 {
 				return combat.SkillName(b.Skill), "right", false
 			}

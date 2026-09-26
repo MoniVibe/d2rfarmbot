@@ -1297,6 +1297,7 @@ func (b *Breakout) Step(ctx *Ctx) Verdict {
 // ---------------------------------------------------------------- Fight (ClassFight)
 
 type Fight struct {
+	trapAt    []time.Time // recent sentry casts (trap.go): the live-trap budget
 	target    data.UnitID
 	targetPos data.Position
 	noEvid    int
@@ -1724,6 +1725,9 @@ func (f *Fight) Step(ctx *Ctx) Verdict {
 		// the pack makes the splash pay (the owner: "Leap Attack does AoE so
 		// it clears swarms more easily"). The pursuit decision is made below,
 		// once the lock has settled. The movement leap's hunger still eats first.
+		if f.layTrap(ctx, s) {
+			return Running // sentries at the pack first; the claws next tick
+		}
 		rd, rk := meleeDecide(ctx, s, contact, &contactPos, false, true, true)
 		rk = hungerOverride(ctx, &rd, rk)
 		// A dry bow set is no bow at all: while Arrows==0 the javelins ARE the build —

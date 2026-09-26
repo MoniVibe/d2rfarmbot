@@ -70,6 +70,7 @@ type Capability struct {
 	TownTP      *Binding // proven town portal selection
 	Identify    *Binding // proven identify selection
 	Vault       *Binding // proven cursor-targeted displacement (Leap-family)
+	Trap        *Binding // proven ground-placed sentry (assassin traps)
 	// Left is the live LEFT mouse skill (read, not pressed). Left.Primary()
 	// makes it the fight's primary strike; Leap Attack is then a gap-closer
 	// and Double Swing the no-evidence fallback (combat/policy).
@@ -161,6 +162,11 @@ func Calibrate(log *slog.Logger, gr *game.MemoryReader, hid *game.HID, mem *memo
 			case RoleVault:
 				v := b
 				cap.Vault = &v
+			case RoleTrap:
+				if cap.Trap == nil {
+					v := b
+					cap.Trap = &v
+				}
 			}
 			before = after
 		} else if !second {

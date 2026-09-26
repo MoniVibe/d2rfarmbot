@@ -27,6 +27,7 @@ const (
 	RoleTownTP        // town-portal utility (not a TOOL)
 	RoleIdentify      // identify utility — the panel side door (WARNING 5)
 	RoleVault         // cursor-targeted self-displacement: the ring becomes scenery
+	RoleTrap          // ground-placed sentries: laid at a pack, then the fight goes on in melee
 )
 
 // rolePriors seeds every class's early-to-mid kit plus the universal item
@@ -134,23 +135,27 @@ var rolePriors = map[skill.ID]Role{
 	skill.Fury:          RoleContact,
 
 	// Assassin
-	skill.TigerStrike:       RoleContact,
-	skill.DragonTalon:       RoleContact,
-	skill.FistsOfFire:       RoleContact,
-	skill.DragonClaw:        RoleContact,
-	skill.CobraStrike:       RoleContact,
-	skill.ClawsOfThunder:    RoleContact,
-	skill.DragonTail:        RoleContact,
-	skill.BladesOfIce:       RoleContact,
-	skill.DragonFlight:      RoleContact,
-	skill.PhoenixStrike:     RoleContact,
-	skill.PsychicHammer:     RoleReach,
-	skill.ShockWeb:          RoleReach,
-	skill.ChargedBoltSentry: RoleReach,
-	skill.WakeOfFire:        RoleReach,
+	skill.TigerStrike:    RoleContact,
+	skill.DragonTalon:    RoleContact,
+	skill.FistsOfFire:    RoleContact,
+	skill.DragonClaw:     RoleContact,
+	skill.CobraStrike:    RoleContact,
+	skill.ClawsOfThunder: RoleContact,
+	skill.DragonTail:     RoleContact,
+	skill.BladesOfIce:    RoleContact,
+	skill.DragonFlight:   RoleContact,
+	skill.PhoenixStrike:  RoleContact,
+	skill.PsychicHammer:  RoleReach,
+	// Traps are NOT reach (owner, 2026-09-26, KillaryClinton: "launch some
+	// sentries and melee the rest"): a trap binding keeps the assassin a
+	// brawler — sentries are an opener laid at a pack, the claws do the rest.
+	skill.ShockWeb:          RoleTrap,
+	skill.ChargedBoltSentry: RoleTrap,
+	skill.WakeOfFire:        RoleTrap,
 	skill.BladeSentinel:     RoleReach,
-	skill.LightningSentry:   RoleReach,
-	skill.WakeOfInferno:     RoleReach,
+	skill.LightningSentry:   RoleTrap,
+	skill.WakeOfInferno:     RoleTrap,
+	skill.DeathSentry:       RoleTrap,
 	skill.BladeFury:         RoleReach,
 	skill.FireBlast:         RoleThrow,
 }
