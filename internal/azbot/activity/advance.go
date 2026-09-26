@@ -821,6 +821,7 @@ func (a *Advance) Step(ctx *Ctx) Verdict {
 	// level-lawful campaign leg; intentLeg holds a committed target against a
 	// shallower recomputation. Flag OFF → rawIdx unchanged (legacy path).
 	rawIdx := minInt(a.campIdx()+1, len(a.Itinerary)-1)
+	rawIdx = a.skipHeldQuestLegs(ctx, rawIdx)
 	next := a.Itinerary[a.intentLeg(ctx, s, rawIdx)]
 
 	// P-10 THE NETWORK BEATS THE ROAD (the owner, 23:35: "she's not taking
@@ -2036,8 +2037,9 @@ func (a *Advance) cross(ctx *Ctx, d game.Data, me data.Position, tgt data.Positi
 				// and their POSITION field can lie while the flag tells truth;
 				// HoverData never named this door because entrance hover lives
 				// HERE, position-blind).
-				for ei := range ctx.GR.GetData().Entrances {
-					if ctx.GR.GetData().Entrances[ei].IsHovered {
+				ents := ctx.GR.GetData().Entrances // ONE read: a re-read per index raced a shrinking list (panic 22:12)
+				for ei := range ents {
+					if ents[ei].IsHovered {
 						found = true
 						ctx.Led.Append(verbs.Outcome{Verb: "cross", Holder: a.Name(), Result: verbs.ResDone,
 							Evidence: fmt.Sprintf("entrance flag HOVERED at offset (%d,%d) — clicking the door", dx, dy)})
@@ -2721,4 +2723,20 @@ func (a *Advance) huntBoss(ctx *Ctx) (Verdict, bool) {
 		moveTo(ctx, at, o)
 	}
 	return Running, true
+}
+
+// skipHeldQuestLegs passes over quest legs whose artifact she already holds
+// (2026-09-26: a restart in Halls 2 walked her down to Halls 3 for a cube in
+// her bag, then back up for Far Oasis). The router reaches the next leg by
+// the map graph, so a dead-end quest level is simply not visited.
+func (a *Advance) skipHeldQuestLegs(ctx *Ctx, idx int) int {
+	d := ctx.GR.GetData()
+	for idx < len(a.Itinerary)-1 {
+		q, ok := questLegs[a.Itinerary[idx].Area]
+		if !ok || !questItemHeld(d.Data, q.item) || a.Itinerary[idx].Area == ctx.Snap.Me.Area {
+			break
+		}
+		idx++
+	}
+	return idx
 }
