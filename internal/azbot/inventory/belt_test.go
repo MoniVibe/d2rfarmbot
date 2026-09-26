@@ -74,3 +74,18 @@ func TestBeltMakesRoomForMana(t *testing.T) {
 		t.Fatalf("four red columns, a blue in the bag: evict a red column, got %+v %v", mv, ok)
 	}
 }
+
+// 2026-09-26: one mana column wanted, two carried, reds waiting and no red room.
+func TestSurplusManaColumnMakesRoomForHealing(t *testing.T) {
+	m := &Model{BeltRows: 2, Belt: belt(2, []int{mp, mp}, []int{mp}, []int{hp, hp}, []int{hp, hp}),
+		Bag: []Item{{Unit: 3, ID: hp, GX: 0, GY: 0}}}
+	mv, ok := m.BeltPlan()
+	if !ok || mv.Kind != MoveEvict || mv.Column != 1 {
+		t.Fatalf("evict the lighter mana column (1), got %+v ok=%v", mv, ok)
+	}
+	MinMPCols = 2
+	defer func() { MinMPCols = 1 }()
+	if mv, ok := m.BeltPlan(); ok && mv.Kind == MoveEvict {
+		t.Fatalf("two mana columns wanted: keep them, got %+v", mv)
+	}
+}

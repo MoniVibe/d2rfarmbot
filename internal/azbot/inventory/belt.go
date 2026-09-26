@@ -130,6 +130,22 @@ func (m *Model) BeltPlan() (Move, bool) {
 			return Move{Kind: MoveEvict, Unit: bottom.Unit, Column: best, Why: "a column for mana (the leap starves on one)"}, true
 		}
 	}
+	// 2c. HEALING TAKES BACK A SURPLUS MANA COLUMN (2026-09-26: a trapper with
+	//     one mana column wanted still carried two — the belt read 4 reds / 4
+	//     blues while reds waited in the bag). More blue columns than MinMPCols
+	//     and healing waiting with no landing: empty the lightest blue column.
+	if len(hp) > 0 && m.landing(PotHP) < 0 && m.columnsOf(PotMP) > MinMPCols {
+		best, bestN := -1, 1<<30
+		for c := 0; c < 4; c++ {
+			if m.ColumnKind(c) == PotMP && m.ColumnCount(c) < bestN {
+				best, bestN = c, m.ColumnCount(c)
+			}
+		}
+		if best >= 0 {
+			bottom := m.column(best)[0]
+			return Move{Kind: MoveEvict, Unit: bottom.Unit, Column: best, Why: "a surplus mana column for healing"}, true
+		}
+	}
 	// 3. Others fill what is left — but never an empty column that healing still
 	//    needs: keep enough empty columns to reach MinHPCols.
 	needHP := MinHPCols - m.hpColumns()
