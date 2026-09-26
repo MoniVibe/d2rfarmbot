@@ -61,7 +61,7 @@ func TestEvaluateTiers(t *testing.T) {
 		{Item{ID: 626, Quality: QNormal, Name: "LumRune"}, TierS},          // Eld rune
 		{Item{ID: 618, Quality: QMagic, Name: "OrtRune"}, TierS},           // magic small charm
 		{Item{ID: 658, Quality: QRare}, TierS},                             // rare jewel
-		{Item{ID: 307, Quality: QRare}, TierA},                               // rare gear
+		{Item{ID: 307, Quality: QRare}, TierA},                             // rare gear
 		{Item{ID: 537, Quality: QMagic, Name: "Flag"}, TierA},              // magic ring
 		{Item{ID: 538, Quality: QNormal, Name: "Fang"}, TierA},             // gold
 		{Item{ID: 0, Quality: QMagic}, TierB},                              // magic gear
@@ -187,7 +187,7 @@ func TestPlanSpaceDecisions(t *testing.T) {
 	unique := Item{ID: 0, Quality: QUnique} // hand axe: 1x3
 	rare := Item{ID: 307, Quality: QRare}
 	junkAxe := Carried{Unit: 11, Item: Item{ID: 0, Quality: QNormal}, Identified: true} // plain gear, 3 cells
-	idRare := Carried{Unit: 12, Item: Item{ID: 307, Quality: QRare}, Identified: true}    // shown its hand: B
+	idRare := Carried{Unit: 12, Item: Item{ID: 307, Quality: QRare}, Identified: true}  // shown its hand: B
 	tome := Carried{Unit: 13, Item: Item{ID: TomeTP, Quality: QNormal}, Identified: true}
 	charm := Carried{Unit: 14, Item: Item{ID: 620, Quality: QMagic}, Identified: true}
 
@@ -287,6 +287,9 @@ func TestPlanPotionsAndGold(t *testing.T) {
 	}
 	if p := c.Plan(Item{ID: 538, Quality: QNormal}, Situation{Free: 0}); p.Act != Take {
 		t.Fatalf("gold needs no bag room: %s (%s)", p.Act, p.Why)
+	}
+	if p := c.Plan(Item{ID: 538, Quality: QNormal}, Situation{GoldFull: true}); p.Act != Skip {
+		t.Fatal("a full purse leaves gold on the ground (the overflow re-drops it)")
 	}
 }
 

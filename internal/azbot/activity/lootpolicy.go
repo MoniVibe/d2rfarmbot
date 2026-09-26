@@ -117,6 +117,7 @@ func (m *lootMind) situation(s *percept.Snapshot) loot.Situation {
 		Urgent:    progressUrgent(),
 		PotionsOn: LootPotions,
 		HealPots:  s.Me.HealPots,
+		GoldFull:  s.Me.Level > 0 && s.Me.Gold >= s.Me.Level*10000,
 	}
 	for _, j := range s.Junk {
 		sit.SellCells += loot.Classify(j.ID).Cells()

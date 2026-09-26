@@ -31,6 +31,7 @@ type Situation struct {
 	Urgent    bool // the march is lawful and bidding: she is trying to progress
 	PotionsOn bool // bottle looting is enabled (activity.LootPotions)
 	HealPots  int  // healing/rejuv bottles in the belt (mana waits until they are stocked)
+	GoldFull  bool // carried gold at the level cap (level x 10000)
 	HaulOK    bool // a town trip is possible now (portal binding or a live door; calm field)
 	SellCells int  // bag cells a Fence visit would free (perception's junk list)
 	Bag       []Carried
@@ -60,6 +61,13 @@ func (c *Config) Plan(it Item, sit Situation) Plan {
 	p := Plan{Verdict: v, Need: v.Class.Cells()}
 	switch v.Class.Kind {
 	case KindGold:
+		// THE GOLD CAP (2026-09-26: 220,000 carried at level 22 — every
+		// pickup overflowed back onto the floor as a new pile and she looped
+		// on it for minutes). A full purse leaves gold where it lies.
+		if sit.GoldFull {
+			p.Why = "purse full (the level cap): gold stays on the ground"
+			return p
+		}
 		p.Need = 0
 	case KindPotion:
 		// Bottles ride the belt: the belt, not the bag, is their room.
