@@ -202,7 +202,7 @@ func main() {
 	os.Remove(filepath.Join("logs", "super.stop"))
 	logf("supervisor up: seconds=%d tag=%s", *seconds, *tag)
 	runs, relaunches := 0, 0
-	var menuSince time.Time
+	var menuSince, deathSince time.Time
 	for {
 		if _, err := os.Stat(filepath.Join("logs", "super.stop")); err == nil {
 			logf("super.stop found: supervisor exits (azbot, if running, winds down on its own)")
@@ -254,8 +254,26 @@ func main() {
 			continue
 		}
 		// Not in the world. azbot's own relog walks the menus while it runs;
-		// act only when nothing drives the game.
+		// act only when nothing drives the game — except the death screen,
+		// which azbot cannot see (its snapshot is invalid there): after 10s of
+		// it, ESC respawns her (k-run 20:35: azbot sat 30s+ on "You have died").
 		if pidOf("azbot.exe") != 0 {
+			if deathScreen {
+				if deathSince.IsZero() {
+					deathSince = time.Now()
+				} else if time.Since(deathSince) > 10*time.Second {
+					if hwnd := findHWND(pid); hwnd != 0 {
+						logf("death screen for %s with azbot running: ESC to respawn", time.Since(deathSince).Round(time.Second))
+						game.ForceForegroundHWND(hwnd)
+						time.Sleep(200 * time.Millisecond)
+						game.SendKeyReal(0x1B)
+						deathSince = time.Time{}
+						time.Sleep(5 * time.Second)
+					}
+				}
+			} else {
+				deathSince = time.Time{}
+			}
 			time.Sleep(3 * time.Second)
 			continue
 		}
