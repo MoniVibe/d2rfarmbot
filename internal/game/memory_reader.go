@@ -30,6 +30,7 @@ type MemoryReader struct {
 	supervisorName string
 	cachedMapData  map[area.ID]AreaData
 	logger         *slog.Logger
+	live           liveCache // seed-free presets (drlg.go)
 }
 
 func NewGameReader(cfg *config.CharacterCfg, supervisorName string, pid uint32, window win.HWND, logger *slog.Logger) (*MemoryReader, error) {
@@ -154,9 +155,26 @@ func (gd *MemoryReader) GetData() Data {
 	// even though the memory read works fine on 3.2.
 	memObjects := gd.Objects(d.PlayerUnit.Position, d.HoverData)
 	currentArea, ok := gd.cachedMapData[d.PlayerUnit.Area]
+	// THE SEED-FREE MAP (drlg.go): when the game's own presets for this level
+	// are readable they replace the seed-generated map objects — the map seed
+	// read is stuck and koolo-map lies in every randomized area.
+	livePresets := false
+	if lv := gd.LiveLevelsCached(d.PlayerUnit.Area); lv != nil {
+		if ll, found := lv[d.PlayerUnit.Area]; found && len(ll.Presets) > 0 {
+			memObjects = append(memObjects, liveObjects(ll, memObjects)...)
+			livePresets = true
+			// NPC presets the map lacks (or never had: no map data at all)
+			// become approach rings for the town errands.
+			currentArea.Area = d.PlayerUnit.Area
+			currentArea.NPCs = liveNPCs(ll, currentArea.NPCs)
+		}
+	}
 	if ok {
 		// Merge in map-data objects the memory read can't see yet (far away, e.g. the WP).
 		for _, clientObject := range currentArea.Objects {
+			if livePresets {
+				break // the live presets already cover the level
+			}
 			found := false
 			for _, obj := range memObjects {
 				// Only consider it a duplicate if same name AND same position
@@ -171,11 +189,11 @@ func (gd *MemoryReader) GetData() Data {
 		}
 
 		d.AreaOrigin = data.Position{X: currentArea.OffsetX, Y: currentArea.OffsetY}
-		d.NPCs = currentArea.NPCs
 		d.AdjacentLevels = currentArea.AdjacentLevels
 		d.Rooms = currentArea.Rooms
 	}
 	d.Objects = memObjects
+	d.NPCs = currentArea.NPCs
 
 	var cfgCopy config.CharacterCfg
 	if gd.cfg != nil {
