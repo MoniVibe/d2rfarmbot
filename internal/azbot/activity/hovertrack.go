@@ -46,8 +46,30 @@ func hoverUnitTracked(ctx *Ctx, u data.UnitID) (int, int, bool) {
 			continue
 		}
 		ctx.M.AimPhysical(cx, cy)
-		time.Sleep(35 * time.Millisecond)
+		hoverSettle()
 		if hd := ctx.GR.GetData().HoverData; hd.IsHovered && hd.UnitID == u {
+			return cx, cy, true
+		}
+	}
+	return 0, 0, false
+}
+
+// hoverSettle: one frame for the game to refresh HoverData after an aim — the
+// only sleep the hover probes own (the ratchet's one).
+func hoverSettle() { time.Sleep(40 * time.Millisecond) }
+
+// hoverEntrance probes the offsets around base and returns the first point
+// whose hover names this entrance unit (type 5). ok=false when none did —
+// unfocused the hover is dark, and the caller clicks the box point blind.
+func hoverEntrance(ctx *Ctx, bx, by int, offs []data.Position, id data.UnitID) (int, int, bool) {
+	for _, o := range offs {
+		cx, cy := bx+o.X, by+o.Y
+		if !verbs.ClickableLogical(ctx.GR, cx, cy) {
+			continue
+		}
+		ctx.M.AimPhysical(cx, cy)
+		hoverSettle()
+		if hd := ctx.GR.GetData().HoverData; hd.IsHovered && hd.UnitType == 5 && hd.UnitID == id {
 			return cx, cy, true
 		}
 	}

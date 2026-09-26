@@ -1723,11 +1723,21 @@ func (a *Advance) memoryEntranceClick(ctx *Ctx, start, hop area.ID, targetID dat
 	// memory-derived offset; this is a tiny label-depth compensation, not a
 	// cursor hunt over arbitrary screen space.
 	offsets := []data.Position{{X: 0, Y: -28}, {X: 0, Y: -56}, {X: -18, Y: -28}}
+	aimed := "legacy offset"
+	if box := warpAimOffsets(int(ent.Name)); box != nil {
+		offsets, aimed = box, "warp box"
+	}
 	off := offsets[a.clicks.N%len(offsets)]
 	a.clicks.N++
 	a.memoryEntranceID, a.memoryEntranceN = targetID, a.clicks.N
 	a.memoryEntranceAt = time.Now()
 	cx, cy := bx+off.X, by+off.Y
+	// Focused, the hover names the exact point inside the box that belongs to
+	// THIS entrance; unfocused it is dark and the box point is clicked as is.
+	ctx.M.MoveStop()
+	if hx, hy, ok := hoverEntrance(ctx, bx, by, offsets, targetID); ok {
+		cx, cy, aimed = hx, hy, "hover-confirmed in the warp box"
+	}
 	if !verbs.ClickableLogical(ctx.GR, cx, cy) {
 		ctx.Led.Append(verbs.Outcome{Verb: "cross", Holder: a.Name(), Result: verbs.ResRefused,
 			Evidence: fmt.Sprintf("memory entrance id=%d projected outside game area (%d,%d)", int(targetID), cx, cy)})
@@ -1757,13 +1767,13 @@ func (a *Advance) memoryEntranceClick(ctx *Ctx, start, hop area.ID, targetID dat
 			a.recordWrongDoor(ctx, start, nowArea, ent.Position)
 		} else {
 			ctx.Led.Append(verbs.Outcome{Verb: "cross", Holder: a.Name(), Result: verbs.ResDone,
-				Evidence: fmt.Sprintf("memory entrance id=%d transitioned %d -> %d", int(targetID), int(start), int(nowArea))})
+				Evidence: fmt.Sprintf("memory entrance id=%d warp=%d transitioned %d -> %d (aim=%s, try %d)", int(targetID), int(ent.Name), int(start), int(nowArea), aimed, a.clicks.N)})
 		}
 		return true, true
 	}
 	ctx.Led.Append(verbs.Outcome{Verb: "cross", Holder: a.Name(), Result: verbs.ResDeaf,
-		Evidence: fmt.Sprintf("memory entrance click deaf id=%d name=%d pos=(%d,%d) offset=(%d,%d) hop=%d",
-			int(targetID), int(ent.Name), ent.Position.X, ent.Position.Y, off.X, off.Y, int(hop))})
+		Evidence: fmt.Sprintf("memory entrance click deaf id=%d warp=%d pos=(%d,%d) click=(%d,%d) base=(%d,%d) aim=%s hop=%d",
+			int(targetID), int(ent.Name), ent.Position.X, ent.Position.Y, cx, cy, bx, by, aimed, int(hop))})
 	return true, false
 }
 
@@ -1775,10 +1785,12 @@ func (a *Advance) memoryEntranceClick(ctx *Ctx, start, hop area.ID, targetID dat
 func (a *Advance) cross(ctx *Ctx, d game.Data, me data.Position, tgt data.Position, hop area.ID) {
 	// Steer at the LIVE entrance unit when one is near the target; else the target.
 	var memoryID data.UnitID
+	memoryWarp := -1
 	for i := range d.Entrances {
 		if chebyshev(d.Entrances[i].Position, tgt) <= 15 {
 			tgt = d.Entrances[i].Position
 			memoryID = d.Entrances[i].ID
+			memoryWarp = int(d.Entrances[i].Name)
 			break
 		}
 	}
@@ -1804,6 +1816,14 @@ func (a *Advance) cross(ctx *Ctx, d game.Data, me data.Position, tgt data.Positi
 	}
 	if a.contactAt.IsZero() {
 		a.contactAt = time.Now()
+	}
+	// A CLICKED WARP IS CLICKED AT ONCE (2026-09-26): its lvlwarp row says it
+	// has a select box and is not walk-in — the 5 s contact push only walked
+	// her into the cave wall before the first click.
+	if memoryID != 0 && warpInteractive(memoryWarp) {
+		if attempted, _ := a.memoryEntranceClick(ctx, d.PlayerUnit.Area, hop, memoryID, tgt); attempted {
+			return
+		}
 	}
 	if time.Since(a.contactAt) < 5*time.Second {
 		// CONTACT PUSH — direction by knowledge ladder:
@@ -1894,7 +1914,10 @@ func (a *Advance) cross(ctx *Ctx, d game.Data, me data.Position, tgt data.Positi
 	// there was seam-leap and re-arm. The unit list lies by omission; the
 	// owner's own crossing at this spot is stronger evidence than its silence.)
 	learnedDoor := false
-	if hop != 0 && ctx.Mem != nil {
+	// ...but an OPEN BORDER is never an entrance (2026-09-26, Outer Cloister
+	// -> Barracks: the learned crossing of a walk-through seam armed the
+	// entrance hover hunt — "3 ground clicks deaf" — at a border you walk).
+	if hop != 0 && ctx.Mem != nil && !openBorder(d.PlayerUnit.Area, hop) {
 		var p data.Position
 		if ctx.Mem.GetJSON(BorderKey(ctx.GR.MapSeed(), d.PlayerUnit.Area, hop), &p) && p.X != 0 &&
 			chebyshev(p, tgt) <= 8 {
