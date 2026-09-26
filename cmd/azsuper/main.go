@@ -24,6 +24,7 @@ import (
 	"time"
 	"unsafe"
 
+	"github.com/hectorgimenez/d2go/pkg/data/mode"
 	"github.com/hectorgimenez/d2go/pkg/memory"
 	"github.com/hectorgimenez/koolo/internal/game"
 	"github.com/lxn/win"
@@ -170,14 +171,25 @@ func inWorld(pid uint32) (world, charScreen, deathScreen, ok bool) {
 	}
 	defer proc.Close()
 	gr := memory.NewGameReader(proc)
-	// IsIngame's static offset is stale on this build (reads false in the
-	// world); a loaded player unit with a position is the bot's own test.
-	pu := gr.GetData().PlayerUnit
-	world = pu.Address != 0 && pu.Position.X > 0 && pu.Area > 0
-	// "You have died — press ESC to continue" (k4, 2026-09-26): the character
-	// is still loaded (named) but reads area 0 / position 0, and azbot's
-	// attach gate refuses to run on it. ESC respawns her in town.
-	deathScreen = !world && pu.Name != "" && pu.Area == 0
+	// A fresh reader has no ghost filter: a relog leaves a STALE main-player
+	// unit in the table (area 0, dead) beside the live one — judged alone it
+	// read as the death screen and the supervisor ESC'd a living character
+	// into the pause menu every 27s. Any live main player = in the world;
+	// the death screen is a named main player in area 0, mode Death/Dead,
+	// with no live one beside it.
+	named := false
+	for _, pu := range gr.GetRawPlayerUnits() {
+		if !pu.IsMainPlayer {
+			continue
+		}
+		if pu.Area > 0 && pu.Position.X > 0 {
+			world = true
+		}
+		if pu.Name != "" && pu.Area == 0 && (pu.Mode == mode.Death || pu.Mode == mode.Dead) {
+			named = true
+		}
+	}
+	deathScreen = !world && named
 	return world, gr.IsInCharacterSelectionScreen(), deathScreen, true
 }
 
