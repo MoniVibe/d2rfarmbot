@@ -70,7 +70,7 @@ func TestSanctuaryClock(t *testing.T) {
 // Owner 2026-09-25: "we can begin running act 3" — Kurast Docks starts the Act 3 spine.
 func TestAct3Itinerary(t *testing.T) {
 	it := CampaignItinerary(area.KurastDocks)
-	if len(it) < 10 || it[0].Area != area.KurastDocks || it[len(it)-1].Area != area.Travincal {
+	if len(it) < 10 || it[0].Area != area.KurastDocks || it[len(it)-1].Area != area.DuranceOfHateLevel3 { // through Travincal to Mephisto
 		t.Fatalf("Act 3 spine: got %v", it)
 	}
 	for _, ar := range []area.ID{area.SpiderCavern, area.FlayerDungeonLevel3, area.SewersLevel2Act3} {
