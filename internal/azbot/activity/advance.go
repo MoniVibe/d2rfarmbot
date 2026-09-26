@@ -180,10 +180,18 @@ func gateByMonsterLevel(legs []Leg) []Leg {
 		if db == nil {
 			break
 		}
-		if lv := db.Level(int(out[i].Area)); lv != nil && lv.MonLvl[0] > 0 {
+		lv := db.Level(int(out[i].Area))
+		switch {
+		case lv != nil && lv.MonLvl[0] > 0:
 			if g := lv.MonLvl[0] + gateSlack; g < out[i].MinLevel {
 				out[i].MinLevel = g
 			}
+		case lv != nil && i > 0 && out[i-1].MinLevel < out[i].MinLevel:
+			// A monster-free level (the Harem, a town) opens with the leg before
+			// it (2026-09-26: Harem 1 kept its hand gate 29; a level-26 trapper
+			// "grinded" Claw Viper 2 — 8.5 minutes of Explore — for a door she
+			// could walk through).
+			out[i].MinLevel = out[i-1].MinLevel
 		}
 	}
 	return out

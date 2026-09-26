@@ -2,6 +2,7 @@ package activity
 
 import (
 	"fmt"
+	"math"
 	"sync"
 	"time"
 
@@ -22,7 +23,7 @@ import (
 
 const (
 	trapReach   = 14                     // tiles: packs further off are the march's business
-	trapCluster = 4                      // tiles: bodies around the aim that count as one pack
+	trapCluster = 6                      // tiles: bodies around a monster that count as one mass
 	trapMinPack = 1                      // a lone monster gets traps too (bosses come alone)
 	trapWant    = 5                      // live sentries wanted at a pack (the game caps five)
 	trapWantOne = 2                      // at a lone monster
@@ -32,8 +33,9 @@ const (
 	trapNear    = 8                      // the spread's center is at most this far from her
 )
 
-// trapSpread: the formation around the center — one sentry per slot.
-var trapSpread = []data.Position{{X: 0, Y: 0}, {X: 3, Y: 0}, {X: -3, Y: 0}, {X: 0, Y: 3}, {X: 0, Y: -3}}
+// trapLine: the formation — sentries on a LINE ACROSS the approach, at these
+// multiples of the perpendicular (center first).
+var trapLine = []float64{0, 3, -3, 6, -6}
 
 var trapBind = struct {
 	sync.Mutex
@@ -61,9 +63,11 @@ func trapBinding() (combat.Binding, bool) {
 	return *trapBind.b, true
 }
 
-// trapAim picks the pack: the unwalled enemy within trapReach with the most
-// unwalled neighbours inside trapCluster (ties: nearer). ok=false when no
-// pack reaches trapMinPack.
+// trapAim picks the MASS (owner, 2026-09-26: "she doesnt aim the sentries
+// towards mob masses, or intelligently"): the unwalled enemy within trapReach
+// with the most unwalled neighbours inside trapCluster, and the CENTROID of
+// that neighbourhood — not one monster at a clump's edge. ok=false when no
+// mass reaches trapMinPack.
 func trapAim(me data.Position, enemies []percept.EnemyRef) (data.Position, int, bool) {
 	var aim data.Position
 	best, bestD := 0, 1<<30
@@ -75,27 +79,44 @@ func trapAim(me data.Position, enemies []percept.EnemyRef) (data.Position, int, 
 		if d > trapReach {
 			continue
 		}
-		n := 0
+		n, sx, sy := 0, 0, 0
 		for _, o := range enemies {
 			if !o.Walled && chebyshev(e.Pos, o.Pos) <= trapCluster {
-				n++
+				n, sx, sy = n+1, sx+o.Pos.X, sy+o.Pos.Y
 			}
 		}
 		if n > best || (n == best && d < bestD) {
-			aim, best, bestD = e.Pos, n, d
+			aim, best, bestD = data.Position{X: sx / n, Y: sy / n}, n, d
 		}
 	}
 	return aim, best, best >= trapMinPack
 }
 
-// trapCenter pulls a far pack's aim back toward her: the spread stands
-// between her and the pack, never out of her cast range.
-func trapCenter(me, aim data.Position) data.Position {
-	d := chebyshev(me, aim)
-	if d <= trapNear {
-		return aim
+// trapCenter: the line stands IN FRONT of the mass — 60% of the way from her
+// to its centroid, never beyond trapNear — so the mass walks into it as it
+// comes at her. A mass on top of her is trapped where it stands.
+func trapCenter(me, mass data.Position) data.Position {
+	d := chebyshev(me, mass)
+	if d <= 3 {
+		return mass
 	}
-	return data.Position{X: me.X + (aim.X-me.X)*trapNear/d, Y: me.Y + (aim.Y-me.Y)*trapNear/d}
+	k := d * 6 / 10
+	if k > trapNear {
+		k = trapNear
+	}
+	return data.Position{X: me.X + (mass.X-me.X)*k/d, Y: me.Y + (mass.Y-me.Y)*k/d}
+}
+
+// trapSlot: slot i of the line through center, across the approach from me.
+func trapSlot(me, center data.Position, i int) data.Position {
+	dx, dy := float64(center.X-me.X), float64(center.Y-me.Y)
+	l := math.Hypot(dx, dy)
+	if l < 1 {
+		dx, dy, l = 1, 0, 1
+	}
+	px, py := -dy/l, dx/l // the perpendicular
+	m := trapLine[i%len(trapLine)]
+	return data.Position{X: center.X + int(math.Round(px*m)), Y: center.Y + int(math.Round(py*m))}
 }
 
 type Traps struct {
@@ -138,8 +159,7 @@ func (t *Traps) Step(ctx *Ctx) Verdict {
 	if !ok {
 		return Abandoned
 	}
-	off := trapSpread[t.slot%len(trapSpread)]
-	at := data.Position{X: t.aim.X + off.X, Y: t.aim.Y + off.Y}
+	at := trapSlot(ctx.Snap.Me.Pos, t.aim, t.slot)
 	t.slot++
 	t.castAt = time.Now()
 	if !groundAt(ctx, at, b.Key, false) {

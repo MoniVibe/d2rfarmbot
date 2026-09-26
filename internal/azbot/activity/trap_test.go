@@ -24,13 +24,29 @@ func TestTrapAimPicksDensestPack(t *testing.T) {
 	}
 }
 
-func TestTrapCenterStaysInReach(t *testing.T) {
+func TestTrapCenterStandsInFrontOfTheMass(t *testing.T) {
 	me := data.Position{X: 100, Y: 100}
-	if c := trapCenter(me, data.Position{X: 105, Y: 100}); c.X != 105 {
-		t.Fatalf("near pack: center on it, got %v", c)
+	if c := trapCenter(me, data.Position{X: 102, Y: 100}); c.X != 102 {
+		t.Fatalf("a mass on top of her: trapped where it stands, got %v", c)
 	}
-	if c := trapCenter(me, data.Position{X: 114, Y: 100}); chebyshev(me, c) != trapNear {
-		t.Fatalf("far pack: center pulled to %d, got %v", trapNear, c)
+	if c := trapCenter(me, data.Position{X: 110, Y: 100}); c.X != 106 {
+		t.Fatalf("mass at 10: the line at 60%% (6), got %v", c)
+	}
+	if c := trapCenter(me, data.Position{X: 120, Y: 100}); chebyshev(me, c) != trapNear {
+		t.Fatalf("far mass: capped at %d, got %v", trapNear, c)
+	}
+}
+
+func TestTrapLineRunsAcrossTheApproach(t *testing.T) {
+	me, c := data.Position{X: 100, Y: 100}, data.Position{X: 106, Y: 100} // the mass is east
+	for i := 0; i < len(trapLine); i++ {
+		p := trapSlot(me, c, i)
+		if p.X != 106 {
+			t.Fatalf("slot %d at %v: an eastward approach gets a north-south line", i, p)
+		}
+	}
+	if a, b := trapSlot(me, c, 1), trapSlot(me, c, 2); a.Y == b.Y {
+		t.Fatal("slots 1 and 2 stand on opposite sides of the center")
 	}
 }
 

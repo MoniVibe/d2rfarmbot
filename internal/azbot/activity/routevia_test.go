@@ -1,6 +1,7 @@
 package activity
 
 import (
+	"github.com/hectorgimenez/koolo/internal/azbot/gamedata"
 	"github.com/hectorgimenez/koolo/internal/game"
 	"testing"
 	"time"
@@ -104,5 +105,27 @@ func TestHopCountPrefersTheNearestOnRamp(t *testing.T) {
 	}
 	if h := hopCount(d, area.FarOasis, area.Harrogath); h != -1 {
 		t.Fatal("unknown: -1")
+	}
+}
+
+func TestMonsterFreeLegInheritsTheGate(t *testing.T) {
+	db, err := gamedata.Load(gamedata.DefaultRoot)
+	if err != nil || db.Level(int(area.HaremLevel1)) == nil {
+		t.Skip("mod tables not installed")
+	}
+	gamedata.Set(db)
+	defer gamedata.Set(nil)
+	legs := gateByMonsterLevel(Act2Itinerary())
+	var cv2, harem int
+	for _, l := range legs {
+		switch l.Area {
+		case area.ClawViperTempleLevel2:
+			cv2 = l.MinLevel
+		case area.HaremLevel1:
+			harem = l.MinLevel
+		}
+	}
+	if db.Level(int(area.HaremLevel1)).MonLvl[0] == 0 && harem > cv2 {
+		t.Fatalf("Harem 1 (no monsters) gate %d above the Claw Viper leg's %d", harem, cv2)
 	}
 }
