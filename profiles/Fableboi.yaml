@@ -1,0 +1,5 @@
+# Fableboi — barbarian, Leap Attack only (owner, 2026-09-25: "mana potions
+# exist for that reason"): the leap starves on one blue column.
+style: leap melee
+traps: 0
+mana_columns: 2

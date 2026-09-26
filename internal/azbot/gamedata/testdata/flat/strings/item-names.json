@@ -1,0 +1,74 @@
+﻿[
+    {
+        "id": 90000,
+        "Key": "tax",
+        "enUS": "Practice Axe",
+        "deDE": "Practice Axe (de)"
+    },
+    {
+        "id": 90001,
+        "Key": "tcl",
+        "enUS": "ÿc1Heavy Cleaver",
+        "deDE": "ÿc1Heavy Cleaver (de)"
+    },
+    {
+        "id": 90002,
+        "Key": "tvs",
+        "enUS": "Padded Vest",
+        "deDE": "Padded Vest (de)"
+    },
+    {
+        "id": 90003,
+        "Key": "ttb",
+        "enUS": "Tome of Doors",
+        "deDE": "Tome of Doors (de)"
+    },
+    {
+        "id": 90004,
+        "Key": "tgd",
+        "enUS": "Gold",
+        "deDE": "Gold (de)"
+    },
+    {
+        "id": 90005,
+        "Key": "tp1",
+        "enUS": "ÿc1HP1",
+        "deDE": "ÿc1HP1 (de)"
+    },
+    {
+        "id": 90006,
+        "Key": "trj",
+        "enUS": "Rejuvenation",
+        "deDE": "Rejuvenation (de)"
+    },
+    {
+        "id": 90007,
+        "Key": "tcm",
+        "enUS": "Small Charm",
+        "deDE": "Small Charm (de)"
+    },
+    {
+        "id": 90008,
+        "Key": "tgm",
+        "enUS": "Chipped Amethyst",
+        "deDE": "Chipped Amethyst (de)"
+    },
+    {
+        "id": 90009,
+        "Key": "tqb",
+        "enUS": "Puzzle Box",
+        "deDE": "Puzzle Box (de)"
+    },
+    {
+        "id": 90010,
+        "Key": "Splinter",
+        "enUS": "Splinter",
+        "deDE": "Splinter (de)"
+    },
+    {
+        "id": 90011,
+        "Key": "skillname1",
+        "enUS": "item file wins",
+        "deDE": "item file wins (de)"
+    }
+]

@@ -2,6 +2,7 @@ package game
 
 import (
 	"image"
+	"sync"
 	"unsafe"
 
 	"github.com/hectorgimenez/koolo/internal/utils/winproc"
@@ -14,6 +15,11 @@ func (gd *MemoryReader) Screenshot() image.Image {
 	// measured: the skill tree panel (right edge of screen) was missing from every shot.
 	shotW := int(float64(gd.GameAreaSizeX) * physicalScale)
 	shotH := int(float64(gd.GameAreaSizeY) * physicalScale)
+	if shotW <= 0 || shotH <= 0 {
+		// A minimized/closing window reports a zero client: &buf[0] below panicked
+		// the whole bot (R1 run w, 15:20:46). A blank frame reads as "nothing seen".
+		return blankShot()
+	}
 	// Create a device context compatible with the window
 	hdcWindow, _, _ := winproc.GetWindowDC.Call(uintptr(gd.HWND))
 	hdcMem, _, _ := winproc.CreateCompatibleDC.Call(hdcWindow)
@@ -73,6 +79,20 @@ func (gd *MemoryReader) Screenshot() image.Image {
 	// Cleanup
 	_, _, _ = winproc.DeleteObject.Call(hbmMem)
 	_, _, _ = winproc.DeleteDC.Call(hdcMem)
+	// GetWindowDC's DC must go back: unreleased, every capture leaked one, and the
+	// screen oracle captures several times a second.
+	_, _, _ = winproc.ReleaseDC.Call(uintptr(gd.HWND), hdcWindow)
 
 	return img
+}
+
+var (
+	blankOnce sync.Once
+	blank     *image.RGBA
+)
+
+// blankShot is a black frame at the measured capture size, shared read-only.
+func blankShot() image.Image {
+	blankOnce.Do(func() { blank = image.NewRGBA(image.Rect(0, 0, 1920, 1050)) })
+	return blank
 }

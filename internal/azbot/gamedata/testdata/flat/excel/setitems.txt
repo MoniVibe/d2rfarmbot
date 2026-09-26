@@ -1,0 +1,2 @@
+index	*ID	set	item	lvl	lvl req
+Tester's Vest	0	Tester Garb	tvs	3	2

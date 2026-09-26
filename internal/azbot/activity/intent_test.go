@@ -39,7 +39,7 @@ func TestIntentLegHoldsCommittedGoalAgainstShallowerRecompute(t *testing.T) {
 	SetDeliberate(true)
 	defer SetDeliberate(false)
 	a := NewAdvance(Act2Itinerary())
-	deep := legOf(a, area.DryHills)   // leg 5
+	deep := legOf(a, area.DryHills)      // leg 5
 	shallow := legOf(a, area.RockyWaste) // leg 4
 	if deep <= shallow {
 		t.Fatalf("test spine assumption broken: DryHills(%d) must be deeper than RockyWaste(%d)", deep, shallow)

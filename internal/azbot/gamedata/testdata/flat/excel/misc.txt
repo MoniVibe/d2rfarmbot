@@ -1,0 +1,11 @@
+name	code	namestr	type	type2	invwidth	invheight	levelreq	stackable	maxstack	quest	spawnable
+Book of Doors	ttb	ttb	book		1	2	0	1	20		1
+Coins	tgd	tgd	gold		1	1	0	1	0		1
+Test Rune	tr1	tr1	rune		1	1	11	0	0		1
+Expansion
+Red Bottle	tp1	tp1	hpot		1	1	0	0	0		1
+Violet Bottle	trj	trj	rpot		1	1	0	0	0		1
+Lucky Stone	tcm	tcm	scha		1	1	0	0	0		1
+Chipped Violet	tgm	tgm	gema		1	1	0	0	0		1
+Puzzle Box	tqb	tqb	ques		2	2	0	0	0	1	0
+Glass Eye	tje	tje	jewl		1	1	0	0	0		1

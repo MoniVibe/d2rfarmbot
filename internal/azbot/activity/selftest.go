@@ -100,22 +100,15 @@ func SelfTest(ctx *Ctx, refresh func() *percept.Snapshot) []SelfTestResult {
 		return out
 	}
 	r := NewRestock()
-	deadline := time.Now().Add(75 * time.Second)
 	open := false
-	for time.Now().Before(deadline) {
+	runUntil(75*time.Second, func() (bool, time.Duration) {
 		snap()
-		o, dead := r.e.step(ctx, "selftest")
-		if dead {
-			break
-		}
-		if o {
-			open = true
-			break
-		}
-		time.Sleep(150 * time.Millisecond)
-	}
+		es := r.e.step(ctx, "selftest")
+		open = es.open
+		return es.open || es.dead, maxDur(es.wait, 150*time.Millisecond)
+	})
 	if !open {
-		add("trade-open", false, "errand never reached an open trade window in 75s (phase=%d menuTry=%d)", r.e.phase, r.e.menuTry)
+		add("trade-open", false, "errand never reached an open trade window in 75s (phase=%s menuTry=%d)", r.e.ph.Phase(), r.e.menuTry)
 		return out
 	}
 	add("trade-open", true, "vendor npc=%d stock=%d", int(r.e.npcID), len(vendorStock(ctx, func(data.Item) bool { return true })))
@@ -123,7 +116,13 @@ func SelfTest(ctx *Ctx, refresh func() *percept.Snapshot) []SelfTestResult {
 	if len(vendorStock(ctx, func(it data.Item) bool { return int(it.ID) == 603 })) > 0 {
 		want = func(it data.Item) bool { return int(it.ID) == 603 }
 	}
-	v := buyVerified(ctx, "selftest", "health potion", want)
+	var tx buyTx
+	v := buyNoConfirm
+	runUntil(10*time.Second, func() (bool, time.Duration) {
+		vv, done, w := tx.step(ctx, "selftest", "health potion", want)
+		v = vv
+		return done, w
+	})
 	ev := ""
 	if rec := ctx.Led.Recent(1); len(rec) > 0 {
 		ev = rec[0].Evidence
@@ -132,6 +131,26 @@ func SelfTest(ctx *Ctx, refresh func() *percept.Snapshot) []SelfTestResult {
 		snapPNG(ctx, "logs/selftest_buyfail.png") // the shop as it stood when the buy failed
 	}
 	add("buy-potion", v == buyOK, "%s", ev)
-	closeShop(ctx)
+	runUntil(5*time.Second, func() (bool, time.Duration) { return closeShopStep(ctx) })
 	return out
+}
+
+// runUntil drives a Step-shaped function (done, wait) to completion or the
+// deadline — the manual harness's stand-in for the executive's Wait.
+func runUntil(limit time.Duration, step func() (done bool, wait time.Duration)) {
+	deadline := time.Now().Add(limit)
+	for time.Now().Before(deadline) {
+		done, wait := step()
+		if done {
+			return
+		}
+		time.Sleep(wait)
+	}
+}
+
+func maxDur(a, b time.Duration) time.Duration {
+	if a > b {
+		return a
+	}
+	return b
 }

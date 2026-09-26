@@ -168,6 +168,23 @@ func SetAimCalibration(c AimCal) {
 	}
 }
 
+// WorldAimAffine exposes worldAimClient's map WITHOUT its edge clamp, per axis:
+// world px = k*logical + b. World px are the physical client pixels the game's
+// world hit-test uses — screenshot px whenever worldScale is the display scale
+// (azbot's default). w,h: that space's size. The HUD no-click zone
+// (internal/azbot/hud) is measured in it, and a HARDWARE click (RealMenuClick,
+// which takes screenshot px) aimed at a logical world point must go through it.
+func WorldAimAffine(gr *MemoryReader) (kx, bx, ky, by float64, w, h int) {
+	cx, cy := float64(gr.GameAreaSizeX)/2, float64(gr.GameAreaSizeY)/2
+	kx = aimCal.KX * worldScale
+	bx = (cx*(1-aimCal.KX) + aimCal.OX) * worldScale
+	ky = aimCal.KY * worldScale
+	by = (cy*(1-aimCal.KY) + aimCal.OY) * worldScale
+	w = int(float64(gr.GameAreaSizeX)*worldScale + 0.5)
+	h = int(float64(gr.GameAreaSizeY)*worldScale + 0.5)
+	return
+}
+
 func worldAimClient(gr *MemoryReader, x, y int) (int, int) {
 	cx, cy := float64(gr.GameAreaSizeX)/2, float64(gr.GameAreaSizeY)/2
 	lx := (float64(x)-cx)*aimCal.KX + cx + aimCal.OX

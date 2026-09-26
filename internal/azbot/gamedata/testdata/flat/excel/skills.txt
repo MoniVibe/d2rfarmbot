@@ -1,0 +1,6 @@
+skill	*Id	charclass	skilldesc	reqlevel	maxlvl	reqskill1	reqskill2	passive	aura	range	mana	lvlmana	minmana	manashift	leftskill
+Attack	0		attack	0	1			0	0	h2h	0	0	0	8	1
+Test Slam	1	bar	test slam	1	20			0	0	h2h	2	1	0	8	1
+Focus	2	bar	focus	6	20	Test Slam	Nope	0	0	h2h	256	0	3	0	1
+Test Aura	3	pal	test aura	1	20			0	1	none	0	0	0	8	0
+Test Hardiness	4	bar	test hardiness	1	20			1	0	none	0	0	0	8	0

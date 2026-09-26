@@ -14,8 +14,8 @@ import (
 
 	"github.com/hectorgimenez/d2go/pkg/data"
 	"github.com/hectorgimenez/koolo/internal/azbot/arbiter"
+	"github.com/hectorgimenez/koolo/internal/azbot/moveto"
 	"github.com/hectorgimenez/koolo/internal/azbot/percept"
-	"github.com/hectorgimenez/koolo/internal/azbot/verbs"
 	"github.com/hectorgimenez/koolo/internal/game"
 )
 
@@ -31,10 +31,10 @@ type missTrack struct {
 type Dodge struct {
 	tracks map[data.UnitID]*missTrack
 	// last threat assessment (computed in Demand, consumed by Step the same cycle)
-	threatPos    data.Position
+	threatPos          data.Position
 	threatVX, threatVY float64
-	hasThreat    bool
-	lastStrideAt time.Time
+	hasThreat          bool
+	lastStrideAt       time.Time
 }
 
 func NewDodge() *Dodge { return &Dodge{tracks: map[data.UnitID]*missTrack{}} }
@@ -195,20 +195,24 @@ func (dg *Dodge) Step(ctx *Ctx) Verdict {
 		}
 	}
 	if !found {
-		tgt = cands[2] // walled pocket: push away along the arrow's line and hope
+		// walled pocket: away along the arrow's line — MoveTo (flee) takes the
+		// best clear step when that line is walled, never the wall itself
+		tgt = cands[2]
 	}
-	o := verbs.Stride{To: tgt, Hold: 350 * time.Millisecond, MinGain: 1}.
-		Do(ctx.M, ctx.GR, ctx.P, ctx.Led, dg.Name())
-	if o.Result == verbs.ResBlocked {
-		// The grid lied (object, streamed-in wall): one wall-slide try on the best
+	// FLEE through the one mover: a clear line is struck at once (no plan
+	// between the arrow and the first input); a walled one plans small.
+	flee := moveto.Opts{Holder: dg.Name(), Purpose: moveto.Flee, MaxHold: 350 * time.Millisecond}
+	if st := moveTo(ctx, tgt, flee); st.Blocked {
+		// The grid lied (object, streamed-in wall): one try on the best
 		// alternative, then hand the cycle back — never grind a wall mid-dodge.
 		for _, c := range cands {
 			if c != tgt && walkable(c) {
-				slideStride(ctx, c, 350*time.Millisecond, 1, dg.Name())
+				moveTo(ctx, c, flee)
 				break
 			}
 		}
 	}
+
 	dg.lastStrideAt = time.Now()
 	return Running
 }

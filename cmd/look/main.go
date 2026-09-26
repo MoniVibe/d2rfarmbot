@@ -136,6 +136,7 @@ func main() {
 	radius := flag.Int("r", 20, "map radius in tiles (0 = no map)")
 	logPath := flag.String("log", "", "azbot log to tail (default: newest logs/*.out)")
 	nLog := flag.Int("n", 8, "decision lines to show from the log")
+	presets := flag.Bool("presets", false, "print the map oracle's object and NPC presets for this area")
 	flag.Parse()
 
 	if err := config.Load(); err != nil {
@@ -166,6 +167,17 @@ func main() {
 		belt = append(belt, fmt.Sprintf("%d:%d", it.Position.X, int(it.ID)))
 	}
 	fmt.Printf("   belt[%d] slot:id = %s\n", len(belt), strings.Join(belt, " "))
+	if *presets {
+		if ad, ok := d.Areas[ar]; ok {
+			for _, ob := range ad.Objects {
+				fmt.Printf("   preset obj %d at (%d,%d)\n", int(ob.Name), ob.Position.X, ob.Position.Y)
+			}
+			for _, n := range ad.NPCs {
+				fmt.Printf("   preset npc %d %s at %v\n", int(n.ID), n.Name, n.Positions)
+			}
+			fmt.Printf("   area origin (%d,%d) size %dx%d\n", ad.OffsetX, ad.OffsetY, ad.Width, ad.Height)
+		}
+	}
 
 	// ---- monsters (nearest first, living before dead) ----
 	type mref struct {

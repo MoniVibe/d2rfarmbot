@@ -193,6 +193,75 @@ func (a *Atlas) MergeLiveGrid(seed uint, area int, live *Grid, rooms []LiveRoom)
 	}
 }
 
+// MergeLiveLayer stamps every cell the live layer OBSERVED (streamed-in room collision)
+// into the (seed, area) overlay — the precise mask, no room-rect approximation, and
+// unknown cells never touch the atlas. Refused cells stay sticky. Returns the number
+// of cells whose state changed.
+func (a *Atlas) MergeLiveLayer(seed uint, area int, l *LiveLayer) int {
+	if a == nil || l == nil || len(l.Cells) != l.W*l.H {
+		return 0
+	}
+	// Bounding box of observations: the overlay grows only as far as we have seen.
+	x0, y0, x1, y1 := l.W, l.H, -1, -1
+	for i, c := range l.Cells {
+		if c == LiveUnknown {
+			continue
+		}
+		x, y := i%l.W, i/l.W
+		x0, y0 = rgMin(x0, x), rgMin(y0, y)
+		x1, y1 = rgMax(x1, x), rgMax(y1, y)
+	}
+	if x1 < 0 {
+		return 0
+	}
+	ov := a.overlay(seed, area)
+	if !ov.ensure(x0+l.OffX, y0+l.OffY, x1+1+l.OffX, y1+1+l.OffY) {
+		return 0
+	}
+	changed := 0
+	for y := y0; y <= y1; y++ {
+		row := l.Cells[y*l.W : (y+1)*l.W]
+		for x := x0; x <= x1; x++ {
+			s := atlasBlocked
+			switch row[x] {
+			case LiveUnknown:
+				continue
+			case LiveWalk:
+				s = atlasWalkable
+			}
+			wx, wy := x+l.OffX, y+l.OffY
+			if prev := ov.at(wx, wy); prev == s || prev == atlasRefused {
+				continue
+			}
+			ov.set(wx, wy, s)
+			changed++
+		}
+	}
+	if changed > 0 {
+		ov.dirty = true
+	}
+	return changed
+}
+
+// Cells exports the overlay as unknown/walkable/blocked (LiveUnknown/LiveWalk/
+// LiveBlock), refusals reading as blocked, framed by the overlay's own origin.
+// Returns nil cells for an empty overlay.
+func (ov *AtlasOverlay) Cells() (offX, offY, w, h int, cells []uint8) {
+	if ov == nil || len(ov.cells) == 0 {
+		return 0, 0, 0, 0, nil
+	}
+	cells = make([]uint8, len(ov.cells))
+	for i, c := range ov.cells {
+		switch c {
+		case atlasWalkable:
+			cells[i] = LiveWalk
+		case atlasBlocked, atlasRefused:
+			cells[i] = LiveBlock
+		}
+	}
+	return ov.OriginX, ov.OriginY, ov.Width, ov.Height, cells
+}
+
 // MarkRefused stamps a disc of refusals around p (see atlasRefused): the game would not let
 // us pass here regardless of what any grid claims. Persisted with the overlay; sticky against
 // live merges. Cells within 2 of `standing` are NEVER stamped — we are provably standing
@@ -404,7 +473,33 @@ func (a *Atlas) saveOverlay(seed uint, area int, ov *AtlasOverlay) error {
 		packed[i/4] |= byte(c) << uint((i%4)*2)
 	}
 	buf.Write(packed)
-	return os.WriteFile(a.filePath(seed, area), buf.Bytes(), 0o644)
+	return writeFileAtomic(a.filePath(seed, area), buf.Bytes())
+}
+
+// writeFileAtomic is crash-safe persistence: write a temp file beside the target,
+// fsync it, then rename over the target. A crash (or the owner's kill switch)
+// mid-save leaves the previous snapshot intact instead of a truncated file — and a
+// truncated file would have been discarded whole by loadOverlayFile.
+func writeFileAtomic(path string, b []byte) error {
+	tmp, err := os.CreateTemp(filepath.Dir(path), filepath.Base(path)+".tmp*")
+	if err != nil {
+		return err
+	}
+	name := tmp.Name()
+	_, werr := tmp.Write(b)
+	if werr == nil {
+		werr = tmp.Sync()
+	}
+	if cerr := tmp.Close(); werr == nil {
+		werr = cerr
+	}
+	if werr == nil {
+		werr = os.Rename(name, path)
+	}
+	if werr != nil {
+		_ = os.Remove(name)
+	}
+	return werr
 }
 
 // loadOverlayFile returns the stored overlay, or an empty one on ANY problem — missing file,

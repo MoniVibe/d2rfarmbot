@@ -63,21 +63,21 @@ func (i *MemoryInjector) ResumeAllThreads() int {
 }
 
 type MemoryInjector struct {
-	isLoaded              bool
-	pid                   uint32
-	handle                windows.Handle
-	getCursorPosAddr      uintptr
-	getCursorPosOrigBytes [32]byte
-	trackMouseEventAddr   uintptr
-	trackMouseEventBytes  [32]byte
-	getKeyStateAddr       uintptr
-	getKeyStateOrigBytes  [18]byte
+	isLoaded                  bool
+	pid                       uint32
+	handle                    windows.Handle
+	getCursorPosAddr          uintptr
+	getCursorPosOrigBytes     [32]byte
+	trackMouseEventAddr       uintptr
+	trackMouseEventBytes      [32]byte
+	getKeyStateAddr           uintptr
+	getKeyStateOrigBytes      [18]byte
 	getAsyncKeyStateAddr      uintptr
 	getAsyncKeyStateOrigBytes [18]byte
 	getKeyboardStateAddr      uintptr
 	getKeyboardStateOrigBytes [24]byte
-	setCursorPosAddr      uintptr
-	setCursorPosOrigBytes [16]byte
+	setCursorPosAddr          uintptr
+	setCursorPosOrigBytes     [16]byte
 	// Modern cursor-read exports. Newer D2R builds read the in-game cursor via the physical
 	// (DPI-actual) pointer or GetCursorInfo rather than the classic GetCursorPos koolo patches,
 	// so patching these is what actually feeds the in-game force-move a synthetic cursor —
@@ -86,7 +86,7 @@ type MemoryInjector struct {
 	getPhysicalCursorPosOrigBytes [32]byte
 	getCursorInfoAddr             uintptr
 	getCursorInfoOrigBytes        [32]byte
-	logger *slog.Logger
+	logger                        *slog.Logger
 }
 
 // Stub templates. Each hot stub is installed ONCE, then the hot path mutates only DATA (the cursor
@@ -392,7 +392,6 @@ func (i *MemoryInjector) CursorPos(x, y int) error {
 func (i *MemoryInjector) AliasesPhysicalCursorPos() bool {
 	return i.getCursorPosAddr != 0 && i.getCursorPosAddr == i.getPhysicalCursorPosAddr
 }
-
 
 // OverrideGetKeyState makes GetKeyState report `key` as held. The stub (cmp cl,key; sete al;
 // shl ax,15; ret) is installed ONCE (thread-suspended); thereafter we mutate only the compare
@@ -750,7 +749,7 @@ func (i *MemoryInjector) HealInput() (int, error) {
 		}
 		buf := make([]byte, f.sz)
 		copy(buf, unsafe.Slice((*byte)(unsafe.Pointer(ownAddr)), f.sz)) // pristine bytes from our own user32
-		if err := i.writeCode(uintptr(d2rAddr), buf); err == nil {       // thread-suspended: no restore race
+		if err := i.writeCode(uintptr(d2rAddr), buf); err == nil {      // thread-suspended: no restore race
 			healed++
 			if i.logger != nil {
 				i.logger.Info("healed input fn", "fn", f.name)

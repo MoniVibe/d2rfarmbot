@@ -1,0 +1,4 @@
+index	*ID	disabled	spawnable	lvl	lvl req	code
+Splinter	0		1	5	3	tax
+Expansion
+Ironhide	1	1	0	30	25	tpv

@@ -1,0 +1,26 @@
+[
+    {
+        "id": 90000,
+        "Key": "skillname0",
+        "enUS": "Attack",
+        "deDE": "Attack (de)"
+    },
+    {
+        "id": 90001,
+        "Key": "skillname1",
+        "enUS": "Slam",
+        "deDE": "Slam (de)"
+    },
+    {
+        "id": 90002,
+        "Key": "skillname2",
+        "enUS": "Carnage",
+        "deDE": "Carnage (de)"
+    },
+    {
+        "id": 90003,
+        "Key": "skillname3",
+        "enUS": "Might",
+        "deDE": "Might (de)"
+    }
+]

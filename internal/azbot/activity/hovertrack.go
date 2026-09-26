@@ -4,6 +4,7 @@ import (
 	"time"
 
 	"github.com/hectorgimenez/d2go/pkg/data"
+	"github.com/hectorgimenez/koolo/internal/azbot/verbs"
 	"github.com/hectorgimenez/koolo/internal/game"
 )
 
@@ -41,12 +42,34 @@ func hoverUnitTracked(ctx *Ctx, u data.UnitID) (int, int, bool) {
 		bx := int(float32((pos.X-me.X)-(pos.Y-me.Y))*19.8) + ctx.GR.GameAreaSizeX/2
 		by := int(float32((pos.X-me.X)+(pos.Y-me.Y))*9.9) + ctx.GR.GameAreaSizeY/2 + game.UnitAimDY()
 		cx, cy := bx+o[0], by+o[1]
-		if cx < 20 || cy < 20 || cx > ctx.GR.GameAreaSizeX-20 || cy > ctx.GR.GameAreaSizeY-20 {
+		if !verbs.ClickableLogical(ctx.GR, cx, cy) {
 			continue
 		}
 		ctx.M.AimPhysical(cx, cy)
-		time.Sleep(35 * time.Millisecond)
+		hoverSettle()
 		if hd := ctx.GR.GetData().HoverData; hd.IsHovered && hd.UnitID == u {
+			return cx, cy, true
+		}
+	}
+	return 0, 0, false
+}
+
+// hoverSettle: one frame for the game to refresh HoverData after an aim — the
+// only sleep the hover probes own (the ratchet's one).
+func hoverSettle() { time.Sleep(40 * time.Millisecond) }
+
+// hoverEntrance probes the offsets around base and returns the first point
+// whose hover names this entrance unit (type 5). ok=false when none did —
+// unfocused the hover is dark, and the caller clicks the box point blind.
+func hoverEntrance(ctx *Ctx, bx, by int, offs []data.Position, id data.UnitID) (int, int, bool) {
+	for _, o := range offs {
+		cx, cy := bx+o.X, by+o.Y
+		if !verbs.ClickableLogical(ctx.GR, cx, cy) {
+			continue
+		}
+		ctx.M.AimPhysical(cx, cy)
+		hoverSettle()
+		if hd := ctx.GR.GetData().HoverData; hd.IsHovered && hd.UnitType == 5 && hd.UnitID == id {
 			return cx, cy, true
 		}
 	}
