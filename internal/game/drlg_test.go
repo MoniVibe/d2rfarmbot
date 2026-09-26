@@ -38,3 +38,12 @@ func TestLiveObjectsSkipLiveUnits(t *testing.T) {
 		t.Fatalf("got %+v: the waypoint is already live; only the stash preset is added (ID 0)", got)
 	}
 }
+
+func TestMergeExitsLiveWins(t *testing.T) {
+	live := []data.Level{{Area: 5, Position: data.Position{X: 7900, Y: 8700}, IsEntrance: true}}
+	mapped := []data.Level{{Area: 5, Position: data.Position{X: 1, Y: 1}}, {Area: 4, Position: data.Position{X: 2, Y: 2}}}
+	got := mergeExits(live, mapped)
+	if len(got) != 2 || got[0].Position.X != 7900 || got[1].Area != 4 {
+		t.Fatalf("got %+v: the live exit replaces the map's for area 5; area 4 stays", got)
+	}
+}

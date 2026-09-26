@@ -11,6 +11,7 @@ import (
 	"syscall"
 	"unsafe"
 
+	"github.com/hectorgimenez/d2go/pkg/data"
 	"github.com/hectorgimenez/d2go/pkg/memory"
 	"github.com/hectorgimenez/d2go/pkg/utils"
 	"github.com/hectorgimenez/koolo/internal/config"
@@ -49,6 +50,8 @@ func findHWND(pid uint32) win.HWND {
 
 func main() {
 	rooms := flag.Int("rooms", 3, "rooms to dump raw")
+	mapcheck := flag.Bool("mapcheck", false, "fetch koolo-map with the live seed and print this level exits")
+	actlevels := flag.Bool("actlevels", false, "find the act first-level pointer")
 	roomlist := flag.Bool("roomlist", false, "current level rooms in subtiles: ROOM x y w h")
 	rtiles := flag.Bool("rtiles", false, "dump Room2+0x78 room-tile structs")
 	seeds := flag.Bool("seeds", false, "list candidate map-seed values")
@@ -80,6 +83,58 @@ func main() {
 		os.Exit(1)
 	}
 	fmt.Printf("level=%d rooms=%d external=%d\n", g.LevelID, len(g.Rooms), len(g.External))
+	if *mapcheck {
+		if err := gr.FetchMapData(); err != nil {
+			fmt.Println("fetch:", err)
+			os.Exit(1)
+		}
+		dd := gr.GetData()
+		ad, ok := dd.Areas[dd.PlayerUnit.Area]
+		fmt.Println("seed", gr.MapSeed(), "area", int(dd.PlayerUnit.Area), "mapped", ok)
+		if ok && ad.Grid != nil {
+			fmt.Println("map frame", ad.Grid.OffsetX, ad.Grid.OffsetY, ad.Grid.Width, ad.Grid.Height)
+		}
+		if f, err := gr.ReadLiveLevelFrame(); err == nil {
+			fmt.Println("live frame", f.OriginX, f.OriginY, f.SizeX, f.SizeY)
+		}
+		for _, e := range ad.AdjacentLevels {
+			fmt.Println("  exit to", int(e.Area), "at", e.Position, "entrance", e.IsEntrance, "dist", cheb(dd.PlayerUnit.Position, e.Position))
+		}
+		for _, o := range ad.Objects {
+			if o.IsWaypoint() {
+				fmt.Println("  waypoint at", o.Position)
+			}
+		}
+		return
+	}
+	if *actlevels {
+		act := u64(d.PlayerUnit.Address + 0x20)
+		misc := u64(act + 0x78)
+		for _, base := range []struct {
+			tag string
+			p   uintptr
+		}{{"act", act}, {"misc", misc}, {"act+08", u64(act + 0x08)}, {"act+18", u64(act + 0x18)}, {"act+48", u64(act + 0x48)}, {"act+70", u64(act + 0x70)}, {"act+98", u64(act + 0x98)}, {"act+a0", u64(act + 0xa0)}, {"act+b0", u64(act + 0xb0)}} {
+			for off := uintptr(0); off < 0x2000; off += 8 {
+				q := u64(base.p + off)
+				if q < 0x10000 || q > 0x7fffffffffff {
+					continue
+				}
+				no := u32(q + 0x1F8)
+				if no == 0 || no > 200 {
+					continue
+				}
+				n, ids := 0, []uint{}
+				for l := q; l != 0 && n < 200; l = u64(l + 0x1B8) {
+					n++
+					ids = append(ids, u32(l+0x1F8))
+				}
+				if n > 1 {
+					fmt.Println(base.tag, "off", off, "chain", n, ids)
+				}
+			}
+		}
+		return
+	}
 	if *roomlist {
 		for _, r := range g.Rooms {
 			fmt.Printf("ROOM %d %d %d %d\n", r.Rect.X*5, r.Rect.Y*5, r.Rect.W*5, r.Rect.H*5)
@@ -110,7 +165,7 @@ func main() {
 		// and around the ActMisc seed-hash block. The caller tests each one
 		// against the live level frames with koolo-map.
 		act := u64(d.PlayerUnit.Address + 0x20)
-		misc := u64(act + 0x78)
+		misc := u64(act + 0x70)
 		seen := map[uint]bool{}
 		emit := func(tag string, base uintptr, from, to uintptr) {
 			for off := from; off < to; off += 4 {
@@ -194,6 +249,9 @@ func main() {
 		}
 		for id, l := range lv {
 			fmt.Println("LEVEL", int(id), "rooms", len(l.Rooms), "presets", len(l.Presets), "origin", l.Origin, "size", l.Size)
+			for _, e := range l.Exits {
+				fmt.Println("   EXIT to", int(e.Area), "at", e.Position)
+			}
 			for _, p := range l.Presets {
 				if p.Type != game.PresetMonster || *all {
 					fmt.Println("   type", p.Type, "txt", p.Txt, "at", p.Pos)
@@ -265,4 +323,15 @@ func main() {
 			fmt.Println()
 		}
 	}
+}
+
+func cheb(a, b data.Position) int {
+	dx, dy := a.X-b.X, a.Y-b.Y
+	if dx < 0 {
+		dx = -dx
+	}
+	if dy < 0 {
+		dy = -dy
+	}
+	return max(dx, dy)
 }

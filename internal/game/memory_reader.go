@@ -168,6 +168,11 @@ func (gd *MemoryReader) GetData() Data {
 			currentArea.Area = d.PlayerUnit.Area
 			currentArea.NPCs = liveNPCs(ll, currentArea.NPCs)
 		}
+		if ll, found := lv[d.PlayerUnit.Area]; found && len(ll.Exits) > 0 {
+			currentArea.Area = d.PlayerUnit.Area
+			currentArea.AdjacentLevels = mergeExits(ll.Exits, currentArea.AdjacentLevels)
+			livePresets = true
+		}
 	}
 	if ok {
 		// Merge in map-data objects the memory read can't see yet (far away, e.g. the WP).
@@ -194,6 +199,9 @@ func (gd *MemoryReader) GetData() Data {
 	}
 	d.Objects = memObjects
 	d.NPCs = currentArea.NPCs
+	if len(currentArea.AdjacentLevels) > 0 {
+		d.AdjacentLevels = currentArea.AdjacentLevels
+	}
 
 	var cfgCopy config.CharacterCfg
 	if gd.cfg != nil {
@@ -204,7 +212,7 @@ func (gd *MemoryReader) GetData() Data {
 		Data:         d,
 		CharacterCfg: cfgCopy,
 		AreaData:     currentArea,
-		Areas:        gd.cachedMapData,
+		Areas:        gd.areasWith(currentArea, livePresets),
 	}
 }
 
@@ -252,12 +260,17 @@ func (gd *MemoryReader) ReadLiveLevelFrame() (LiveLevelFrame, error) {
 }
 
 func (gd *MemoryReader) getMapSeed(playerUnit uintptr) (uint, error) {
+	// THE STUCK SEED (found 2026-09-26): this build's ActMisc is act+0x70 (not
+	// +0x78) and its seed hashes sit at +0x838/+0x860. The old offsets read
+	// unrelated memory — 466817790 every game — so koolo-map generated a
+	// different world and every randomized area "lied". Proven with
+	// cmd/drlgprobe -seeds: the derived seed reproduced Underground Passage
+	// 1's maze room-for-room (63/63); Reimagined's generation is vanilla.
 	actPtr := uintptr(gd.Process.ReadUInt(playerUnit+0x20, memory.Uint64))
-	actMiscPtr := uintptr(gd.Process.ReadUInt(actPtr+0x78, memory.Uint64))
+	actMiscPtr := uintptr(gd.Process.ReadUInt(actPtr+0x70, memory.Uint64))
 
-	dwInitSeedHash1 := gd.Process.ReadUInt(actMiscPtr+0x840, memory.Uint32)
-	//dwInitSeedHash2 := uintptr(gd.Process.ReadUInt(actMiscPtr+0x844, memory.Uint32))
-	dwEndSeedHash1 := gd.Process.ReadUInt(actMiscPtr+0x868, memory.Uint32)
+	dwInitSeedHash1 := gd.Process.ReadUInt(actMiscPtr+0x838, memory.Uint32)
+	dwEndSeedHash1 := gd.Process.ReadUInt(actMiscPtr+0x860, memory.Uint32)
 
 	mapSeed, found := utils.GetMapSeed(dwInitSeedHash1, dwEndSeedHash1)
 	if !found {
@@ -265,4 +278,21 @@ func (gd *MemoryReader) getMapSeed(playerUnit uintptr) (uint, error) {
 	}
 
 	return mapSeed, nil
+}
+
+// areasWith is the map cache as consumers see it: when the live read changed
+// the current area, a shallow copy carrying that area (the shared cache is
+// never written from GetData).
+func (gd *MemoryReader) areasWith(cur AreaData, changed bool) map[area.ID]AreaData {
+	if !changed {
+		return gd.cachedMapData
+	}
+	out := make(map[area.ID]AreaData, len(gd.cachedMapData)+1)
+	for k, v := range gd.cachedMapData {
+		out[k] = v
+	}
+	if cur.Area != 0 {
+		out[cur.Area] = cur
+	}
+	return out
 }

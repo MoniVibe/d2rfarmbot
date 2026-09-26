@@ -19,6 +19,7 @@ import (
 	"github.com/hectorgimenez/d2go/pkg/data/npc"
 	"github.com/hectorgimenez/d2go/pkg/data/object"
 	"github.com/hectorgimenez/d2go/pkg/data/stat"
+	"github.com/hectorgimenez/d2go/pkg/data/state"
 	"github.com/hectorgimenez/koolo/internal/azbot/gamedata"
 	"github.com/hectorgimenez/koolo/internal/azbot/inventory"
 	"github.com/hectorgimenez/koolo/internal/azbot/loot"
@@ -124,6 +125,9 @@ type PlayerState struct {
 	CursorItem bool
 	// CursorUnit: the unit on the cursor (0 = none) — the inventory tracker's swap-loop count.
 	CursorUnit data.UnitID
+	// States: the player's live states (buffs) — the Buff activity recasts
+	// a proven self-buff whose state is missing.
+	States state.States
 }
 
 // EnemyRef is a live hostile: identity, position, and Mode (the honest liveness read —
@@ -423,11 +427,12 @@ func (p *Perceptor) Capture() *Snapshot {
 	}
 	s.Valid = true
 	s.Me = PlayerState{
-		Pos:   pos,
-		Area:  d.PlayerUnit.Area,
-		Mode:  d.PlayerUnit.Mode,
-		HPPct: p.hpPct(d.PlayerUnit),
-		MPPct: p.mpPct(d.PlayerUnit),
+		Pos:    pos,
+		Area:   d.PlayerUnit.Area,
+		Mode:   d.PlayerUnit.Mode,
+		HPPct:  p.hpPct(d.PlayerUnit),
+		MPPct:  p.mpPct(d.PlayerUnit),
+		States: d.PlayerUnit.States,
 		MaxMana: func() int {
 			// THE FIXED-POINT LIE (11:39: maxmana=0 while the orb held 33 —
 			// the owner: "the bot is still not aware as much as we'd like").

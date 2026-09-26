@@ -14,6 +14,7 @@ import (
 	"unicode"
 
 	"github.com/hectorgimenez/d2go/pkg/data/skill"
+	"github.com/hectorgimenez/d2go/pkg/data/state"
 )
 
 // Role is the seed classification a prior gives a proven selection (P-7.5).
@@ -28,6 +29,7 @@ const (
 	RoleIdentify      // identify utility — the panel side door (WARNING 5)
 	RoleVault         // cursor-targeted self-displacement: the ring becomes scenery
 	RoleTrap          // ground-placed sentries: laid at a pack, then the fight goes on in melee
+	RoleBuff          // self-cast buff with a readable player state (BuffState)
 )
 
 // rolePriors seeds every class's early-to-mid kit plus the universal item
@@ -134,6 +136,11 @@ var rolePriors = map[skill.ID]Role{
 	skill.Hunger:        RoleContact,
 	skill.Fury:          RoleContact,
 
+	// Barbarian warcries (self buffs)
+	skill.Shout:         RoleBuff,
+	skill.BattleOrders:  RoleBuff,
+	skill.BattleCommand: RoleBuff,
+
 	// Assassin
 	skill.TigerStrike:    RoleContact,
 	skill.DragonTalon:    RoleContact,
@@ -152,7 +159,9 @@ var rolePriors = map[skill.ID]Role{
 	skill.ShockWeb:          RoleTrap,
 	skill.ChargedBoltSentry: RoleTrap,
 	skill.WakeOfFire:        RoleTrap,
-	skill.BladeSentinel:     RoleReach,
+	skill.BladeSentinel:     RoleTrap, // placed at a point like a trap; "reach" disarmed the brawler
+	skill.BurstOfSpeed:      RoleBuff,
+	skill.Fade:              RoleBuff,
 	skill.LightningSentry:   RoleTrap,
 	skill.WakeOfInferno:     RoleTrap,
 	skill.DeathSentry:       RoleTrap,
@@ -197,4 +206,28 @@ func Prior(id skill.ID) Role {
 		}
 	}
 	return rolePriors[id]
+}
+
+// buffStates: the player state each self-buff sets while active. A buff with
+// no entry here is never recast (no way to see that it lapsed).
+var buffStates = map[skill.ID]state.State{
+	skill.BurstOfSpeed:  state.Quickness,
+	skill.Fade:          state.Fade,
+	skill.Shout:         state.Shout,
+	skill.BattleOrders:  state.Battleorders,
+	skill.BattleCommand: state.Battlecommand,
+}
+
+// BuffState: the state a self-buff shows while active (by the live skill
+// table's name first, like Prior — the enum and the table disagree on some IDs).
+func BuffState(id skill.ID) (state.State, bool) {
+	if def, ok := skill.Skills[id]; ok {
+		for b, st := range buffStates {
+			if name, ok := skill.SkillNames[b]; ok && canonicalSkillName(name) == canonicalSkillName(def.Name) {
+				return st, true
+			}
+		}
+	}
+	st, ok := buffStates[id]
+	return st, ok
 }

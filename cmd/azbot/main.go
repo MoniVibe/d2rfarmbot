@@ -2023,6 +2023,7 @@ func main() {
 		hygiene()
 		cap = calibrate()
 		activity.SetBrawler(cap.Reach == nil && cap.Throw == nil) // P-2.-2: no ranged game = the Brawler's Creed
+		activity.SetBuffs(cap.Buffs)
 	}
 	if *disengagedF {
 		sd.ses.Disengage(time.Now(), "-disengaged start: the owner drives until F10")
@@ -2555,6 +2556,7 @@ func main() {
 			logger.Info("executive: self-model event — recalibrating", "armed", s.Me.Armed, "revived", wasDead)
 			cap = calibrate()
 			activity.SetBrawler(cap.Reach == nil && cap.Throw == nil)
+			activity.SetBuffs(cap.Buffs)
 			fight.Recalibrated() // the audit follows the hands (P-7.1)
 			arms.seed(s.Me.Armed)
 		}

@@ -31,6 +31,7 @@ import (
 const (
 	dlLevelNext  = 0x1B8
 	rgRoom2First = 0x98 // Room2 -> first PresetUnit
+	rgRoom2Tiles = 0x78 // Room2 -> first RoomTile {dest Room2 +0, next +8}
 	psTxt        = 0x04
 	psX          = 0x08
 	psNext       = 0x10
@@ -63,6 +64,7 @@ type LiveLevel struct {
 	Size    data.Position // world subtiles
 	Rooms   []TileRect
 	Presets []LivePreset
+	Exits   []data.Level // room-tile warps (stairs, cave mouths): exact, lazily filled near the player
 }
 
 // currentLevelPtr follows unit->path->room1->room2->level.
@@ -112,6 +114,7 @@ func (gd *MemoryReader) readLevel(lvl uintptr) (LiveLevel, bool) {
 			break // implausible: a stale or foreign pointer
 		}
 		ll.Rooms = append(ll.Rooms, rect)
+		roomPresets := len(ll.Presets)
 		for p, k := gd.rgPtr(r+rgRoom2First), 0; p != 0 && k < 256 && len(ll.Presets) < dlMaxPresets; p, k = gd.rgPtr(p+psNext), k+1 {
 			t := int(gd.rgU32(p + psType))
 			x, y := int(gd.rgU32(p+psX)), int(gd.rgU32(p+psY))
@@ -125,6 +128,30 @@ func (gd *MemoryReader) readLevel(lvl uintptr) (LiveLevel, bool) {
 				Level: id, Type: t, Txt: int(gd.rgU32(p + psTxt)),
 				Pos: data.Position{X: rect.X*5 + x, Y: rect.Y*5 + y},
 			})
+		}
+		// Room tiles: each links this room to a room of another level. The
+		// warp's own position is this room's tile preset (else its center).
+		for t, k := gd.rgPtr(r+rgRoom2Tiles), 0; t != 0 && k < 8; t, k = gd.rgPtr(t+0x08), k+1 {
+			dest := gd.rgPtr(t)
+			if dest == 0 {
+				continue
+			}
+			dl := gd.rgPtr(dest + rgRoom2Level)
+			if dl == 0 {
+				continue
+			}
+			to := area.ID(gd.rgU32(dl + rgLevelNo))
+			if to <= 0 || to > 1000 || to == id {
+				continue
+			}
+			pos := data.Position{X: rect.X*5 + rect.W*5/2, Y: rect.Y*5 + rect.H*5/2}
+			for _, p := range ll.Presets[roomPresets:] {
+				if p.Type == PresetTile {
+					pos = p.Pos
+					break
+				}
+			}
+			ll.Exits = append(ll.Exits, data.Level{Area: to, Position: pos, IsEntrance: true})
 		}
 	}
 	return ll, true
@@ -238,6 +265,26 @@ func liveNPCs(ll LiveLevel, have data.NPCs) data.NPCs {
 	for _, n := range have {
 		if _, ok := live.FindOne(n.ID); !ok {
 			out = append(out, n)
+		}
+	}
+	return out
+}
+
+// mergeExits: a live room-tile exit replaces the map's exit to the same area
+// (the map's is seed-generated and wrong in randomized levels); the map's
+// other exits stay as hints.
+func mergeExits(live, mapped []data.Level) []data.Level {
+	out := append([]data.Level(nil), live...)
+	for _, m := range mapped {
+		dup := false
+		for _, l := range live {
+			if l.Area == m.Area {
+				dup = true
+				break
+			}
+		}
+		if !dup {
+			out = append(out, m)
 		}
 	}
 	return out

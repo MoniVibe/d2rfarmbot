@@ -59,15 +59,15 @@ func SendClickClient(hwnd uintptr, clientX, clientY int) {
 }
 
 const (
-	inputMouse       = 0
-	inputKeyboard    = 1
-	keyeventfKeyUp   = 0x0002
+	inputMouse        = 0
+	inputKeyboard     = 1
+	keyeventfKeyUp    = 0x0002
 	keyeventfScancode = 0x0008
 
-	mouseeventfMove     = 0x0001
-	mouseeventfAbsolute = 0x8000
-	mouseeventfLeftDown = 0x0002
-	mouseeventfLeftUp   = 0x0004
+	mouseeventfMove        = 0x0001
+	mouseeventfAbsolute    = 0x8000
+	mouseeventfLeftDown    = 0x0002
+	mouseeventfLeftUp      = 0x0004
 	mouseeventfVirtualDesk = 0x4000
 )
 
@@ -78,12 +78,12 @@ type hwInput struct {
 	_         uint32
 	// union (32 bytes). Interpreted as MOUSEINPUT (dx,dy,mouseData,dwFlags,time,extra)
 	// or KEYBDINPUT (wVk,wScan,dwFlags,time,extra) depending on inputType.
-	a         uint32 // MOUSEINPUT.dx  | KEYBDINPUT{wVk,wScan}
-	b         uint32 // MOUSEINPUT.dy  | KEYBDINPUT.dwFlags
-	c         uint32 // MOUSEINPUT.mouseData | KEYBDINPUT.time
-	d         uint32 // MOUSEINPUT.dwFlags
-	e         uint32 // MOUSEINPUT.time
-	extra     uintptr
+	a     uint32 // MOUSEINPUT.dx  | KEYBDINPUT{wVk,wScan}
+	b     uint32 // MOUSEINPUT.dy  | KEYBDINPUT.dwFlags
+	c     uint32 // MOUSEINPUT.mouseData | KEYBDINPUT.time
+	d     uint32 // MOUSEINPUT.dwFlags
+	e     uint32 // MOUSEINPUT.time
+	extra uintptr
 }
 
 func sendInputs(inputs []hwInput) {
