@@ -125,7 +125,7 @@ func (t *Traps) Demand(s *percept.Snapshot) *arbiter.Demand {
 	// "it doesnt use traps for some reason sometimes" — the old count took
 	// every trap within 30 of HER, so a fresh pack 20 tiles on met "5
 	// standing" and got none).
-	if trapsCovering(s.Me.OwnTrapPos, center) >= trapsWanted(pack) {
+	if w := trapsWanted(pack); w <= 0 || trapsCovering(s.Me.OwnTrapPos, center) >= w {
 		return nil
 	}
 	t.aim, t.pack = center, pack
@@ -152,10 +152,11 @@ func (t *Traps) Step(ctx *Ctx) Verdict {
 
 // trapsWanted: sentries a target deserves — five at a pack, two at a lone one.
 func trapsWanted(pack int) int {
-	if pack <= 1 {
+	want := profileTraps(trapWant) // the profile's "traps:" (0 = never)
+	if pack <= 1 && want > trapWantOne {
 		return trapWantOne
 	}
-	return trapWant
+	return want
 }
 
 // trapsCovering: her sentries within trapCover of the aim.

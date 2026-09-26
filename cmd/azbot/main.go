@@ -2059,6 +2059,16 @@ func main() {
 		startArea := area.ID(gr.GetData().PlayerUnit.Area)
 		legs = activity.CampaignItinerary(startArea)
 		activity.SetCampaignMode(*goal == "campaign")
+		// THE BUILD PROFILE (profiles/<Character>.yaml): the build's
+		// intent over the hotkey-read defaults.
+		charName := gr.GetData().PlayerUnit.Name
+		if p, ok, err := activity.LoadProfile("profiles", charName); err != nil {
+			logger.Warn("profile: unreadable, using the defaults", "char", charName, "err", err)
+		} else if ok {
+			logger.Info("profile loaded", "char", charName, "style", p.Style, "summons", fmt.Sprint(p.Summons))
+		} else {
+			logger.Info("profile: none for this character — the hotkey-read defaults play it", "char", charName)
+		}
 		logger.Info("campaign itinerary selected", "act", startArea.Act(), "startArea", int(startArea), "legs", len(legs))
 	}
 	// One registry for live and -replay; its order breaks exact bid ties.

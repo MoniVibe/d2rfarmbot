@@ -20,6 +20,7 @@ import (
 	"github.com/hectorgimenez/d2go/pkg/data/object"
 	"github.com/hectorgimenez/d2go/pkg/data/stat"
 	"github.com/hectorgimenez/d2go/pkg/data/state"
+	"github.com/hectorgimenez/koolo/internal/azbot/combat"
 	"github.com/hectorgimenez/koolo/internal/azbot/gamedata"
 	"github.com/hectorgimenez/koolo/internal/azbot/inventory"
 	"github.com/hectorgimenez/koolo/internal/azbot/loot"
@@ -127,6 +128,7 @@ type PlayerState struct {
 	CursorUnit data.UnitID
 	// OwnTraps: her live sentries within 30 (AllyCode); Summons: her live
 	// summons' monster codes within 30 ("shadowwarrior").
+	Corpses    []data.Position // monster corpses within 15 (corpse summons cast here)
 	OwnTraps   int
 	OwnTrapPos []data.Position // where they stand (Traps counts those near its aim)
 	Summons    []string
@@ -515,6 +517,9 @@ func (p *Perceptor) Capture() *Snapshot {
 			continue
 		}
 		if m.Mode == mode.NpcDeath || m.Mode == mode.NpcDead {
+			if m.Mode == mode.NpcDead && chebyshev(pos, m.Position) <= 15 {
+				s.Me.Corpses = append(s.Me.Corpses, m.Position) // raise skeleton's ground
+			}
 			if ActBoss[m.Name] > 0 {
 				s.Me.BossesDead = append(s.Me.BossesDead, m.Name) // the campaign witness
 			}
@@ -1156,14 +1161,17 @@ var ActBoss = map[npc.ID]int{
 }
 
 // AllyCode: monstats codes of the player's own traps and summons (assassin
-// sentries — vanilla and the mod's Snowlash/Glacial Burst — shadows).
+// sentries — vanilla and the mod's Snowlash/Glacial Burst — and every summon
+// in combat's summon table: skeletons, golems, ravens, wolves, spirits...).
 func AllyCode(code string) bool {
 	switch code {
-	case "wakeofdestruction", "bladecreeper", "shadowwarrior", "shadowmaster":
+	case "wakeofdestruction", "bladecreeper", "dopplezon":
 		return true
 	}
-	return strings.HasSuffix(code, "sentry")
+	return strings.HasSuffix(code, "sentry") || summonCodes[code]
 }
+
+var summonCodes = combat.SummonCodes()
 
 func chebyshev(a, b data.Position) int {
 	dx, dy := a.X-b.X, a.Y-b.Y

@@ -1,0 +1,7 @@
+# KillaryClinton — assassin, Snowlash trapper (owner, 2026-09-26: "summon 5
+# traps in a spread formation and continue on, summon shadow warrior and burst
+# of speed every once in a while").
+style: trap hit-and-run
+traps: 5
+summons:
+  Shadow Warrior: 1

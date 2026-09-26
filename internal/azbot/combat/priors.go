@@ -241,7 +241,8 @@ func BuffState(id skill.ID) (state.State, bool) {
 }
 
 // modRole classifies by the mod skill table's key: every sentry is a trap
-// (Snowlash, Glacial Burst, the vanilla ones), the shadows are summons.
+// (Snowlash, Glacial Burst, the vanilla ones), the summon table's skills are
+// summons.
 func modRole(id skill.ID) Role {
 	db := gamedata.Get()
 	if db == nil {
@@ -255,25 +256,70 @@ func modRole(id skill.ID) Role {
 	switch {
 	case strings.HasSuffix(k, "sentry"):
 		return RoleTrap
-	case k == "shadowwarrior" || k == "shadowmaster":
+	}
+	if _, ok := summons[k]; ok {
 		return RoleSummon
 	}
 	return RoleNone
 }
 
-// SummonCode: the monstats code of a summon skill's unit ("" = not a summon).
-func SummonCode(id skill.ID) string {
+// Summon is how a summon skill is kept up (owner, 2026-09-26: "it should
+// maintain summonables, we will reuse it with a necro and druid and so on").
+type Summon struct {
+	Code   string // monstats code of its unit
+	Want   int    // default count kept alive (a profile may override)
+	Corpse bool   // cast onto a corpse (raise skeleton / mage)
+	Group  string // one of a group at a time (druid spirits, vines): "" = none
+}
+
+// summons: by the mod skills.txt key (canonical). Codes from the mod's
+// monstats (cmd/skilldump -mon), 2026-09-26.
+var summons = map[string]Summon{
+	"raiseskeleton":     {Code: "necroskeleton", Want: 5, Corpse: true},
+	"raiseskeletalmage": {Code: "necromage", Want: 3, Corpse: true},
+	"claygolem":         {Code: "claygolem", Want: 1, Group: "golem"},
+	"bloodgolem":        {Code: "bloodgolem", Want: 1, Group: "golem"},
+	"firegolem":         {Code: "firegolem", Want: 1, Group: "golem"},
+	"raven":             {Code: "druidhawk", Want: 5},
+	"summonspiritwolf":  {Code: "spiritwolf", Want: 3},
+	"summonfenris":      {Code: "fenris", Want: 3},
+	"summongrizzly":     {Code: "druidbear", Want: 1},
+	"oaksage":           {Code: "oaksage", Want: 1, Group: "spirit"},
+	"how":               {Code: "heartofwolverine", Want: 1, Group: "spirit"},
+	"spiritofbarbs":     {Code: "spiritofbarbs", Want: 1, Group: "spirit"},
+	"plaguepoppy":       {Code: "plaguepoppy", Want: 1, Group: "vine"},
+	"col":               {Code: "cycleoflife", Want: 1, Group: "vine"},
+	"vines":             {Code: "vinecreature", Want: 1, Group: "vine"},
+	"valkyrie":          {Code: "valkyrie", Want: 1},
+	"shadowwarrior":     {Code: "shadowwarrior", Want: 1, Group: "shadow"},
+	"shadowmaster":      {Code: "shadowmaster", Want: 1, Group: "shadow"},
+}
+
+// SummonOf: how a summon skill is kept up (ok=false: not a summon).
+func SummonOf(id skill.ID) (Summon, bool) {
 	db := gamedata.Get()
 	if db == nil {
-		return ""
+		return Summon{}, false
 	}
-	if sk := db.Skill(int(id)); sk != nil {
-		switch canonicalSkillName(sk.Key) {
-		case "shadowwarrior":
-			return "shadowwarrior"
-		case "shadowmaster":
-			return "shadowmaster"
-		}
+	sk := db.Skill(int(id))
+	if sk == nil {
+		return Summon{}, false
 	}
-	return ""
+	sm, ok := summons[canonicalSkillName(sk.Key)]
+	return sm, ok
+}
+
+// SummonCodes: every summon unit code (percept counts them as hers).
+func SummonCodes() map[string]bool {
+	out := map[string]bool{}
+	for _, sm := range summons {
+		out[sm.Code] = true
+	}
+	return out
+}
+
+// SummonCode: the monstats code of a summon skill's unit ("" = not a summon).
+func SummonCode(id skill.ID) string {
+	sm, _ := SummonOf(id)
+	return sm.Code
 }

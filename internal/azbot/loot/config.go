@@ -104,8 +104,8 @@ func Default() *Config {
 			// and charms" — the wide net looped on
 			// piles. Special = quest items and the mod's own rows (orbs,
 			// currencies). Widen here once pickups are proven reliable.
-			Unique: TierS, Set: TierA, Rare: TierA, Crafted: TierA, // 2026-09-26: gear for the score (judged slots only)
-			MagicJewelry: TierA, MagicGear: TierC, PlainGear: TierC,
+			Unique: TierS, Set: TierC, Rare: TierC, Crafted: TierC, // owner 2026-09-26: "we dont need the rares"
+			MagicJewelry: TierC, MagicGear: TierC, PlainGear: TierC,
 			Rune: TierS, Gem: TierS, Jewel: TierC, Charm: TierS,
 			Gold: TierA, Potion: TierA, Quest: TierS, Ammo: TierC, // 2026-09-26: gold and bottles are survival
 			Scroll: TierC, Misc: TierC,
