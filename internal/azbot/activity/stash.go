@@ -48,7 +48,16 @@ const (
 	stashPrevPgX    = 462.0 // the page arrow left of "Page n / 5"
 	stashSharedTabX = 297.0 // the "Shared" tab header (measured in a click drill, R29)
 	stashSharedTabY = 89.0
+	stashGoldX      = 474.0 // the Shared tab's gold coin (logs/stash_open.png, 2026-09-26)
+	stashGoldY      = 812.0
+	goldLow         = 3000 // carried gold under this with gold in the stash = withdraw
 )
+
+// wantGold: the purse is low and the stash holds gold (2026-09-26: three
+// deaths with an empty belt while 867,775 sat in the shared stash).
+func wantGold(s *percept.Snapshot) bool {
+	return s.Valid && s.Me.Gold < goldLow && s.Me.StashGold > 1000
+}
 
 // The stash tabs (headers at y=89, measured on the R29 captures).
 const (
@@ -117,6 +126,13 @@ type Stash struct {
 	aimIdx     int
 	aimX, aimY int
 	aimed      bool
+	// the gold withdraw (wantGold): coin clicked at goldAt, Enter pressed,
+	// judged by the purse; one try per visit, 2 min cool on a miss.
+	goldAt     time.Time
+	goldEnter  bool
+	goldDone   bool
+	gold0      int
+	goldCoolAt time.Time
 }
 
 var (
@@ -174,11 +190,16 @@ func (st *Stash) demand(s *percept.Snapshot, now time.Time) *arbiter.Demand {
 		return &arbiter.Demand{Who: st.Name(), Class: arbiter.ClassService, Urgency: 0.86,
 			Commit: arbiter.Commitment{MinHold: 5 * time.Second}}
 	}
-	if len(stashable(s, loot.Active())) == 0 {
+	gold := wantGold(s) && now.After(st.goldCoolAt)
+	if len(stashable(s, loot.Active())) == 0 && !gold {
 		return nil
 	}
+	urg := 0.5 // after Cain (0.55): identified keepers are the ones worth keeping
+	if gold {
+		urg = 0.88 // before the shopping: restock needs the purse
+	}
 	return &arbiter.Demand{Who: st.Name(), Class: arbiter.ClassService,
-		Urgency: 0.5, // after Cain (0.55): identified keepers are the ones worth keeping
+		Urgency: urg,
 		Commit:  arbiter.Commitment{MinHold: 5 * time.Second}}
 }
 
@@ -193,6 +214,9 @@ func (st *Stash) Begin(ctx *Ctx, resumed bool) {
 	}
 	if resumed && st.life.ph.Phase() != stClose {
 		st.life.to(stClean, "resumed: re-verify from a clean screen")
+	}
+	if !resumed {
+		st.goldAt, st.goldEnter, st.goldDone = time.Time{}, false, false
 	}
 	if !resumed {
 		st.moved, st.fails = 0, 0
@@ -236,7 +260,7 @@ func (st *Stash) Step(ctx *Ctx) Status {
 			l.to(stWalk, "a cursor item to stash: straight to the chest")
 			return l.running()
 		}
-		if len(stashable(s, loot.Active())) == 0 {
+		if len(stashable(s, loot.Active())) == 0 && !(wantGold(s) && !st.goldDone) {
 			return l.finish(ctx, phase.Done, phase.Completed, fmt.Sprintf("nothing to stash (moved %d)", st.moved))
 		}
 		if ok, stt := l.cleanScreen(ctx, 0); !ok {
@@ -270,7 +294,34 @@ func (st *Stash) Step(ctx *Ctx) Status {
 				return l.wait(400 * time.Millisecond)
 			}
 			if !stashShot.Swap(true) {
-				snapPNG(ctx, "logs/stash_open.png") // the gold button's geometry (withdraw errand, to come)
+				snapPNG(ctx, "logs/stash_open.png") // the gold button's geometry
+			}
+			if wantGold(s) && !st.goldDone {
+				k := shopScale(ctx)
+				switch {
+				case st.goldAt.IsZero():
+					st.gold0 = s.Me.Gold
+					ctx.M.RealMenuClick(int(stashGoldX*k), int(stashGoldY*k)) // the withdraw box opens, max prefilled
+					st.goldAt = time.Now()
+					return l.wait(700 * time.Millisecond)
+				case !st.goldEnter:
+					ctx.M.RealKey(0x0D) // accept the prefilled maximum
+					st.goldEnter = true
+					return l.wait(700 * time.Millisecond)
+				}
+				st.goldDone = true
+				got := ctx.GR.GetData().Inventory.Gold - st.gold0
+				res := verbs.ResDone
+				if got <= 0 {
+					res = verbs.ResDeaf
+					st.goldCoolAt = time.Now().Add(2 * time.Minute)
+					snapPNG(ctx, "logs/stash_gold_fail.png")
+				}
+				ctx.Led.Append(verbs.Outcome{Verb: "stash", Holder: st.Name(), Result: res,
+					Evidence: fmt.Sprintf("gold withdraw: purse %d -> %d (stash held %d)", st.gold0, st.gold0+got, s.Me.StashGold)})
+			}
+			if len(stashable(s, loot.Active())) == 0 && !s.Me.CursorItem {
+				return l.finish(ctx, phase.Done, phase.Completed, "purse refilled; no keepers to stash")
 			}
 			l.to(stLift, "stash open on the Shared tab (by sight)")
 			return l.running()

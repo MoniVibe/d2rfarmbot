@@ -133,6 +133,9 @@ type PlayerState struct {
 	// BossesDead: act bosses (ActBoss) seen dying or dead this tick — the act
 	// transition's evidence (the quest log reads 0 on this build).
 	BossesDead []npc.ID
+	// StashGold: gold in the stash, all tabs (d2go StashedGold) — the Stash
+	// errand withdraws from it when the purse runs low.
+	StashGold int
 	// States: the player's live states (buffs) — the Buff activity recasts
 	// a proven self-buff whose state is missing.
 	States state.States
@@ -852,6 +855,9 @@ func (p *Perceptor) Capture() *Snapshot {
 			}
 		}
 		s.Junk = append(s.Junk, InvItem{ID: id, GX: it.Position.X, GY: it.Position.Y, Qual: int(it.Quality)})
+	}
+	for _, g := range d.Inventory.StashedGold {
+		s.Me.StashGold += g
 	}
 	s.Me.InvFree = loot.BagCells - occupied
 	if s.Me.InvFree < 0 {

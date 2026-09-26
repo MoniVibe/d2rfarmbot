@@ -115,3 +115,19 @@ func TestQuestPresetIgnoresLiveUnits(t *testing.T) {
 		t.Fatal("no preset for another chest")
 	}
 }
+
+func TestWantGoldWhenThePurseIsLow(t *testing.T) {
+	s := &percept.Snapshot{Valid: true}
+	s.Me.Gold, s.Me.StashGold = 300, 867775
+	if !wantGold(s) {
+		t.Fatal("300 carried, 867k stashed: withdraw")
+	}
+	s.Me.Gold = 50000
+	if wantGold(s) {
+		t.Fatal("a full purse: leave the stash alone")
+	}
+	s.Me.Gold, s.Me.StashGold = 300, 0
+	if wantGold(s) {
+		t.Fatal("nothing stashed: nothing to withdraw")
+	}
+}
