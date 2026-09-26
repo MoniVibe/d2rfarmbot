@@ -50,8 +50,23 @@ func gearFailing(s *percept.Snapshot) bool {
 	return s.Valid && (s.Me.BrokenGear > 0 || s.Me.MinDurPct < inventory.FieldRepairPct) && s.Me.Gold >= 10 && !servicesCooled()
 }
 
+// healOut: no healing left anywhere (belt or bag) and gold to buy more — a
+// trip home (2026-09-26: two deaths in one evening with 7000+ gold and an
+// empty belt; the second cost 4748 gold on the death screen).
+func healOut(s *percept.Snapshot) bool {
+	if !s.Valid || s.Me.HealPots > 0 || s.Me.Gold < 200 {
+		return false
+	}
+	for _, b := range s.Bag {
+		if inventory.PotionOf(b.ID) == inventory.PotHP || inventory.PotionOf(b.ID) == inventory.PotRV {
+			return false
+		}
+	}
+	return true
+}
+
 func (u *Unload) Demand(s *percept.Snapshot) *arbiter.Demand {
-	if !s.Valid || s.Me.InTown || s.Me.HPPct <= 0 || !(bagFull(s) || gearFailing(s)) {
+	if !s.Valid || s.Me.InTown || s.Me.HPPct <= 0 || !(bagFull(s) || gearFailing(s) || healOut(s)) {
 		return nil
 	}
 	if treasurePending(time.Now()) {

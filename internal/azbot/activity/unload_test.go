@@ -136,3 +136,19 @@ func TestRecallRidesThePadWithAnEmptyTome(t *testing.T) {
 		t.Fatal("empty tome, lit pad here: ride the waypoint home, not Spent")
 	}
 }
+
+func TestHealOutSendsHerHome(t *testing.T) {
+	s := townSnap()
+	s.Me.InTown, s.Me.Gold, s.Me.HealPots = false, 5000, 0
+	if !healOut(s) {
+		t.Fatal("no healing anywhere and gold to buy: go home")
+	}
+	s.Bag = append(s.Bag, percept.BagItem{ID: 602}) // a red in the bag: the belt refills from it
+	if healOut(s) {
+		t.Fatal("a healing potion in the bag is not 'out'")
+	}
+	s.Bag, s.Me.HealPots = nil, 2
+	if healOut(s) {
+		t.Fatal("belt potions left: not out")
+	}
+}
