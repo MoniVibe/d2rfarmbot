@@ -1,0 +1,9 @@
+# IsraelKatz — druid, Poison Creeper (owner, 2026-09-26: "its a poison ivy
+# druid, max it 20 first, it wrecks the whole game. just need to run around and
+# let it kill things while avoiding damage").
+style: summoner hit-and-run
+fight: avoid
+traps: 0
+mana_columns: 1
+summons:
+  Poison Creeper: 1

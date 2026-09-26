@@ -24,6 +24,7 @@ import (
 //	style: hit-and-run        # the owner's words for the build (logged; later: posture)
 //	traps: 5                  # sentries wanted at a pack (0 = never lay traps)
 //	mana_columns: 1           # belt columns kept for mana (default 1)
+//	fight: avoid              # never pick fights, only when pressed (summoners)
 //	summons:                  # summon skill (in-game name) -> count kept alive (0 = never)
 //	  Shadow Warrior: 1
 //	  Raise Skeleton: 8
@@ -36,6 +37,18 @@ type Profile struct {
 	// ManaColumns: belt columns kept for mana (default 1; a Leap-only
 	// barbarian wants 2). Restock buys to it.
 	ManaColumns *int `yaml:"mana_columns"`
+	// Fight: "avoid" = never pick a fight — only when pressed (wounded or
+	// boxed in); the summons and traps do the killing (owner, 2026-09-26, the
+	// poison-creeper druid: "just need to run around and let it kill things
+	// while avoiding damage"). Default: fight.
+	Fight string `yaml:"fight"`
+}
+
+// profileAvoidsFights: the build lets its summons/traps kill.
+func profileAvoidsFights() bool {
+	profile.Lock()
+	defer profile.Unlock()
+	return strings.EqualFold(profile.p.Fight, "avoid")
 }
 
 var profile = struct {

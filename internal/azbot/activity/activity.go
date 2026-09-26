@@ -1404,8 +1404,8 @@ func (f *Fight) Demand(s *percept.Snapshot) *arbiter.Demand {
 	// pressed to kill them — it was kind of easy doing it"): while the march is
 	// lawful, only a pressed barbarian fights — wounded, or boxed in. Everything
 	// else is leapt past.
-	if time.Now().Before(marchLawfulUntil) && !pressed(s) {
-		return nil
+	if (time.Now().Before(marchLawfulUntil) || profileAvoidsFights()) && !pressed(s) {
+		return nil // the evasive march — or a build whose summons do the killing
 	}
 	// THE CONTACT LAW (2026-09-23, the owner: "it hugs walls sometimes with higher
 	// priority than attacking enemies"): whatever the exp oracle, the corridor,
