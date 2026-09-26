@@ -144,7 +144,8 @@ func Act1Itinerary() []Leg {
 func Act2Itinerary() []Leg {
 	return []Leg{
 		{area.LutGholein, 1},
-		{area.SewersLevel1Act2, 22}, {area.SewersLevel2Act2, 22}, {area.SewersLevel3Act2, 22},
+		// The Sewers (Radament) are optional — a skill book, not the campaign:
+		// dropped 2026-09-26 for speed (owner: "the least amount of time").
 		{area.RockyWaste, 23}, {area.DryHills, 24},
 		{area.HallsOfTheDeadLevel1, 24}, {area.HallsOfTheDeadLevel2, 25}, {area.HallsOfTheDeadLevel3, 25},
 		{area.FarOasis, 25},

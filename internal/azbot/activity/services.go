@@ -462,7 +462,17 @@ func (e *errand) step(ctx *Ctx, who string) errandStep {
 			// at the projection is safe — no shift means walk-or-talk, never an
 			// attack — and the walk-to-talk clears the wall the hover couldn't.
 			// After 3 hover misses, click blind at the label; keep arcing too.
-			if e.hoverFails++; e.hoverFails >= 3 {
+			// NEVER BLIND AMONG NEIGHBOURS (2026-09-26: the fence's blind label
+			// click landed on Warriv beside the vendor, the menu's second line
+			// was "Go East", and she sailed to Act 2 mid-errand).
+			crowded := false
+			for _, mo := range d.Monsters {
+				if mo.UnitID != target.UnitID && mo.IsGoodNPC() && chebyshev(mo.Position, target.Position) <= 6 {
+					crowded = true
+					break
+				}
+			}
+			if e.hoverFails++; e.hoverFails >= 3 && !crowded {
 				e.hoverFails = 0
 				if cx, cy, ok := verbs.ClampClickLogical(ctx.GR, bx, by-30); ok {
 					ctx.M.BareClick(cx, cy) // the label sits above the base
